@@ -230,13 +230,32 @@ export default function GuidePage() {
           </p>
 
           {/* Claude Code setup box */}
-          <div className="p-3 rounded-lg bg-surface-dark-1 border border-accent/20 mb-4">
-            <p className="text-[11px] text-gray-400 mb-1 font-medium">Use with Claude Code (optional)</p>
-            <p className="text-[11px] text-gray-400 mb-2">Let Claude Code in your terminal control Oculo's browser:</p>
-            <code className="block bg-surface-dark-0 px-3 py-2 rounded text-[11px] text-gray-300 font-mono">
+          <div className="p-4 rounded-lg bg-surface-dark-1 border border-accent/20 mb-4">
+            <p className="text-[11px] text-accent font-semibold mb-2">Use with Claude Code (optional)</p>
+            <p className="text-[11px] text-gray-400 mb-3 leading-relaxed">
+              Claude Code in your terminal can control Oculo's browser remotely via an open-source MCP bridge.
+              All 7 tools above become available to Claude Code — so it can browse, screenshot, fill forms, and more.
+            </p>
+            <ol className="space-y-2 mb-3">
+              <li className="flex gap-2 text-[11px] text-gray-400">
+                <span className="text-accent font-semibold flex-shrink-0">1.</span>
+                <span>Make sure Oculo is open and running</span>
+              </li>
+              <li className="flex gap-2 text-[11px] text-gray-400">
+                <span className="text-accent font-semibold flex-shrink-0">2.</span>
+                <span>Run this once in your terminal to register:</span>
+              </li>
+            </ol>
+            <code className="block bg-surface-dark-0 px-3 py-2 rounded text-[11px] text-gray-300 font-mono mb-2">
               claude mcp add oculo -- node ~/Desktop/oculo/bin/oculo-mcp.mjs
             </code>
-            <p className="text-[10px] text-gray-600 mt-2">Oculo must be running when Claude Code uses these tools.</p>
+            <ol start={3} className="space-y-2 mb-3">
+              <li className="flex gap-2 text-[11px] text-gray-400">
+                <span className="text-accent font-semibold flex-shrink-0">3.</span>
+                <span>Done! Claude Code now has access to Oculo's browser tools in every session</span>
+              </li>
+            </ol>
+            <p className="text-[10px] text-gray-600">Oculo must be running whenever Claude Code uses these tools. No API keys needed — it connects locally.</p>
           </div>
 
           {/* 5 tool cards */}

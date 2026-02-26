@@ -77,15 +77,49 @@ Electron's `<webview>` elements are only accessible from the renderer process. T
 | **Ollama** | Local (no key) | Any pulled model |
 | **OpenClaw** | API Key | OpenClaw models |
 
-## Claude Code Integration
+## Use with Claude Code (MCP)
 
-Register Oculo as an MCP server for Claude Code:
+Oculo includes an open-source MCP bridge (`bin/oculo-mcp.mjs`) that lets Claude Code in your terminal control the browser remotely. All 7 browser tools become available to Claude Code as MCP tools.
+
+### How It Works
+
+When Oculo is running, it starts a local HTTP server on port 19516. The MCP bridge script translates between Claude Code's stdio protocol and Oculo's HTTP server:
+
+```
+Terminal: Claude Code ↔ stdio ↔ oculo-mcp.mjs ↔ HTTP ↔ Oculo browser
+```
+
+### Setup (One-Time)
+
+**Step 1:** Make sure Oculo is installed and can run (`npm run dev` or the built app).
+
+**Step 2:** Register the MCP server with Claude Code:
 
 ```bash
 claude mcp add oculo -- node ~/Desktop/oculo/bin/oculo-mcp.mjs
 ```
 
-Oculo must be running first. Then Claude Code can browse the web, fill forms, take screenshots, and more.
+**Step 3:** That's it. Now when you start a Claude Code session, it will have access to Oculo's browser tools — as long as Oculo is open.
+
+### Example Usage in Claude Code
+
+```
+You: Go to github.com and search for "electron browser"
+Claude: I'll use Oculo to navigate and search.
+  → act({ action: "navigate", url: "https://github.com" })
+  → fill({ fields: { "Search": "electron browser" }, submit: true })
+  → read({ what: "search results" })
+  Found 5 results: ...
+```
+
+### MCP Bridge Source
+
+The bridge is fully open-source at [`bin/oculo-mcp.mjs`](bin/oculo-mcp.mjs). It's a simple Node.js script (~170 lines) that:
+- Reads `~/.oculo-port` to find Oculo's port and auth token
+- Forwards `tools/list` and `tools/call` requests over HTTP
+- Returns results back to Claude Code via stdio
+
+No API keys or accounts needed — it connects to your locally running Oculo instance.
 
 ## Media Generation
 
