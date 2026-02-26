@@ -199,11 +199,11 @@ export function createMenu(mainWindow: BrowserWindow): void {
       submenu: [
         {
           label: 'Oculo Documentation',
-          click: (): void => { shell.openExternal('https://github.com/xidik12/oculo') }
+          click: (): void => { shell.openExternal('https://github.com/xidik12/oculo-mcp') }
         },
         {
           label: 'Report Issue',
-          click: (): void => { shell.openExternal('https://github.com/xidik12/oculo/issues') }
+          click: (): void => { shell.openExternal('https://github.com/xidik12/oculo-mcp/issues') }
         },
         { type: 'separator' },
         {

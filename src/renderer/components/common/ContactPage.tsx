@@ -42,10 +42,10 @@ export default function ContactPage() {
           </a>
 
           <a
-            href="https://github.com/xidik12/oculo"
+            href="https://github.com/xidik12/oculo-mcp-mcp"
             target="_blank"
             rel="noopener noreferrer"
-            onClick={(e) => { e.preventDefault(); (window as any).oculo?.openExternal?.('https://github.com/xidik12/oculo') }}
+            onClick={(e) => { e.preventDefault(); (window as any).oculo?.openExternal?.('https://github.com/xidik12/oculo-mcp-mcp') }}
             className="flex items-center gap-3 p-3 rounded-lg bg-surface-dark-1 border border-surface-dark-3 hover:border-accent/30 transition-colors group"
           >
             <div className="w-9 h-9 rounded-lg bg-gray-800 flex items-center justify-center flex-shrink-0">
@@ -55,7 +55,7 @@ export default function ContactPage() {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-xs font-medium text-gray-200 group-hover:text-accent transition-colors">GitHub</div>
-              <div className="text-[11px] text-gray-500">xidik12/oculo</div>
+              <div className="text-[11px] text-gray-500">xidik12/oculo-mcp</div>
             </div>
           </a>
 
