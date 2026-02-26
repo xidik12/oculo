@@ -1,0 +1,5 @@
+export { CaptchaDetector } from './detector'
+export { CaptchaStrategy } from './strategy'
+export { AudioSolver } from './audio-solver'
+export { TextSolver } from './text-solver'
+export { SliderSolver } from './slider-solver'

@@ -1,0 +1,120 @@
+import { WebContents } from 'electron'
+import { PipelineStep } from '../../shared/types'
+import { PageDescriber } from './describer'
+import { FormDetector } from './form-detector'
+import { DataExtractor } from './extractor'
+import { executeAction } from '../mcp/tools/act'
+
+export class PipelineRunner {
+  private describer: PageDescriber
+  private formDetector: FormDetector
+  private extractor: DataExtractor
+
+  constructor() {
+    this.describer = new PageDescriber()
+    this.formDetector = new FormDetector()
+    this.extractor = new DataExtractor()
+  }
+
+  async run(
+    webContents: WebContents,
+    steps: PipelineStep[],
+    returnAll?: boolean
+  ): Promise<string> {
+    const results: string[] = []
+
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i]
+
+      try {
+        let result = ''
+
+        if (step.page) {
+          result = await this.describer.describe(webContents, step.page)
+        } else if (step.act) {
+          result = await executeAction(webContents, step.act)
+        } else if (step.fill) {
+          result = await this.formDetector.fillForm(
+            webContents,
+            step.fill.fields,
+            step.fill.submit
+          )
+        } else if (step.read) {
+          result = await this.extractor.extract(
+            webContents,
+            step.read.what,
+            step.read
+          )
+        } else if (step.wait) {
+          result = await this.executeWait(webContents, step.wait)
+        } else if (step.if) {
+          result = await this.executeConditional(webContents, step.if, steps, i)
+        }
+
+        results.push(result)
+      } catch (err) {
+        const errMsg = (err as Error).message
+        const partial = results.length > 0 ? '\n' + results.join('\n') : ''
+        return `Pipeline stopped at step ${i + 1}/${steps.length}: ${errMsg}${partial}`
+      }
+    }
+
+    const url = webContents.getURL()
+    const title = await webContents.executeJavaScript('document.title')
+    const header = `Pipeline ${steps.length}/${steps.length} OK\n[${title} | ${url}]`
+
+    if (returnAll) {
+      return header + '\n\n' + results.join('\n---\n')
+    }
+
+    // Return header + last result
+    const lastResult = results[results.length - 1] || ''
+    return header + '\n\n' + lastResult
+  }
+
+  private async executeWait(webContents: WebContents, wait: any): Promise<string> {
+    const timeout = wait.timeout || 5000
+    const start = Date.now()
+
+    while (Date.now() - start < timeout) {
+      if (wait.text) {
+        const hasText = await webContents.executeJavaScript(
+          `document.body.textContent.toLowerCase().includes(${JSON.stringify(wait.text.toLowerCase())})`
+        )
+        if (hasText) return `Text "${wait.text}" found`
+      }
+      if (wait.url) {
+        const currentUrl = webContents.getURL()
+        if (currentUrl.includes(wait.url)) return `URL matched "${wait.url}"`
+      }
+      if (wait.selector) {
+        const hasEl = await webContents.executeJavaScript(
+          `!!document.querySelector(${JSON.stringify(wait.selector)})`
+        )
+        if (hasEl) return `Element "${wait.selector}" found`
+      }
+      await new Promise(r => setTimeout(r, 250))
+    }
+
+    return `Wait timeout after ${timeout}ms`
+  }
+
+  private async executeConditional(webContents: WebContents, cond: any, steps: PipelineStep[], idx: number): Promise<string> {
+    let conditionMet = false
+
+    if (cond.text) {
+      conditionMet = await webContents.executeJavaScript(
+        `document.body.textContent.toLowerCase().includes(${JSON.stringify(cond.text.toLowerCase())})`
+      )
+    }
+    if (cond.url) {
+      conditionMet = webContents.getURL().includes(cond.url)
+    }
+
+    const branch = conditionMet ? cond.then : cond.else
+    if (branch) {
+      return await this.run(webContents, [branch], false)
+    }
+    return `Condition ${conditionMet ? 'met' : 'not met'}, no branch to execute`
+  }
+}
