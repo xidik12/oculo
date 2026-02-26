@@ -199,7 +199,16 @@ export default function App() {
         'if(labels[j].htmlFor)input=doc.getElementById(labels[j].htmlFor);' +
         'if(!input)input=labels[j].querySelector("input,textarea,select");' +
         'break;}}' +
-        'if(!input)input=doc.querySelector("input[placeholder*=\\""+label+"\\" i],input[name*=\\""+label+"\\" i],textarea[placeholder*=\\""+label+"\\" i]");' +
+        'if(!input)input=doc.querySelector(' +
+          '"input[placeholder*=\\""+label+"\\" i],' +
+          'input[name*=\\""+label+"\\" i],' +
+          'input[aria-label*=\\""+label+"\\" i],' +
+          'textarea[placeholder*=\\""+label+"\\" i],' +
+          'textarea[name*=\\""+label+"\\" i],' +
+          'textarea[aria-label*=\\""+label+"\\" i],' +
+          'select[aria-label*=\\""+label+"\\" i],' +
+          'select[name*=\\""+label+"\\" i]"' +
+        ');' +
         // Also check contenteditable elements (rich text editors)
         'if(!input){var ce=doc.querySelectorAll("[contenteditable=true],div[role=textbox]");' +
         'for(var ci=0;ci<ce.length;ci++){' +
@@ -211,7 +220,11 @@ export default function App() {
         'else if(input.contentEditable==="true"||input.getAttribute("role")==="textbox"){' +
         'input.focus();input.innerText=String(value);' +
         'input.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:String(value)}));}' +
-        'else{input.value=String(value);input.dispatchEvent(new Event("input",{bubbles:true}));}' +
+        'else{' +
+        'var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value");' +
+        'if(!nativeSetter)nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,"value");' +
+        'if(nativeSetter&&nativeSetter.set){nativeSetter.set.call(input,String(value));}else{input.value=String(value);}' +
+        'input.dispatchEvent(new Event("input",{bubbles:true}));input.dispatchEvent(new Event("change",{bubbles:true}));}' +
         'input.dispatchEvent(new Event("change",{bubbles:true}));' +
         'filled.push(label);}}'
       if (submit) {
@@ -221,7 +234,10 @@ export default function App() {
           'if(b.length)btns=b;}' +
           'if(btns&&btns[0]){btns[0].click();filled.push("[submitted]");}'
       }
-      code += 'return filled.length?"Filled: "+filled.join(", "):"No matching fields found";})()'
+      code += 'var notFound=entries.filter(function(e){return filled.indexOf(e[0])===-1;}).map(function(e){return e[0];});' +
+        'var msg=filled.length?"Filled: "+filled.join(", "):"No fields matched";' +
+        'if(notFound.length)msg+="\\nNot found: "+notFound.join(", ")+"\\nTip: use act type with a CSS selector to target these fields directly";' +
+        'return msg;})()'
       return code
     }
 
@@ -251,9 +267,15 @@ export default function App() {
         'var h=document.querySelectorAll("h1,h2,h3");' +
         'if(h.length){var ht=Array.from(h).slice(0,5).map(function(x){return x.textContent.trim().substring(0,40)}).filter(Boolean);' +
         'if(ht.length)p.push("H:"+ht.join("|"));}' +
-        // Fields — capped at 5
+        // Fields — capped at 15, with selector hints and iframe scanning
         'var inp=document.querySelectorAll("input:not([type=hidden]),textarea,select");' +
-        'if(inp.length)p.push("F:"+Array.from(inp).slice(0,5).map(function(el){return (el.labels&&el.labels[0]?el.labels[0].textContent.trim():"")||el.placeholder||el.name||el.type}).join(","));' +
+        'var iframes=document.querySelectorAll("iframe");' +
+        'for(var fi=0;fi<iframes.length;fi++){try{var idoc=iframes[fi].contentDocument;if(idoc){var iinp=idoc.querySelectorAll("input:not([type=hidden]),textarea,select");inp=Array.from(inp).concat(Array.from(iinp));};}catch(e){}}' +
+        'if(inp.length)p.push("Fields("+inp.length+"):\\n"+Array.from(inp).slice(0,15).map(function(el,i){' +
+          'var label=(el.labels&&el.labels[0]?el.labels[0].textContent.trim():"")||el.getAttribute("aria-label")||el.placeholder||el.name||el.type;' +
+          'var sel=el.id?"#"+el.id:(el.name?"[name=\\""+el.name+"\\"]":el.type);' +
+          'return "  "+i+". ["+sel+"] "+label+(el.value?" (val:"+el.value.substring(0,20)+")":"");' +
+        '}).join("\\n"));' +
         // Editable areas (rich text editors)
         'var ce=document.querySelectorAll("[contenteditable=true],div[role=textbox]");' +
         'if(ce.length)p.push("Edit:"+Array.from(ce).slice(0,3).map(function(el){return el.getAttribute("aria-label")||"textbox"}).join(","));' +
@@ -430,7 +452,16 @@ export default function App() {
                   // Use webContents.insertText which simulates real keyboard input
                   await (wv as any).insertText(textToType)
                   await new Promise(r => setTimeout(r, 300))
-                  result = 'Typed ' + textToType.length + ' characters'
+                  // Verify text was actually inserted
+                  if (focusSelector) {
+                    try {
+                      const verifyCode = '(function(){var el=document.querySelector(' + JSON.stringify(focusSelector) + ');return el?(el.value||el.textContent||"").length:0})()'
+                      const len = await (wv as any).executeJavaScript(verifyCode)
+                      result = 'Typed ' + textToType.length + ' characters' + (len > 0 ? ' (field has ' + len + ' chars)' : ' (warning: field may be empty)')
+                    } catch { result = 'Typed ' + textToType.length + ' characters' }
+                  } else {
+                    result = 'Typed ' + textToType.length + ' characters (no selector — inserted at cursor)'
+                  }
                 } catch (e: any) {
                   result = 'Type failed: ' + e.message
                 }
@@ -683,7 +714,11 @@ export default function App() {
               try {
                 const nativeImage = await (wv as any).capturePage()
                 const pngBuffer = nativeImage.toPNG()
-                const base64 = btoa(String.fromCharCode(...new Uint8Array(pngBuffer)))
+                // Convert buffer to base64 safely (avoid spread operator stack overflow)
+                const bytes = new Uint8Array(pngBuffer)
+                let binary = ''
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+                const base64 = btoa(binary)
                 const filePath = await api.screenshotSave(base64)
                 result = 'Screenshot saved: ' + filePath
               } catch (e: any) {
@@ -720,7 +755,10 @@ export default function App() {
               try {
                 const nativeImage = await (wv as any).capturePage()
                 const pngBuffer = nativeImage.toPNG()
-                const base64 = btoa(String.fromCharCode(...new Uint8Array(pngBuffer)))
+                const bytes = new Uint8Array(pngBuffer)
+                let binary = ''
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+                const base64 = btoa(binary)
                 const ok = await api.clipboardWriteImage(base64)
                 result = ok ? 'Page screenshot copied to clipboard' : 'Error: Failed to write image to clipboard'
               } catch (e: any) {
@@ -779,8 +817,42 @@ export default function App() {
                     await (wv as any).loadURL((stepArgs as any).url)
                     await new Promise(r => setTimeout(r, 2000))
                     results.push('act: Navigated to ' + (stepArgs as any).url)
+                  } else if (stepTool === 'act' && (stepArgs as any)?.action === 'type') {
+                    const sa = stepArgs as any
+                    if (sa.selector) {
+                      const focusCode = '(function(){var el=document.querySelector(' + JSON.stringify(sa.selector) + ');if(el){el.focus();return "focused";}return "not found"})()'
+                      await (wv as any).executeJavaScript(focusCode)
+                      await new Promise(r => setTimeout(r, 100))
+                    }
+                    await (wv as any).insertText(sa.text || '')
+                    results.push('act: Typed ' + (sa.text || '').length + ' chars')
+                  } else if (stepTool === 'act' && (stepArgs as any)?.action === 'press') {
+                    const sa = stepArgs as any
+                    const key = sa.key || 'Enter'
+                    try {
+                      (wv as any).sendInputEvent({ type: 'keyDown', keyCode: key })
+                      ;(wv as any).sendInputEvent({ type: 'char', keyCode: key })
+                      ;(wv as any).sendInputEvent({ type: 'keyUp', keyCode: key })
+                      results.push('act: Pressed ' + key)
+                    } catch (e: any) { results.push('act: Press error - ' + e.message) }
+                  } else if (stepTool === 'act' && (stepArgs as any)?.action === 'scroll') {
+                    const sa = stepArgs as any
+                    const dir = sa.direction || 'down'
+                    const amt = sa.amount || 300
+                    const scrollCode = dir === 'up' ? 'window.scrollBy(0,-' + amt + ')' : dir === 'down' ? 'window.scrollBy(0,' + amt + ')' : dir === 'left' ? 'window.scrollBy(-' + amt + ',0)' : 'window.scrollBy(' + amt + ',0)'
+                    await (wv as any).executeJavaScript(scrollCode)
+                    results.push('act: Scrolled ' + dir + ' ' + amt + 'px')
+                  } else if (stepTool === 'fill') {
+                    const sa = stepArgs as any
+                    const fillEntries = Object.entries(sa.fields || {})
+                    const r = await (wv as any).executeJavaScript(buildFillCode(fillEntries, sa.submit))
+                    results.push('fill: ' + r)
+                  } else if (stepTool === 'read') {
+                    const sa = stepArgs as any
+                    const r = await (wv as any).executeJavaScript(buildReadCode(sa.scope || 'body', sa.limit || 10))
+                    results.push('read: ' + r)
                   } else {
-                    results.push(stepTool + ': executed')
+                    results.push(stepTool + ': not supported in run pipeline')
                   }
                 } catch (e: any) {
                   results.push(stepTool + ': Error - ' + e.message)

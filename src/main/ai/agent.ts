@@ -38,18 +38,25 @@ Key capabilities:
 - act download → save URL to disk
 - act readFile → read text content of file (value = path)
 - act listDownloads → list recent downloads with paths
-- Screenshot → upload workflow: screenshot → upload to post on social media
+
+FORM FILLING STRATEGY:
+1. First try fill tool with field labels from page output
+2. If fill reports "Not found" fields, use act type with the CSS selector shown in page output
+3. For React/SPA sites: act type with selector is more reliable than fill
+4. Always verify: after filling, call page to confirm field values
+5. Rich text editors (X, Facebook, LinkedIn): use act type, NOT fill
 
 WORKFLOW:
 1. PLAN: Short numbered plan (3-7 steps)
 2. EXECUTE: Batch with run tool when possible
-3. ANSWER: Summarize what you did
+3. VERIFY: Check results with page before reporting done
+4. ANSWER: Summarize what you did
 
 Rules:
-- Rich text editors (X, Facebook, LinkedIn): use act type, NOT fill
 - File paths from screenshot/media can be used in upload actions
 - Cross-origin iframes: use act clickAtPoint
-- Minimize tool calls, batch with run`
+- Minimize tool calls, batch with run
+- If a tool fails, try a different approach — don't retry the same call`
 
 /**
  * Anthropic tool format for the 5 MCP browser tools
@@ -536,11 +543,11 @@ export class AgentController {
           const result = await this.callMcpTool(tool.name, tool.input || {})
 
           this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
-          this.emit({ type: 'text_delta', text: `\n\n> **${tool.name}** ${this.summarizeToolArgs(tool.name, tool.input)}\n` })
+          this.emit({ type: 'text_delta', text: `\n> ${tool.name} ${this.summarizeToolArgs(tool.name, tool.input)}\n` })
 
           // Cap tool result stored in history — info tools need more, action tools less
           const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools'
-          const maxLen = infoTool ? 800 : 250
+          const maxLen = infoTool ? 1200 : 500
           const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
           toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: cappedResult })
         }
@@ -604,22 +611,22 @@ export class AgentController {
     }
 
     // Phase 2: Truncate content in older messages (keep last 2 messages full)
-    const keepFullFromEnd = 2
+    const keepFullFromEnd = 4
     const cutoff = Math.max(1, history.length - keepFullFromEnd)
 
     for (let i = 1; i < cutoff; i++) {
       const msg = history[i]
       if (msg.role === 'user' && Array.isArray(msg.content)) {
         msg.content = msg.content.map((item: any) => {
-          if (item.type === 'tool_result' && typeof item.content === 'string' && item.content.length > 80) {
-            return { ...item, content: safeTruncate(item.content, 60) + '...[t]' }
+          if (item.type === 'tool_result' && typeof item.content === 'string' && item.content.length > 200) {
+            return { ...item, content: safeTruncate(item.content, 150) + '...[t]' }
           }
           return item
         })
       } else if (msg.role === 'assistant' && Array.isArray(msg.content)) {
         msg.content = msg.content.map((item: any) => {
-          if (item.type === 'text' && typeof item.text === 'string' && item.text.length > 50) {
-            return { ...item, text: safeTruncate(item.text, 40) + '...' }
+          if (item.type === 'text' && typeof item.text === 'string' && item.text.length > 150) {
+            return { ...item, text: safeTruncate(item.text, 120) + '...' }
           }
           return item
         })
@@ -706,11 +713,11 @@ export class AgentController {
           const result = await this.callMcpTool(tool.name, tool.args || {})
 
           this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
-          this.emit({ type: 'text_delta', text: `\n\n> **${tool.name}** ${this.summarizeToolArgs(tool.name, tool.args)}\n` })
+          this.emit({ type: 'text_delta', text: `\n> ${tool.name} ${this.summarizeToolArgs(tool.name, tool.args)}\n` })
 
           // Cap tool result — info tools need more room
           const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools'
-          const maxLen = infoTool ? 800 : 200
+          const maxLen = infoTool ? 1200 : 500
           const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
           toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: cappedResult })
         }
