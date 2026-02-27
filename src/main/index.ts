@@ -196,9 +196,9 @@ app.whenReady().then(async () => {
     }
   })
 
-  // Spoof Sec-CH-UA headers so Google recognizes us as Chrome (enables passkey UI)
+  // Spoof Sec-CH-UA headers globally so all sites see Chrome (not Electron)
   webviewSession.webRequest.onBeforeSendHeaders(
-    { urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://*.gstatic.com/*'] },
+    { urls: ['https://*/*', 'http://*/*'] },
     (details, callback) => {
       const headers = { ...details.requestHeaders }
       headers['Sec-CH-UA'] = '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"'
@@ -211,7 +211,7 @@ app.whenReady().then(async () => {
 
   webviewSession.setSpellCheckerEnabled(false)
 
-  // Per-webview anti-bot + UA cleanup (still needed per-webview for UA string)
+  // Per-webview anti-bot + UA cleanup
   app.on('web-contents-created', (_, wc) => {
     if (wc.getType() !== 'webview') return
 
@@ -222,15 +222,135 @@ app.whenReady().then(async () => {
       .replace(/\s*oculo\/[\d.]+/i, '')
     wc.setUserAgent(cleanWvUA)
 
-    // Anti-bot: patch navigator.webdriver and clean fingerprint
+    // Comprehensive anti-bot fingerprint patching
+    // Run on EVERY navigation (did-start-navigation fires before page scripts)
+    const antiBotScript = `
+      (function() {
+        if (window.__oculoPatched) return;
+        window.__oculoPatched = true;
+
+        // 1. navigator.webdriver — must be undefined
+        try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true }) } catch {}
+
+        // 2. navigator.languages — real Chrome value
+        try { Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'], configurable: true }) } catch {}
+
+        // 3. navigator.plugins — fake a realistic plugin array
+        try {
+          const fakePlugins = {
+            length: 5,
+            0: { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
+            1: { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
+            2: { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 },
+            3: { name: 'Chromium PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
+            4: { name: 'Chromium PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
+            item: function(i) { return this[i] || null; },
+            namedItem: function(name) { for (let i = 0; i < this.length; i++) { if (this[i].name === name) return this[i]; } return null; },
+            refresh: function() {},
+            [Symbol.iterator]: function*() { for (let i = 0; i < 5; i++) yield this[i]; }
+          };
+          Object.defineProperty(navigator, 'plugins', { get: () => fakePlugins, configurable: true });
+        } catch {}
+
+        // 4. navigator.mimeTypes — fake realistic mime types
+        try {
+          const fakeMimeTypes = {
+            length: 4,
+            0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+            1: { type: 'text/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
+            2: { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable' },
+            3: { type: 'application/x-pnacl', suffixes: '', description: 'Portable Native Client Executable' },
+            item: function(i) { return this[i] || null; },
+            namedItem: function(name) { for (let i = 0; i < this.length; i++) { if (this[i].type === name) return this[i]; } return null; },
+            [Symbol.iterator]: function*() { for (let i = 0; i < 4; i++) yield this[i]; }
+          };
+          Object.defineProperty(navigator, 'mimeTypes', { get: () => fakeMimeTypes, configurable: true });
+        } catch {}
+
+        // 5. window.chrome — comprehensive fake
+        try {
+          if (!window.chrome || !window.chrome.runtime || !window.chrome.runtime.connect) {
+            const fakeChrome = {
+              app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }, getDetails: function() { return null; }, getIsInstalled: function() { return false; } },
+              runtime: { OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' }, OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }, PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' }, PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' }, PlatformOs: { ANDROID: 'android', CROS: 'cros', FUCHSIA: 'fuchsia', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' }, RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' }, connect: function() { return { onDisconnect: { addListener: function() {} }, onMessage: { addListener: function() {} }, postMessage: function() {} }; }, sendMessage: function() {} },
+              csi: function() { return {}; },
+              loadTimes: function() { return { requestTime: Date.now() / 1000, startLoadTime: Date.now() / 1000, commitLoadTime: Date.now() / 1000, finishDocumentLoadTime: Date.now() / 1000, finishLoadTime: Date.now() / 1000, firstPaintTime: Date.now() / 1000, firstPaintAfterLoadTime: 0, navigationType: 'Other', wasFetchedViaSpdy: false, wasNpnNegotiated: true, npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false, connectionInfo: 'h2' }; }
+            };
+            Object.defineProperty(window, 'chrome', { get: () => fakeChrome, configurable: true });
+          }
+        } catch {}
+
+        // 6. Notification.permission — must not throw
+        try {
+          if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+            // Already fine
+          }
+        } catch {}
+
+        // 7. navigator.permissions.query — make it resolve like real Chrome
+        try {
+          const origQuery = navigator.permissions.query.bind(navigator.permissions);
+          navigator.permissions.query = function(desc) {
+            if (desc.name === 'notifications') {
+              return Promise.resolve({ state: Notification.permission || 'prompt', onchange: null });
+            }
+            return origQuery(desc);
+          };
+        } catch {}
+
+        // 8. navigator.connection — fake NetworkInformation
+        try {
+          if (!navigator.connection) {
+            Object.defineProperty(navigator, 'connection', {
+              get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10, saveData: false, onchange: null }),
+              configurable: true
+            });
+          }
+        } catch {}
+
+        // 9. navigator.hardwareConcurrency — reasonable value
+        try {
+          if (!navigator.hardwareConcurrency || navigator.hardwareConcurrency < 2) {
+            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
+          }
+        } catch {}
+
+        // 10. navigator.deviceMemory — reasonable value
+        try {
+          if (!navigator.deviceMemory) {
+            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
+          }
+        } catch {}
+
+        // 11. WebGL vendor/renderer — make it look normal (not SwiftShader)
+        try {
+          const getParameterOrig = WebGLRenderingContext.prototype.getParameter;
+          WebGLRenderingContext.prototype.getParameter = function(p) {
+            if (p === 37445) return 'Google Inc. (Apple)';  // UNMASKED_VENDOR_WEBGL
+            if (p === 37446) return 'ANGLE (Apple, Apple M1, OpenGL 4.1)';  // UNMASKED_RENDERER_WEBGL
+            return getParameterOrig.call(this, p);
+          };
+          if (typeof WebGL2RenderingContext !== 'undefined') {
+            const getParameter2Orig = WebGL2RenderingContext.prototype.getParameter;
+            WebGL2RenderingContext.prototype.getParameter = function(p) {
+              if (p === 37445) return 'Google Inc. (Apple)';
+              if (p === 37446) return 'ANGLE (Apple, Apple M1, OpenGL 4.1)';
+              return getParameter2Orig.call(this, p);
+            };
+          }
+        } catch {}
+      })();
+    `
+
+    wc.on('did-start-navigation', (_event, _url, isInPlace) => {
+      if (isInPlace) return
+      // Reset patch flag so it re-runs on new pages
+      wc.executeJavaScript('window.__oculoPatched = false').catch(() => {})
+      wc.executeJavaScript(antiBotScript).catch(() => {})
+    })
     wc.on('dom-ready', () => {
-      wc.executeJavaScript(`
-        try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }) } catch {}
-        try { Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] }) } catch {}
-        if (window.chrome === undefined) {
-          try { Object.defineProperty(window, 'chrome', { get: () => ({ runtime: {}, csi: () => ({}), loadTimes: () => ({}) }) }) } catch {}
-        }
-      `).catch(() => {})
+      // Re-run on dom-ready as backup (some sites check late)
+      wc.executeJavaScript(antiBotScript).catch(() => {})
     })
   })
 

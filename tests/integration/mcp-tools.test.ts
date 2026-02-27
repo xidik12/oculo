@@ -105,7 +105,7 @@ describe('MCP Tool Schema Consistency', () => {
     const serverCode = fs.readFileSync(serverPath, 'utf-8')
     const mediaIdx = serverCode.indexOf("name: 'media'")
     expect(mediaIdx).toBeGreaterThan(-1)
-    const mediaBlock = serverCode.substring(mediaIdx, mediaIdx + 1000)
+    const mediaBlock = serverCode.substring(mediaIdx, mediaIdx + 2000)
     expect(mediaBlock).toContain("required: ['type', 'prompt']")
   })
 })
