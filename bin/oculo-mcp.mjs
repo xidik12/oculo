@@ -95,8 +95,8 @@ function httpPost(port, body, token) {
         reject(err)
       }
     })
-    req.setTimeout(30_000, () => {
-      req.destroy(new Error('Request to Oculo timed out after 30s'))
+    req.setTimeout(600_000, () => {
+      req.destroy(new Error('Request to Oculo timed out after 10 minutes'))
     })
     req.write(data)
     req.end()
