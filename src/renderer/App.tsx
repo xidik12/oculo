@@ -314,7 +314,9 @@ export default function App() {
           'input[aria-label*=\\""+safeLabel+"\\" i],' +
           'textarea[placeholder*=\\""+safeLabel+"\\" i],' +
           'textarea[aria-label*=\\""+safeLabel+"\\" i],' +
-          'select[aria-label*=\\""+safeLabel+"\\" i]"' +
+          'select[aria-label*=\\""+safeLabel+"\\" i],' +
+          '[data-placeholder*=\\""+safeLabel+"\\" i],' +
+          '[aria-placeholder*=\\""+safeLabel+"\\" i]"' +
         ');}catch(e){}}}' +
         // 5. Nearby text — walk all inputs, check with fuzzy matching
         'if(!input){' +
@@ -324,10 +326,10 @@ export default function App() {
         'for(var ni=0;ni<nt.length;ni++){' +
         'if(fuzzyMatch(nt[ni],label)){input=allInputs[ai];break;}}' +
         'if(input)break;}}' +
-        // 6. Contenteditable elements
-        'if(!input){var ce=doc.querySelectorAll("[contenteditable=true],div[role=textbox]");' +
+        // 6. Contenteditable elements (DraftJS, ProseMirror, etc.)
+        'if(!input){var ce=doc.querySelectorAll("[contenteditable=true],[role=textbox]");' +
         'for(var ci=0;ci<ce.length;ci++){' +
-        'var ar=ce[ci].getAttribute("aria-label")||ce[ci].getAttribute("placeholder")||"";' +
+        'var ar=ce[ci].getAttribute("aria-label")||ce[ci].getAttribute("placeholder")||ce[ci].getAttribute("data-placeholder")||ce[ci].getAttribute("aria-placeholder")||"";' +
         'if(fuzzyMatch(ar,label)){input=ce[ci];break;}}}' +
         '}' +
         // Set value and verify
@@ -339,8 +341,7 @@ export default function App() {
         'input.value=String(value);input.dispatchEvent(new Event("change",{bubbles:true}));' +
         'var ok2=input.value===String(value);filled.push(label+(ok2?"":"⚠"));if(!ok2)mismatched.push(label);}' +
         'else if(input.contentEditable==="true"||input.getAttribute("role")==="textbox"){' +
-        'input.focus();input.innerText=String(value);' +
-        'input.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"insertText",data:String(value)}));' +
+        'input.focus();document.execCommand("selectAll",false,null);document.execCommand("delete",false,null);document.execCommand("insertText",false,String(value));' +
         'filled.push(label);}' +
         'else{' +
         'var nativeSetter=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value");' +
@@ -862,52 +863,88 @@ export default function App() {
             } else if (action === 'type') {
               // Type text into a field — supports both regular inputs (React) and contenteditable
               const textToType = args.text || ''
+              const shouldClear = !!args.clear
               if (!textToType) {
                 result = 'Error: text parameter required for type action'
               } else {
                 try {
-                  const focusSelector = args.selector || ''
-                  if (focusSelector) {
-                    // Determine element type and use the best approach
-                    const typeCode = '(function(){' +
-                      'var el=document.querySelector(' + JSON.stringify(focusSelector) + ');' +
-                      'if(!el)return "not_found";' +
-                      'el.focus();el.click();' +
-                      // For regular inputs/textareas — use native setter (React compatible)
-                      'if(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.tagName==="SELECT"){' +
-                      'var proto=el.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;' +
-                      'var setter=Object.getOwnPropertyDescriptor(proto,"value");' +
-                      'if(setter&&setter.set){setter.set.call(el,' + JSON.stringify(textToType) + ');}' +
-                      'else{el.value=' + JSON.stringify(textToType) + ';}' +
-                      'el.dispatchEvent(new Event("input",{bubbles:true}));' +
-                      'el.dispatchEvent(new Event("change",{bubbles:true}));' +
-                      'return "set:"+el.value.length;}' +
-                      // For contenteditable/rich text — use insertText
-                      'if(el.contentEditable==="true"||el.getAttribute("role")==="textbox"){' +
-                      'return "editable";}' +
-                      'return "unknown";})()'
-                    const typeResult = await (wv as any).executeJavaScript(typeCode)
-                    if (typeResult === 'not_found') {
-                      result = 'Error: element not found: ' + focusSelector
-                    } else if (typeResult === 'editable') {
-                      // For contenteditable, use insertText (keyboard simulation)
-                      await (wv as any).insertText(textToType)
-                      await new Promise(r => setTimeout(r, 200))
-                      result = 'Typed ' + textToType.length + ' chars into editable area'
-                    } else if (typeResult.startsWith('set:')) {
-                      const len = typeResult.split(':')[1]
-                      result = 'Typed ' + textToType.length + ' chars (field has ' + len + ' chars)'
-                    } else {
-                      // Unknown element — try insertText as fallback
-                      await (wv as any).insertText(textToType)
-                      await new Promise(r => setTimeout(r, 200))
-                      result = 'Typed ' + textToType.length + ' chars'
+                  // Resolve element: selector → label → placeholder/data-placeholder → first visible editable
+                  const resolveCode = '(function(){' +
+                    'function isVisible(el){if(!el)return false;var s=getComputedStyle(el);return s.display!=="none"&&s.visibility!=="hidden"&&parseFloat(s.opacity)>0;}' +
+                    'var sel=' + JSON.stringify(args.selector || '') + ';' +
+                    'var label=' + JSON.stringify(args.label || '') + ';' +
+                    'var ph=' + JSON.stringify(args.placeholder || '') + ';' +
+                    'var el=null;' +
+                    // 1. CSS selector
+                    'if(sel){el=document.querySelector(sel);}' +
+                    // 2. Label
+                    'if(!el&&label){' +
+                    'var lower=label.toLowerCase();' +
+                    'var labels=document.querySelectorAll("label");' +
+                    'for(var i=0;i<labels.length;i++){' +
+                    'if((labels[i].textContent||"").trim().toLowerCase().includes(lower)){' +
+                    'if(labels[i].htmlFor){el=document.getElementById(labels[i].htmlFor);}' +
+                    'if(!el)el=labels[i].querySelector("input,textarea,select,[contenteditable=true]");' +
+                    'if(el)break;}}' +
+                    'if(!el){var ariaEls=document.querySelectorAll("[aria-label]");' +
+                    'for(var i=0;i<ariaEls.length;i++){if(ariaEls[i].getAttribute("aria-label").toLowerCase().includes(lower)&&isVisible(ariaEls[i])){el=ariaEls[i];break;}}}}' +
+                    // 3. Placeholder / data-placeholder
+                    'if(!el&&ph){' +
+                    'var lower=ph.toLowerCase();' +
+                    'var inputs=document.querySelectorAll("input[placeholder],textarea[placeholder]");' +
+                    'for(var i=0;i<inputs.length;i++){if(inputs[i].getAttribute("placeholder").toLowerCase().includes(lower)&&isVisible(inputs[i])){el=inputs[i];break;}}' +
+                    'if(!el){var ceEls=document.querySelectorAll("[data-placeholder],[aria-placeholder]");' +
+                    'for(var i=0;i<ceEls.length;i++){var p=(ceEls[i].getAttribute("data-placeholder")||ceEls[i].getAttribute("aria-placeholder")||"").toLowerCase();' +
+                    'if(p.includes(lower)&&isVisible(ceEls[i])){el=ceEls[i];break;}}}}' +
+                    // 4. First visible editable (fallback)
+                    'if(!el&&!sel&&!label&&!ph){' +
+                    'el=document.querySelector("[contenteditable=true]:not([aria-hidden=true]),[role=textbox]:not([aria-hidden=true])");' +
+                    'if(!el)el=document.querySelector("textarea,input[type=text],input:not([type])");' +
+                    '}' +
+                    'if(!el)return "not_found";' +
+                    'el.scrollIntoView({behavior:"smooth",block:"center"});' +
+                    'el.focus();el.click();' +
+                    // For regular inputs/textareas — use native setter (React compatible)
+                    'if(el.tagName==="INPUT"||el.tagName==="TEXTAREA"||el.tagName==="SELECT"){' +
+                    'var proto=el.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;' +
+                    'var setter=Object.getOwnPropertyDescriptor(proto,"value");' +
+                    (shouldClear ?
+                      'if(setter&&setter.set){setter.set.call(el,"");}else{el.value="";}' +
+                      'el.dispatchEvent(new Event("input",{bubbles:true}));' : '') +
+                    'var newVal=' + (shouldClear ? '' : '(el.value||"")+') + JSON.stringify(textToType) + ';' +
+                    'if(setter&&setter.set){setter.set.call(el,newVal);}' +
+                    'else{el.value=newVal;}' +
+                    'el.dispatchEvent(new Event("input",{bubbles:true}));' +
+                    'el.dispatchEvent(new Event("change",{bubbles:true}));' +
+                    'return "set:"+el.value.length;}' +
+                    // For contenteditable/rich text — use execCommand
+                    'if(el.contentEditable==="true"||el.getAttribute("role")==="textbox"){' +
+                    'return "editable";}' +
+                    'return "unknown";})()'
+                  const typeResult = await (wv as any).executeJavaScript(resolveCode)
+                  if (typeResult === 'not_found') {
+                    result = 'Error: element not found' + (args.selector ? ': ' + args.selector : args.label ? ' by label: ' + args.label : args.placeholder ? ' by placeholder: ' + args.placeholder : '')
+                  } else if (typeResult === 'editable') {
+                    // For contenteditable, use Selection API + execCommand (DraftJS/ProseMirror compatible)
+                    if (shouldClear) {
+                      await (wv as any).executeJavaScript('document.execCommand("selectAll",false,null);document.execCommand("delete",false,null);')
+                      await new Promise(r => setTimeout(r, 100))
                     }
-                  } else {
-                    // No selector — insert at cursor position
-                    await (wv as any).insertText(textToType)
+                    await (wv as any).executeJavaScript('document.execCommand("insertText",false,' + JSON.stringify(textToType) + ')')
                     await new Promise(r => setTimeout(r, 200))
-                    result = 'Typed ' + textToType.length + ' chars at cursor'
+                    result = 'Typed ' + textToType.length + ' chars into editable area'
+                  } else if (typeResult.startsWith('set:')) {
+                    const len = typeResult.split(':')[1]
+                    result = 'Typed ' + textToType.length + ' chars (field has ' + len + ' chars)'
+                  } else {
+                    // Unknown element — try execCommand as fallback
+                    if (shouldClear) {
+                      await (wv as any).executeJavaScript('document.execCommand("selectAll",false,null);document.execCommand("delete",false,null);')
+                      await new Promise(r => setTimeout(r, 100))
+                    }
+                    await (wv as any).executeJavaScript('document.execCommand("insertText",false,' + JSON.stringify(textToType) + ')')
+                    await new Promise(r => setTimeout(r, 200))
+                    result = 'Typed ' + textToType.length + ' chars'
                   }
                 } catch (e: any) {
                   result = 'Type failed: ' + e.message
@@ -949,14 +986,35 @@ export default function App() {
                 'el.focus();return "Focused on element";})()'
               result = await (wv as any).executeJavaScript(focusCode)
             } else if (action === 'clear') {
-              // Clear focused element or specified element
+              // Clear focused element or specified element — supports label/placeholder/data-placeholder resolution
               const clearCode = '(function(){' +
+                'function isVisible(el){if(!el)return false;var s=getComputedStyle(el);return s.display!=="none"&&s.visibility!=="hidden"&&parseFloat(s.opacity)>0;}' +
                 'var sel=' + JSON.stringify(args.selector || '') + ';' +
-                'var el=sel?document.querySelector(sel):document.activeElement;' +
+                'var label=' + JSON.stringify(args.label || '') + ';' +
+                'var ph=' + JSON.stringify(args.placeholder || '') + ';' +
+                'var el=null;' +
+                'if(sel){el=document.querySelector(sel);}' +
+                'if(!el&&label){var lower=label.toLowerCase();' +
+                'var labels=document.querySelectorAll("label");' +
+                'for(var i=0;i<labels.length;i++){if((labels[i].textContent||"").trim().toLowerCase().includes(lower)){' +
+                'if(labels[i].htmlFor)el=document.getElementById(labels[i].htmlFor);' +
+                'if(!el)el=labels[i].querySelector("input,textarea,select,[contenteditable=true]");if(el)break;}}' +
+                'if(!el){var ariaEls=document.querySelectorAll("[aria-label]");' +
+                'for(var i=0;i<ariaEls.length;i++){if(ariaEls[i].getAttribute("aria-label").toLowerCase().includes(lower)&&isVisible(ariaEls[i])){el=ariaEls[i];break;}}}}' +
+                'if(!el&&ph){var lower=ph.toLowerCase();' +
+                'var inputs=document.querySelectorAll("input[placeholder],textarea[placeholder]");' +
+                'for(var i=0;i<inputs.length;i++){if(inputs[i].getAttribute("placeholder").toLowerCase().includes(lower)&&isVisible(inputs[i])){el=inputs[i];break;}}' +
+                'if(!el){var ceEls=document.querySelectorAll("[data-placeholder],[aria-placeholder]");' +
+                'for(var i=0;i<ceEls.length;i++){var p=(ceEls[i].getAttribute("data-placeholder")||ceEls[i].getAttribute("aria-placeholder")||"").toLowerCase();' +
+                'if(p.includes(lower)&&isVisible(ceEls[i])){el=ceEls[i];break;}}}}' +
+                'if(!el)el=document.activeElement;' +
                 'if(!el)return "No element to clear";' +
                 'if(el.contentEditable==="true"||el.getAttribute("role")==="textbox"){' +
-                'el.innerHTML="";el.dispatchEvent(new InputEvent("input",{bubbles:true,inputType:"deleteContent"}));return "Cleared editable area";}' +
-                'if(el.value!==undefined){el.value="";el.dispatchEvent(new Event("input",{bubbles:true}));return "Cleared field";}' +
+                'el.focus();document.execCommand("selectAll",false,null);document.execCommand("delete",false,null);return "Cleared editable area";}' +
+                'if(el.value!==undefined){' +
+                'var setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")||Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,"value");' +
+                'if(setter&&setter.set){setter.set.call(el,"");}else{el.value="";}' +
+                'el.dispatchEvent(new Event("input",{bubbles:true}));el.dispatchEvent(new Event("change",{bubbles:true}));return "Cleared field";}' +
                 'return "Element has no clearable content";})()'
               result = await (wv as any).executeJavaScript(clearCode)
             } else if (action === 'wait') {

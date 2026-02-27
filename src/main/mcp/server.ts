@@ -63,7 +63,7 @@ export class McpServerManager {
     {
       name: 'act',
       description:
-        'Perform an action on the page: click, navigate, scroll, press key, hover, or login. Elements are found by text, role, label, or placeholder — no snapshots needed.',
+        'Perform an action on the page: click, navigate, scroll, press key, hover, type, or login. Elements are found by text, role, label, placeholder, or data-placeholder (contenteditable) — no snapshots needed.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -82,6 +82,7 @@ export class McpServerManager {
           modifiers: { type: 'array', items: { type: 'string' }, description: 'Modifier keys (Ctrl, Shift, Alt, Meta)' },
           value: { type: 'string', description: 'Value for select action' },
           site: { type: 'string', description: 'Site domain for login action (uses credential vault)' },
+          clear: { type: 'boolean', description: 'Clear existing content before typing (for type action). Works with both regular inputs and contenteditable fields.' },
           screenshot: { type: 'boolean', description: 'Attach screenshot after action' }
         },
         required: ['action']
@@ -89,7 +90,7 @@ export class McpServerManager {
     },
     {
       name: 'fill',
-      description: 'Fill multiple form fields at once by label text. Use the human-readable label shown on the page (e.g. "Company Name", "Email"), NOT internal field IDs or hex values. Handles text, select, checkbox, textarea, and contenteditable fields.',
+      description: 'Fill multiple form fields at once by label, placeholder, or data-placeholder text. Use the human-readable label shown on the page (e.g. "Company Name", "Email", "What\'s happening?"). Handles text, select, checkbox, textarea, and contenteditable fields (DraftJS, ProseMirror).',
       inputSchema: {
         type: 'object' as const,
         properties: {

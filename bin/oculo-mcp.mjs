@@ -53,7 +53,7 @@ const STATIC_TOOLS = [
   {
     name: 'act',
     description:
-      'Perform an action in Oculo browser: click, navigate, scroll, press key, hover, type, login. Elements found by text, role, label, or placeholder.',
+      'Perform an action in Oculo browser: click, navigate, scroll, press key, hover, type, login. Elements found by text, role, label, placeholder, or data-placeholder (contenteditable).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -72,6 +72,7 @@ const STATIC_TOOLS = [
         modifiers: { type: 'array', items: { type: 'string' }, description: 'Modifier keys (Ctrl, Shift, Alt, Meta)' },
         value: { type: 'string', description: 'Value for select action' },
         site: { type: 'string', description: 'Site domain for login action (uses credential vault)' },
+        clear: { type: 'boolean', description: 'Clear existing content before typing (for type action). Works with both regular inputs and contenteditable fields.' },
         screenshot: { type: 'boolean', description: 'Attach screenshot after action' }
       },
       required: ['action']
@@ -79,7 +80,7 @@ const STATIC_TOOLS = [
   },
   {
     name: 'fill',
-    description: 'Fill form fields in Oculo browser by label text. Handles text, select, checkbox, textarea. Use visible labels as keys.',
+    description: 'Fill form fields in Oculo browser by label, placeholder, or data-placeholder text. Handles text, select, checkbox, textarea, and contenteditable (DraftJS, ProseMirror). Use visible labels as keys.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -86,7 +86,7 @@ export class ElementResolver {
           const fallback = [];
           broader.forEach(el => {
             if (!isVisible(el)) return;
-            const elText = (el.textContent?.trim() || el.getAttribute('aria-label') || '').toLowerCase();
+            const elText = (el.getAttribute('data-placeholder') || el.textContent?.trim() || el.getAttribute('aria-label') || '').toLowerCase();
             if (elText === lower || elText.includes(lower)) {
               fallback.push(el);
             }
@@ -99,7 +99,7 @@ export class ElementResolver {
           const roleMap = {
             'button': 'button, [role="button"], input[type="submit"], input[type="button"]',
             'link': 'a, [role="link"]',
-            'textbox': 'input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]), textarea, [role="textbox"]',
+            'textbox': 'input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]), textarea, [role="textbox"], [contenteditable="true"]',
             'checkbox': 'input[type="checkbox"], [role="checkbox"]',
             'radio': 'input[type="radio"], [role="radio"]',
             'combobox': 'select, [role="combobox"], [role="listbox"]',
@@ -157,6 +157,12 @@ export class ElementResolver {
           const inputs = document.querySelectorAll('input[placeholder], textarea[placeholder]');
           for (const input of inputs) {
             if (input.getAttribute('placeholder').toLowerCase().includes(lower) && isVisible(input)) return input;
+          }
+          // Contenteditable elements with data-placeholder or aria-placeholder
+          const ceInputs = document.querySelectorAll('[data-placeholder], [aria-placeholder]');
+          for (const el of ceInputs) {
+            const ph = (el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '').toLowerCase();
+            if (ph.includes(lower) && isVisible(el)) return el;
           }
           return null;
         }
@@ -261,6 +267,15 @@ export class ElementResolver {
         if (!el) return 'Element disappeared';
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.focus();
+        const isContentEditable = el.contentEditable === 'true' || el.getAttribute('role') === 'textbox';
+        if (isContentEditable) {
+          if (${clear ? 'true' : 'false'}) {
+            document.execCommand('selectAll', false, null);
+            document.execCommand('delete', false, null);
+          }
+          document.execCommand('insertText', false, ${JSON.stringify(text)});
+          return 'ok';
+        }
         if (${clear ? 'true' : 'false'}) {
           el.value = '';
           el.dispatchEvent(new Event('input', { bubbles: true }));

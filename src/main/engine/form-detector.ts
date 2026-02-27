@@ -133,6 +133,12 @@ export class FormDetector {
           for (const el of ariaEls) {
             if (el.getAttribute('aria-label').toLowerCase().includes(lower)) return el;
           }
+          // Try data-placeholder / aria-placeholder (contenteditable fields like DraftJS)
+          const cePlaceholders = document.querySelectorAll('[data-placeholder], [aria-placeholder]');
+          for (const el of cePlaceholders) {
+            const ph = (el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '').toLowerCase();
+            if (ph.includes(lower)) return el;
+          }
           // Try name attribute
           const namedEls = document.querySelectorAll('[name]');
           for (const el of namedEls) {
@@ -157,6 +163,14 @@ export class FormDetector {
               }
             }
             return false;
+          }
+          // Contenteditable (DraftJS, ProseMirror, etc.)
+          if (el.contentEditable === 'true' || el.getAttribute('role') === 'textbox') {
+            el.focus();
+            document.execCommand('selectAll', false, null);
+            document.execCommand('delete', false, null);
+            document.execCommand('insertText', false, value);
+            return true;
           }
           // Text input
           const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set
