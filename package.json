@@ -21,7 +21,9 @@
     "dev:public": "OCULO_EDITION=public electron-vite dev",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
-    "clean": "rm -rf out dist node_modules/.cache"
+    "clean": "rm -rf out dist node_modules/.cache",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
@@ -45,7 +47,8 @@
     "react-dom": "^19.0.0",
     "tailwindcss": "^3.4.17",
     "terser": "^5.46.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.18"
   },
   "build": {
     "appId": "com.oculo.browser",
@@ -56,7 +59,11 @@
         "dmg",
         "zip"
       ],
-      "icon": "assets/icons/icon.icns"
+      "icon": "assets/icons/icon.icns",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
     },
     "win": {
       "target": [

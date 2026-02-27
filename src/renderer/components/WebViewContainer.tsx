@@ -129,6 +129,8 @@ export default function WebViewContainer({ tab, isActive, onUpdate }: Props) {
   return (
     <div className={`absolute inset-0 flex flex-col ${isActive ? '' : 'hidden'}`}>
       <webview ref={webviewRef as any} src={initialUrl.current}
+        partition="persist:oculo"
+        preload={`file://${(window as any).oculo?.webviewPreloadPath}`}
         style={{ width: '100%', height: '100%' }}
         {...{ allowpopups: 'true' } as any} />
     </div>

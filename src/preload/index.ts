@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import path from 'path'
 
 // IPC channel constants (duplicated here to avoid import issues in preload)
 const IPC_AUTH = {
@@ -52,7 +53,8 @@ const IPC = {
   FILE_UPLOAD: 'file:upload',
   DOWNLOAD_TRIGGER: 'download:trigger',
   FILE_READ_SAFE: 'file:read-safe',
-  CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image'
+  CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image',
+  A11Y_SNAPSHOT: 'a11y:snapshot',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -158,6 +160,15 @@ const api = {
   addCredential: (domain: string, username: string, password: string) =>
     ipcRenderer.invoke(IPC.VAULT_ADD, domain, username, password),
   deleteCredential: (id: string) => ipcRenderer.invoke(IPC.VAULT_DELETE, id),
+
+  // === Vault Get (for auto-login) ===
+  vaultGet: (domain: string) => ipcRenderer.invoke('vault:get', domain),
+
+  // === TOTP ===
+  vaultTotp: (domain: string): Promise<{ code: string; remainingSeconds: number } | null> =>
+    ipcRenderer.invoke('vault:totp', domain),
+  vaultSetTotp: (domain: string, secret: string): Promise<boolean> =>
+    ipcRenderer.invoke('vault:set-totp', domain, secret),
 
   // === Audit ===
   getAuditLog: (limit?: number) => ipcRenderer.invoke(IPC.AUDIT_QUERY, limit),
@@ -402,7 +413,46 @@ const api = {
   getWebContentsId: (tabId: string): number | null => {
     const wv = webviewRegistry.get(tabId)
     try { return wv?.getWebContentsId?.() ?? null } catch { return null }
-  }
+  },
+
+  // === Accessibility Tree Snapshot (CDP) ===
+  a11ySnapshot: (webContentsId: number): Promise<string> =>
+    ipcRenderer.invoke(IPC.A11Y_SNAPSHOT, webContentsId),
+
+  // === Run Cache (Compile-to-Code) ===
+  runCacheSave: (url: string, steps: any[], description?: string): Promise<string | null> =>
+    ipcRenderer.invoke('run-cache:save', url, steps, description),
+  runCacheFind: (url: string): Promise<any[]> =>
+    ipcRenderer.invoke('run-cache:find', url),
+  runCacheGet: (id: string): Promise<any> =>
+    ipcRenderer.invoke('run-cache:get', id),
+  runCacheMarkFailed: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('run-cache:mark-failed', id),
+  runCacheMarkSuccess: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('run-cache:mark-success', id),
+  runCacheSummary: (domain: string): Promise<string> =>
+    ipcRenderer.invoke('run-cache:summary', domain),
+
+  // === Skills (tested workflows) ===
+  runCacheSkills: (domain?: string): Promise<any> =>
+    ipcRenderer.invoke('run-cache:skills', domain),
+
+  // === Lessons for MCP ===
+  lessonsForDomain: (domain: string): Promise<string> =>
+    ipcRenderer.invoke('lessons:for-domain', domain),
+
+  // === Network Interception (CDP) ===
+  networkIntercept: (webContentsId: number, enable: boolean): Promise<string> =>
+    ipcRenderer.invoke('network:intercept', webContentsId, enable),
+  networkGetBody: (webContentsId: number, requestId: string): Promise<string> =>
+    ipcRenderer.invoke('network:get-body', webContentsId, requestId),
+
+  // === Print to PDF ===
+  printToPDF: (webContentsId: number): Promise<string> =>
+    ipcRenderer.invoke('print:to-pdf', webContentsId),
+
+  // === Webview preload script path (for <webview preload="..."> attribute) ===
+  webviewPreloadPath: path.join(__dirname, 'webview-preload.js'),
 }
 
 contextBridge.exposeInMainWorld('oculo', api)

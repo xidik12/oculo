@@ -57,13 +57,7 @@ export class PermissionGate {
   }
 
   private notify(action: string, details: string): void {
-    if (Notification.isSupported()) {
-      new Notification({
-        title: 'Oculo: Action Performed',
-        body: `${action}: ${details.substring(0, 100)}`,
-        silent: true
-      }).show()
-    }
+    // Skip OS notifications — actions are visible in the chat panel's tool call UI
     this.auditLog.log(action, details, 'success')
   }
 

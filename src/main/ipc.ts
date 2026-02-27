@@ -10,6 +10,7 @@ import { BookmarkStore } from './data/bookmarks'
 import { HistoryStore } from './data/history'
 import { DownloadManager } from './data/downloads'
 import { ZoomStore } from './data/zoom'
+import { RunCache } from './data/run-cache'
 
 export function setupIPC(
   mainWindow: BrowserWindow,
@@ -20,7 +21,8 @@ export function setupIPC(
   bookmarkStore?: BookmarkStore,
   historyStore?: HistoryStore,
   downloadManager?: DownloadManager,
-  zoomStore?: ZoomStore
+  zoomStore?: ZoomStore,
+  runCache?: RunCache
 ): void {
   // Tab management - forwarded to renderer
   ipcMain.handle(IPC.TAB_CREATE, async (_, url?: string) => {
@@ -74,6 +76,16 @@ export function setupIPC(
 
   ipcMain.handle(IPC.VAULT_GET, async (_, domain: string) => {
     return security.getCredential(domain)
+  })
+
+  // TOTP generation
+  ipcMain.handle('vault:totp', async (_, domain: string) => {
+    return security.generateTOTP(domain)
+  })
+
+  // Set TOTP secret
+  ipcMain.handle('vault:set-totp', async (_, domain: string, secret: string) => {
+    return security.setTotpSecret(domain, secret)
   })
 
   // Audit
@@ -239,7 +251,7 @@ export function setupIPC(
 
   // === Screenshot Save (Phase 1) ===
   ipcMain.handle(IPC.SCREENSHOT_SAVE, async (_, base64Png: string) => {
-    const dir = path.join(app.getPath('temp'), 'oculo-screenshots')
+    const dir = path.join(app.getPath('pictures'), 'Oculo')
     fs.mkdirSync(dir, { recursive: true })
     const filePath = path.join(dir, `screenshot-${Date.now()}.png`)
     const buffer = Buffer.from(base64Png, 'base64')
@@ -249,8 +261,9 @@ export function setupIPC(
 
   // === File Upload via CDP (Phase 2) ===
   ipcMain.handle(IPC.FILE_UPLOAD, async (_, wcId: number, selector: string, filePaths: string[]) => {
-    // Validate file paths — only allow temp, downloads, desktop
+    // Validate file paths — only allow pictures, temp, downloads, desktop
     const allowedDirs = [
+      app.getPath('pictures'),
       app.getPath('temp'),
       app.getPath('downloads'),
       app.getPath('desktop'),
@@ -259,7 +272,7 @@ export function setupIPC(
       const resolved = path.resolve(fp)
       const allowed = allowedDirs.some(dir => resolved.startsWith(dir))
       if (!allowed) {
-        return `Error: File path "${fp}" is outside allowed directories (temp, downloads, desktop)`
+        return `Error: File path "${fp}" is outside allowed directories (pictures, temp, downloads, desktop)`
       }
       if (!fs.existsSync(resolved)) {
         return `Error: File not found: ${fp}`
@@ -331,6 +344,97 @@ export function setupIPC(
     }
   })
 
+  // === Accessibility Tree Snapshot via CDP ===
+  ipcMain.handle('a11y:snapshot', async (_, wcId: number) => {
+    try {
+      const wc = webContents.fromId(wcId)
+      if (!wc || wc.isDestroyed()) return 'Error: WebContents not found'
+
+      wc.debugger.attach('1.3')
+      try {
+        // Get the full accessibility tree from Chrome
+        const { nodes } = await wc.debugger.sendCommand('Accessibility.getFullAXTree', {})
+
+        // Process nodes into a compact format
+        const lines: string[] = []
+        let refIndex = 0
+
+        // Map nodeId -> node for parent lookup
+        const nodeMap = new Map<string, any>()
+        for (const node of nodes) {
+          nodeMap.set(node.nodeId, node)
+        }
+
+        for (const node of nodes) {
+          const role = node.role?.value || ''
+          const name = node.name?.value || ''
+          const value = node.value?.value || ''
+          const description = node.description?.value || ''
+
+          // Skip generic/structural roles
+          if (['none', 'generic', 'GenericContainer', 'InlineTextBox', 'StaticText', 'paragraph', 'Section', 'Div', 'group'].includes(role)) continue
+          // Skip ignored nodes
+          if (node.ignored) continue
+          // Skip nodes with no useful info
+          if (!name && !value && !description) continue
+
+          // Determine if this is an interactive element
+          const interactive = ['textbox', 'button', 'link', 'checkbox', 'radio', 'combobox',
+            'searchbox', 'slider', 'spinbutton', 'switch', 'tab', 'menuitem',
+            'menuitemcheckbox', 'menuitemradio', 'option', 'treeitem'].includes(role)
+
+          // Determine if this is a structural/info element worth showing
+          const structural = ['heading', 'navigation', 'main', 'complementary', 'banner',
+            'contentinfo', 'form', 'dialog', 'alertdialog', 'alert', 'status',
+            'img', 'figure', 'table', 'list', 'listitem', 'article', 'region',
+            'tablist', 'tabpanel', 'menu', 'menubar', 'toolbar', 'tree'].includes(role)
+
+          if (!interactive && !structural) continue
+
+          // Build the line
+          let line = ''
+          if (interactive) {
+            refIndex++
+            line = `  [${refIndex}] ${role}`
+          } else {
+            line = `  ${role}`
+          }
+
+          if (name) line += ` "${name.substring(0, 80)}"`
+
+          // Add properties
+          const props: string[] = []
+          if (value) props.push(`value="${value.substring(0, 40)}"`)
+          if (node.properties) {
+            for (const prop of node.properties) {
+              if (prop.name === 'checked' && prop.value?.value) props.push('checked')
+              if (prop.name === 'selected' && prop.value?.value) props.push('selected')
+              if (prop.name === 'disabled' && prop.value?.value) props.push('disabled')
+              if (prop.name === 'required' && prop.value?.value) props.push('required')
+              if (prop.name === 'expanded' && prop.value?.value !== undefined) props.push(prop.value.value ? 'expanded' : 'collapsed')
+              if (prop.name === 'focused' && prop.value?.value) props.push('focused')
+              if (prop.name === 'level' && prop.value?.value) props.push(`level=${prop.value.value}`)
+            }
+          }
+          if (props.length) line += ` (${props.join(', ')})`
+
+          lines.push(line)
+        }
+
+        // Add URL and title at the top
+        const url = wc.getURL()
+        const title = wc.getTitle()
+        const header = `URL: ${url}\nTitle: ${title}\n\nAccessibility tree (${refIndex} interactive elements):`
+
+        return header + '\n' + lines.join('\n')
+      } finally {
+        try { wc.debugger.detach() } catch { /* already detached */ }
+      }
+    } catch (err) {
+      return `Error: Failed to get accessibility tree — ${(err as Error).message}`
+    }
+  })
+
   // === Clipboard Write Image (Phase 5) ===
   ipcMain.handle(IPC.CLIPBOARD_WRITE_IMAGE, async (_, base64Png: string) => {
     try {
@@ -341,5 +445,137 @@ export function setupIPC(
     } catch {
       return false
     }
+  })
+
+  // === Run Cache (Compile-to-Code) ===
+  ipcMain.handle('run-cache:save', async (_, url: string, steps: any[], description?: string) => {
+    return runCache?.saveWorkflow(url, steps, description) || null
+  })
+
+  ipcMain.handle('run-cache:find', async (_, url: string) => {
+    return runCache?.findForUrl(url) || []
+  })
+
+  ipcMain.handle('run-cache:get', async (_, id: string) => {
+    return runCache?.getWorkflow(id) || null
+  })
+
+  ipcMain.handle('run-cache:mark-failed', async (_, id: string) => {
+    runCache?.markFailed(id)
+    return true
+  })
+
+  ipcMain.handle('run-cache:mark-success', async (_, id: string) => {
+    runCache?.markSuccess(id)
+    return true
+  })
+
+  ipcMain.handle('run-cache:summary', async (_, domain: string) => {
+    return runCache?.getSummaryForDomain(domain) || ''
+  })
+
+  // === Skills (tested workflows) ===
+  ipcMain.handle('run-cache:skills', async (_, domain?: string) => {
+    if (domain) return runCache?.getSkillsForDomain(domain) || []
+    return runCache?.getSkillsSummary() || ''
+  })
+
+  // === Print to PDF ===
+  ipcMain.handle('print:to-pdf', async (_, wcId: number) => {
+    try {
+      const wc = webContents.fromId(wcId)
+      if (!wc || wc.isDestroyed()) return 'Error: WebContents not found'
+      const pdfData = await wc.printToPDF({
+        printBackground: true,
+        landscape: false,
+        margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 }
+      })
+      const dir = path.join(app.getPath('temp'), 'oculo-pdfs')
+      fs.mkdirSync(dir, { recursive: true })
+      const filePath = path.join(dir, `page-${Date.now()}.pdf`)
+      fs.writeFileSync(filePath, pdfData)
+      return filePath
+    } catch (err) {
+      return `Error: PDF generation failed — ${(err as Error).message}`
+    }
+  })
+
+  // === Network Interception via CDP ===
+  ipcMain.handle('network:intercept', async (_, wcId: number, enable: boolean) => {
+    try {
+      const wc = webContents.fromId(wcId)
+      if (!wc || wc.isDestroyed()) return 'Error: WebContents not found'
+
+      if (enable) {
+        // Start intercepting
+        try { wc.debugger.attach('1.3') } catch { /* already attached */ }
+        await wc.debugger.sendCommand('Network.enable', {})
+
+        // Store captured requests in a map
+        if (!(wc as any).__oculo_network) {
+          (wc as any).__oculo_network = []
+        }
+
+        wc.debugger.on('message', (_event: any, method: string, params: any) => {
+          if (method === 'Network.responseReceived') {
+            const entry = {
+              url: params.response?.url || '',
+              status: params.response?.status || 0,
+              mimeType: params.response?.mimeType || '',
+              method: params.type || 'GET',
+              requestId: params.requestId,
+              headers: params.response?.headers || {}
+            }
+            ;(wc as any).__oculo_network.push(entry)
+            // Cap at 100 entries
+            if ((wc as any).__oculo_network.length > 100) {
+              (wc as any).__oculo_network = (wc as any).__oculo_network.slice(-50)
+            }
+          }
+        })
+
+        return 'Network interception started via CDP'
+      } else {
+        // Return captured data and stop
+        const data = (wc as any).__oculo_network || []
+        try { wc.debugger.detach() } catch { /* not attached */ }
+        ;(wc as any).__oculo_network = []
+        return JSON.stringify(data.slice(-20))
+      }
+    } catch (err) {
+      return `Error: ${(err as Error).message}`
+    }
+  })
+
+  // === Get response body for a specific request ===
+  ipcMain.handle('network:get-body', async (_, wcId: number, requestId: string) => {
+    try {
+      const wc = webContents.fromId(wcId)
+      if (!wc || wc.isDestroyed()) return 'Error: WebContents not found'
+
+      const { body, base64Encoded } = await wc.debugger.sendCommand('Network.getResponseBody', { requestId })
+      if (base64Encoded) {
+        return '(base64 encoded, ' + body.length + ' chars)'
+      }
+      return body.substring(0, 5000) // Cap at 5KB
+    } catch (err) {
+      return `Error: ${(err as Error).message}`
+    }
+  })
+
+  // === Lessons for MCP ===
+  ipcMain.handle('lessons:for-domain', async (_, domain: string) => {
+    if (!agent) return ''
+    try {
+      const lessons = agent.getLessons()
+      // Filter lessons relevant to this domain
+      const relevant = lessons.filter((l: any) =>
+        l.text.toLowerCase().includes(domain.toLowerCase()) ||
+        l.text.toLowerCase().includes(domain.split('.').slice(-2, -1)[0]?.toLowerCase() || '')
+      )
+      if (!relevant.length) return ''
+      return '\nLearned from past experience on this site:\n' +
+        relevant.map((l: any) => '  - ' + l.text).join('\n')
+    } catch { return '' }
   })
 }

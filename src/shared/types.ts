@@ -206,6 +206,8 @@ export interface AppSettings {
   auditRetentionDays: number
   redactionEnabled: boolean
   customRedactionPatterns: string[]
+  /** Persisted AI provider configs (API keys, enabled state) */
+  aiProviders?: Record<string, { apiKey?: string; enabled?: boolean; modelId?: string }>
 }
 
 // IPC message types

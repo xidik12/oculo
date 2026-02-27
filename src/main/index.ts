@@ -1,4 +1,8 @@
-import { app, BrowserWindow, shell, nativeTheme, nativeImage, Menu, clipboard, ipcMain, webContents, WebContentsView } from 'electron'
+// Ignore EPIPE errors on stdout/stderr (broken pipe when parent process closes)
+process.stdout?.on('error', (err: any) => { if (err.code !== 'EPIPE') throw err })
+process.stderr?.on('error', (err: any) => { if (err.code !== 'EPIPE') throw err })
+
+import { app, BrowserWindow, shell, nativeTheme, nativeImage, Menu, clipboard, ipcMain, webContents, WebContentsView, session as electronSession } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
@@ -8,6 +12,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 // (disableHardwareAcceleration breaks webview compositing on macOS Sequoia + Electron 34)
 app.commandLine.appendSwitch('disable-gpu-sandbox')
 app.commandLine.appendSwitch('ignore-gpu-blocklist')
+app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
 import { setupIPC } from './ipc'
 import { createMenu } from './menu'
 import { McpServerManager } from './mcp/server'
@@ -19,11 +24,12 @@ import { BookmarkStore } from './data/bookmarks'
 import { HistoryStore } from './data/history'
 import { DownloadManager } from './data/downloads'
 import { ZoomStore } from './data/zoom'
+import { RunCache } from './data/run-cache'
 
-/** Clean up temp files older than 1 hour from oculo-screenshots/ and oculo-generated/ */
+/** Clean up temp files older than 1 hour (only transient dirs, NOT ~/Pictures/Oculo) */
 function cleanupTempFiles(): void {
   const tempDir = app.getPath('temp')
-  const dirs = ['oculo-screenshots', 'oculo-generated']
+  const dirs = ['oculo-pdfs']
   const maxAge = 60 * 60 * 1000 // 1 hour
 
   for (const dirName of dirs) {
@@ -55,6 +61,7 @@ let bookmarkStore: BookmarkStore | null = null
 let historyStore: HistoryStore | null = null
 let downloadManager: DownloadManager | null = null
 let zoomStore: ZoomStore | null = null
+let runCache: RunCache | null = null
 
 function createWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
@@ -99,6 +106,13 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // Anti-bot: clean user-agent string (remove Electron/version from UA)
+  const defaultUA = mainWindow.webContents.getUserAgent()
+  const cleanUA = defaultUA
+    .replace(/\s*Electron\/[\d.]+/, '')
+    .replace(/\s*oculo\/[\d.]+/i, '')
+  mainWindow.webContents.setUserAgent(cleanUA)
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
@@ -139,6 +153,85 @@ app.whenReady().then(async () => {
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
+  })
+
+  // --- Passkey / WebAuthn / Permissions (set ONCE on persistent session) ---
+  const webviewSession = electronSession.fromPartition('persist:oculo')
+
+  // Permission REQUEST handler — called when site uses WebAuthn, media, etc.
+  webviewSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    const blocked = ['openExternal']
+    callback(!blocked.includes(permission))
+  })
+
+  // Permission CHECK handler — called BEFORE request; must return true or request is silently blocked
+  webviewSession.setPermissionCheckHandler((_wc, permission) => {
+    const blocked = ['openExternal']
+    return !blocked.includes(permission)
+  })
+
+  // Device permission handler — auto-grant HID/USB for FIDO2/WebAuthn hardware keys
+  webviewSession.setDevicePermissionHandler((details) => {
+    if (details.deviceType === 'hid' || details.deviceType === 'usb') return true
+    return false
+  })
+
+  // HID device selection (YubiKey, Titan, etc.) — must be on SESSION, not app
+  webviewSession.on('select-hid-device', (event, details, callback) => {
+    event.preventDefault()
+    if (details.deviceList?.length > 0) {
+      callback(details.deviceList[0].deviceId)
+    } else {
+      callback('')
+    }
+  })
+
+  // USB device selection (USB-based security keys)
+  webviewSession.on('select-usb-device', (event, details, callback) => {
+    event.preventDefault()
+    if (details.deviceList?.length > 0) {
+      callback(details.deviceList[0].deviceId)
+    } else {
+      callback()
+    }
+  })
+
+  // Spoof Sec-CH-UA headers so Google recognizes us as Chrome (enables passkey UI)
+  webviewSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://accounts.google.com/*', 'https://*.google.com/*', 'https://*.gstatic.com/*'] },
+    (details, callback) => {
+      const headers = { ...details.requestHeaders }
+      headers['Sec-CH-UA'] = '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"'
+      headers['Sec-CH-UA-Mobile'] = '?0'
+      headers['Sec-CH-UA-Platform'] = '"macOS"'
+      headers['Sec-CH-UA-Full-Version-List'] = '"Not A(Brand";v="8.0.0.0", "Chromium";v="132.0.6834.210", "Google Chrome";v="132.0.6834.210"'
+      callback({ requestHeaders: headers })
+    }
+  )
+
+  webviewSession.setSpellCheckerEnabled(false)
+
+  // Per-webview anti-bot + UA cleanup (still needed per-webview for UA string)
+  app.on('web-contents-created', (_, wc) => {
+    if (wc.getType() !== 'webview') return
+
+    // Anti-bot: clean user-agent for webview (remove Electron marker)
+    const defaultWvUA = wc.getUserAgent()
+    const cleanWvUA = defaultWvUA
+      .replace(/\s*Electron\/[\d.]+/, '')
+      .replace(/\s*oculo\/[\d.]+/i, '')
+    wc.setUserAgent(cleanWvUA)
+
+    // Anti-bot: patch navigator.webdriver and clean fingerprint
+    wc.on('dom-ready', () => {
+      wc.executeJavaScript(`
+        try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined }) } catch {}
+        try { Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] }) } catch {}
+        if (window.chrome === undefined) {
+          try { Object.defineProperty(window, 'chrome', { get: () => ({ runtime: {}, csi: () => ({}), loadTimes: () => ({}) }) }) } catch {}
+        }
+      `).catch(() => {})
+    })
   })
 
   // Context menu for webview pages (right-click → Inspect Element, Copy, etc.)
@@ -374,6 +467,7 @@ app.whenReady().then(async () => {
   bookmarkStore = new BookmarkStore()
   historyStore = new HistoryStore()
   zoomStore = new ZoomStore()
+  runCache = new RunCache()
 
   // Create window
   const window = createWindow()
@@ -395,6 +489,16 @@ app.whenReady().then(async () => {
   // Initialize AI agent (lazy — only connects when user sends a message)
   agentController = new AgentController(window)
 
+  // Wire up persistence — save API keys to settings.json, restore on startup
+  const allSettings = securityManager.getSettings()
+  const savedProviders = (allSettings as any)?.aiProviders as Record<string, any> | undefined
+  console.log('[Oculo] Restoring provider configs:', savedProviders ? Object.keys(savedProviders) : 'none')
+
+  agentController.setPersistence(
+    (configs) => securityManager.saveSettings({ aiProviders: configs } as any),
+    savedProviders
+  )
+
   // Wire up MCP server to receive provider configs from agent for media generation
   const originalSetConfig = agentController.setProviderConfig.bind(agentController)
   agentController.setProviderConfig = (config: any) => {
@@ -402,8 +506,16 @@ app.whenReady().then(async () => {
     mcpServer?.setProviderConfigs(agentController.getProviderConfigs())
   }
 
+  // Push restored configs to MCP server so media generation works on startup
+  const agentConfigs = agentController.getProviderConfigs()
+  console.log('[Oculo] Agent has configs for:', [...agentConfigs.keys()])
+  if (agentConfigs.size > 0) {
+    mcpServer?.setProviderConfigs(agentConfigs)
+    console.log('[Oculo] Pushed configs to MCP server')
+  }
+
   // Setup IPC handlers (after agent init so chat handlers are wired)
-  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore)
+  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

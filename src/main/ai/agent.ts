@@ -8,6 +8,7 @@ import { BrowserWindow } from 'electron'
 import { ChatMessage, ChatToolCall, ChatStreamEvent } from '../../shared/types'
 import { AIProviderId, AIProviderStatus, AIProviderConfig } from '../../shared/ai-types'
 import { OAuthManager } from './oauth-manager'
+import { LessonStore } from './lessons'
 
 const PORT_FILE = path.join(os.homedir(), '.oculo-port')
 
@@ -25,38 +26,80 @@ function safeTruncate(str: string, maxLen: number): string {
  * IMPORTANT: Must start with the Claude Code identification string
  * for OAuth subscription authentication to work.
  */
-const SYSTEM_PROMPT = `You are an AI browser assistant in Oculo. You control web pages via tools.
+const SYSTEM_PROMPT = `You are Oculo, an AI browser assistant. You control the browser through tools to complete tasks.
 
-Tools: page (see page), act (actions), fill (forms), read (extract), run (pipeline), devtools (inspect), media (generate images/videos).
+TOOLS:
+- page: See what's on screen. Default: compact (~30-80 tokens). Use detail="a11y" for accessibility tree — better for complex React forms.
+- act: Browser actions — click, type, navigate, scroll, press, screenshot, upload, download, autoLogin, extractPDF, monitorNetwork, monitorWebSocket, checkDialogs, printToPDF
+- fill: Fill form fields by visible label text. Pass {fields: {"Label": "value"}}
+- read: Extract text/lists/tables from the page
+- run: Execute multiple steps in sequence
+- media: Generate images or videos from text prompts. Returns saved file path.
+  - Images: Nano Banana 2 (default), Nano Banana Pro (best quality), Nano Banana (fastest), DALL-E 3, Stability AI
+  - Videos: Veo 3.1 (async, 4-8 sec, 720p) — polls until ready, saves MP4
+  - All use the Gemini API key from Settings. OpenAI/Stability need their own keys.
 
-Key capabilities:
-- act screenshot → capture page, returns file path
-- act upload → inject file into file input (no dialog), provide path in value
-- act clipboardImage → copy page screenshot to clipboard
-- media image → generate image from prompt, returns file path
-- media video → generate video from prompt, returns file path
-- act download → save URL to disk
-- act readFile → read text content of file (value = path)
-- act listDownloads → list recent downloads with paths
+MEDIA WORKFLOW (generate → upload → post):
+- Generate image: media({type:"image", prompt:"..."}) → returns file path
+- Generate video: media({type:"video", prompt:"...", duration:6}) → returns file path (takes 11s-6min)
+- Screenshot: act({action:"screenshot"}) → returns file path
+- Upload any of them: act({action:"upload", selector:"input[type=file]", value:"/path/from/above"})
+- Example: "Post about Oculo on X with an image" → media to generate → navigate to X → compose tweet → upload image → click Post
 
-FORM FILLING STRATEGY:
-1. First try fill tool with field labels from page output
-2. If fill reports "Not found" fields, use act type with the CSS selector shown in page output
-3. For React/SPA sites: act type with selector is more reliable than fill
-4. Always verify: after filling, call page to confirm field values
-5. Rich text editors (X, Facebook, LinkedIn): use act type, NOT fill
+CRITICAL RULES:
+- NEVER regenerate media if you already have a file path from a previous media/screenshot call. Reuse the path.
+- After uploading an image/file to a compose box, your NEXT step is to click the Post/Submit/Send button. Do NOT loop.
+- When a task has a clear final action (Post, Submit, Send, Publish), execute it immediately — don't restart the workflow.
+- For knowledge/research questions, use what you already know FIRST. Only browse if you genuinely need live data.
+- Minimize tool calls. Each call should make concrete progress. If you're repeating an action, STOP and try a different approach.
+- NEVER click the same button or perform the same action more than twice in a row.
 
-WORKFLOW:
-1. PLAN: Short numbered plan (3-7 steps)
-2. EXECUTE: Batch with run tool when possible
-3. VERIFY: Check results with page before reporting done
-4. ANSWER: Summarize what you did
+HOW TO WORK:
+1. Call page to see the current state — it shows numbered clickable elements (#1, #2, etc.)
+2. Click by ref number: act({action:"click", text:"#3"}) — fastest and most reliable
+3. Use fill with ALL fields at once for forms
+4. Every action auto-returns the current page state — you rarely need to call page again
+5. If fill fails on a complex form, call page({detail:"a11y"}) to get the accessibility tree, then use CSS selectors
 
-Rules:
-- File paths from screenshot/media can be used in upload actions
-- Cross-origin iframes: use act clickAtPoint
-- Minimize tool calls, batch with run
-- If a tool fails, try a different approach — don't retry the same call`
+ERROR RECOVERY:
+- If an action fails, NEVER retry the exact same action. Try a different approach:
+  1. Use page({detail:"a11y"}) to see the full accessibility tree
+  2. Try a CSS selector instead of text: act({action:"click", selector:"button.submit"})
+  3. Try act type with selector instead of fill for React controlled inputs
+- If fill can't find fields, the page might use React/generated IDs. Use page({detail:"a11y"}) to see field names, then use CSS selectors as fill keys: fill({fields:{"#field-id":"value"}})
+
+ASK THE USER when you encounter:
+- Questions with choices (Yes/No, Yep/Nope, options) — read the question text nearby and ask the user what to choose
+- Decisions that affect their account (privacy settings, billing, open-source licensing)
+- Irreversible actions (delete, submit payment, publish publicly)
+- Anything ambiguous where you're unsure what they want
+Do NOT blindly click Yes/Yep/OK/Confirm without understanding the question.
+
+TIPS:
+- Clickable elements are numbered (#1, #2...). Click by number: act({action:"click", text:"#5"})
+- Each element shows context: '#3 button: Yep — "Is this open source?"' tells you what the button does
+- Fill ALL form fields at once: fill({fields:{"Ship Name":"Oculo","URL":"https://oculo.app"}})
+- For file uploads: act({action:"upload", selector:"input[type=file]", value:"/path/to/file"})
+- Rich text editors: act({action:"type", selector:"[contenteditable]", text:"..."})
+- Don't use devtools unless the user asks to inspect/debug something
+- After each action you get the current page state automatically — don't call page unless the state is unclear
+- NEVER reload or navigate to the same URL while filling a form — you'll lose all entered data
+- If a button isn't visible, just click it — the browser will auto-scroll to it
+- The user may interact with the page while you work — adapt and continue
+- When the user answers a question (like "no" to open source), remember it — don't ask again
+- Keep responses to 1-2 sentences
+- Auto-login: act({action:"autoLogin"}) detects login forms and fills from vault (supports TOTP 2FA)
+- PDF extraction: act({action:"extractPDF"}) extracts text from PDF pages
+- Network monitoring: act({action:"monitorNetwork"}) intercepts fetch/XHR requests
+- WebSocket monitoring: act({action:"monitorWebSocket"}) captures WS/SSE messages
+
+LEARNING:
+When the user corrects you or you discover something important about how a website works, call the learn tool to remember it.
+Examples of when to learn:
+- User says "don't click that" → learn("On shipordie.club, 'Yep/Nope' buttons are for the open source question, not for submitting")
+- You discover a form needs a specific flow → learn("shipordie.club: must click My Fleet → + NEW SHIP before form appears")
+- A fill approach fails → learn("React apps need act type with selector instead of fill for controlled inputs")
+Your lessons persist across sessions — you get smarter over time.`
 
 /**
  * Anthropic tool format for the 5 MCP browser tools
@@ -64,11 +107,12 @@ Rules:
 const ANTHROPIC_TOOLS = [
   {
     name: 'page',
-    description: 'Get current page info: URL, title, headings, fields, buttons, links, editable areas, iframes.',
+    description: 'Get current page info. Default: compact (URL, headings, fields, buttons, links ~30-80 tokens). Use detail="a11y" for full accessibility tree — better for complex forms.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        scope: { type: 'string', description: 'CSS selector to scope to a section' }
+        scope: { type: 'string', description: 'CSS selector to scope to a section' },
+        detail: { type: 'string', enum: ['compact', 'a11y'], description: 'compact (default) or a11y (accessibility tree ~200-500 tokens)' }
       }
     }
   },
@@ -84,11 +128,16 @@ const ANTHROPIC_TOOLS = [
             'click', 'doubleClick', 'tripleClick', 'rightClick', 'clickAtPoint',
             'type', 'focus', 'clear', 'selectAll', 'copy', 'paste',
             'navigate', 'back', 'forward', 'reload', 'newTab',
-            'scroll', 'scrollIntoView', 'press', 'hover', 'select',
-            'wait', 'waitForElement', 'dragAndDrop',
-            'evaluate', 'getAttribute', 'upload', 'login',
-            'screenshot', 'switchTab', 'closeTab',
-            'download', 'listDownloads', 'readFile', 'clipboardImage'
+            'scroll', 'scrollIntoView', 'smartScroll', 'press', 'hover', 'select',
+            'wait', 'waitForElement', 'waitForText', 'waitForNetworkIdle', 'dragAndDrop',
+            'evaluate', 'getAttribute', 'upload', 'login', 'autoLogin',
+            'screenshot', 'screenshotSoM', 'screenshotElement', 'switchTab', 'closeTab', 'listTabs',
+            'download', 'listDownloads', 'readFile', 'clipboardImage',
+            'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate',
+            'recordStart', 'recordStop',
+            'extractPDF', 'monitorWebSocket',
+            'checkDialogs', 'printToPDF',
+            'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork'
           ]
         },
         text: { type: 'string', description: 'Element text or text to type/evaluate' },
@@ -107,11 +156,11 @@ const ANTHROPIC_TOOLS = [
   },
   {
     name: 'fill',
-    description: 'Fill form fields by label. For rich text editors use act type instead.',
+    description: 'Fill form fields by visible label text. For rich text editors use act type instead.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        fields: { type: 'object', description: 'Label→value map' },
+        fields: { type: 'object', description: 'Object: visible label text → value. Use labels shown on page, NOT internal IDs. E.g. {"Company Name":"Oculo","Email":"hi@oculo.com"}. Use "#id" or "[name=x]" CSS selectors for unlabeled fields.' },
         submit: { description: 'true or button text' }
       },
       required: ['fields']
@@ -132,11 +181,13 @@ const ANTHROPIC_TOOLS = [
   },
   {
     name: 'run',
-    description: 'Multi-step pipeline. Each step: {page:{}}, {act:{}}, {fill:{}}, {read:{}}, {wait:{}}.',
+    description: 'Multi-step pipeline. Successful runs are cached — use workflow ID to replay instantly. Each step: {page:{}}, {act:{}}, {fill:{}}, {read:{}}, {wait:{}}.',
     input_schema: {
       type: 'object' as const,
       properties: {
         steps: { type: 'array', items: { type: 'object' } },
+        workflow: { type: 'string', description: 'Replay cached workflow by ID' },
+        description: { type: 'string', description: 'What this pipeline does (for caching)' },
         returnAll: { type: 'boolean' }
       },
       required: ['steps']
@@ -158,18 +209,30 @@ const ANTHROPIC_TOOLS = [
   },
   {
     name: 'media',
-    description: 'Generate images or videos. Returns saved file path. Reuses Gemini/OpenAI keys.',
+    description: 'Generate images (Nano Banana 2 / DALL-E 3) or videos (Veo 3.1). Returns saved file path. Uses Gemini API key.',
     input_schema: {
       type: 'object' as const,
       properties: {
         type: { type: 'string', enum: ['image', 'video'], description: 'Generate image or video' },
         prompt: { type: 'string', description: 'What to create' },
-        size: { type: 'string', description: '1024x1024, 1792x1024, etc.' },
+        model: { type: 'string', description: 'Image model: nano-banana-2 (default), nano-banana-pro (best quality), nano-banana (fastest)' },
+        size: { type: 'string', description: 'Image: 1024x1024, 2K, 4K. Video: 16:9, 9:16' },
         style: { type: 'string', description: 'natural, vivid, cinematic, anime' },
-        provider: { type: 'string', description: 'Override: gemini, openai, stability, runway, kling' },
-        duration: { type: 'number', description: 'Video duration in seconds' }
+        provider: { type: 'string', description: 'Override: gemini, openai, stability' },
+        duration: { type: 'number', description: 'Video duration: 4, 6, or 8 seconds' }
       },
       required: ['type', 'prompt']
+    }
+  },
+  {
+    name: 'learn',
+    description: 'Save a lesson for future sessions. Call when the user corrects you or you discover how a website works.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        lesson: { type: 'string', description: 'What you learned (be specific — include the website name and what to do/not do)' }
+      },
+      required: ['lesson']
     }
   }
 ]
@@ -192,12 +255,14 @@ export class AgentController {
   private claudePath: string | null = null
   private shellEnv: Record<string, string> | null = null
   private oauth = new OAuthManager()
+  private lessons = new LessonStore()
   private messageCount = 0
   private activeProvider: AIProviderId = 'claude'
   private activeModel: string = 'claude-sonnet-4-6'
   private providerConfigs: Map<AIProviderId, AIProviderConfig> = new Map()
   private currentAbort: AbortController | null = null
   private conversationHistory: Array<{ role: string; content: any }> = []
+  private persistFn: ((configs: Record<string, any>) => void) | null = null
 
   constructor(mainWindow: BrowserWindow) {
     this.mainWindow = mainWindow
@@ -205,6 +270,30 @@ export class AgentController {
     this.initShellEnv()
     this.oauth.loadOAuthToken()
     this.oauth.loadCodexToken(this.providerConfigs)
+  }
+
+  /** Wire up persistence — called from index.ts after SecurityManager is ready */
+  setPersistence(
+    save: (configs: Record<string, any>) => void,
+    initial?: Record<string, { apiKey?: string; enabled?: boolean; modelId?: string }>
+  ): void {
+    this.persistFn = save
+    // Restore saved configs
+    if (initial) {
+      for (const [id, cfg] of Object.entries(initial)) {
+        this.providerConfigs.set(id as AIProviderId, {
+          providerId: id as AIProviderId,
+          apiKey: cfg.apiKey || '',
+          enabled: cfg.enabled ?? true,
+          modelId: cfg.modelId
+        } as AIProviderConfig)
+      }
+    }
+  }
+
+  /** Get the dynamic system prompt with learned lessons appended */
+  private getSystemPrompt(): string {
+    return SYSTEM_PROMPT + this.lessons.toPromptSection()
   }
 
   // === Shell env for CLI mode ===
@@ -307,6 +396,13 @@ export class AgentController {
   }
 
   private async callMcpTool(name: string, args: Record<string, unknown>): Promise<string> {
+    // Handle learn tool locally — no MCP needed
+    if (name === 'learn') {
+      const lesson = String(args.lesson || '')
+      if (!lesson) return 'Error: lesson text is required'
+      return this.lessons.add(lesson)
+    }
+
     const conn = this.getMcpConnection()
     if (!conn) return 'Error: Oculo MCP server not running. Cannot interact with browser.'
 
@@ -342,7 +438,9 @@ export class AgentController {
         })
       })
       req.on('error', (err) => resolve(`Error calling tool: ${err.message}`))
-      req.setTimeout(30_000, () => { req.destroy(); resolve('Tool call timed out after 30s') })
+      // Media generation can take 10-60s+ (Veo 3.1 up to 6min), screenshots/uploads need time too
+      const timeout = (name === 'media') ? 600_000 : 120_000
+      req.setTimeout(timeout, () => { req.destroy(); resolve(`Tool call timed out after ${timeout / 1000}s`) })
       req.write(body)
       req.end()
     })
@@ -359,11 +457,27 @@ export class AgentController {
 
   setProviderConfig(config: AIProviderConfig): void {
     this.providerConfigs.set(config.providerId, config)
+    // Persist to disk
+    if (this.persistFn) {
+      const serialized: Record<string, any> = {}
+      for (const [id, cfg] of this.providerConfigs) {
+        serialized[id] = { apiKey: cfg.apiKey, enabled: cfg.enabled, modelId: (cfg as any).modelId }
+      }
+      this.persistFn(serialized)
+    }
   }
 
   /** Get all provider configs (for media generation API key lookup) */
   getProviderConfigs(): Map<AIProviderId, AIProviderConfig> {
     return this.providerConfigs
+  }
+
+  getLessons(): Array<{ id: string; text: string; timestamp: number }> {
+    return this.lessons.getAll()
+  }
+
+  removeLesson(id: string): boolean {
+    return this.lessons.remove(id)
   }
 
   getProviderStatus(providerId: AIProviderId): AIProviderStatus {
@@ -498,12 +612,16 @@ export class AgentController {
 
   private async handleAnthropicWithTools(token: string, authMode: 'api-key' | 'oauth'): Promise<void> {
     this.currentAbort = new AbortController()
-    const MAX_TOOL_ROUNDS = 25
+    const MAX_TOOL_ROUNDS = 15
 
     try {
       let fullAssistantText = ''
       let totalInputTokens = 0
       let totalOutputTokens = 0
+      let lastToolSignature = '' // Track duplicate calls
+      let consecutiveDupes = 0
+      const toolCallCounts: Record<string, number> = {} // Track how many times each tool is called
+      const mediaFilePaths: string[] = [] // Track generated media file paths
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.pruneHistory()
@@ -534,16 +652,56 @@ export class AgentController {
           break
         }
 
+        // Detect duplicate tool calls (same name + same args = stuck in a loop)
+        const currentSig = toolUses.map(t => `${t.name}:${JSON.stringify(t.input)}`).join('|')
+        if (currentSig === lastToolSignature) {
+          consecutiveDupes++
+          if (consecutiveDupes >= 1) {
+            console.log(`[Oculo] Detected stuck loop — same tools called ${consecutiveDupes + 1} times in a row. Breaking.`)
+            const stuckMsg = "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
+            fullAssistantText += stuckMsg
+            this.emit({ type: 'text_delta', text: stuckMsg })
+            break
+          }
+        } else {
+          consecutiveDupes = 0
+        }
+        lastToolSignature = currentSig
+
+        // Track tool call counts and intercept redundant media calls
+        for (const tool of toolUses) {
+          toolCallCounts[tool.name] = (toolCallCounts[tool.name] || 0) + 1
+        }
+
+        // Block redundant media calls — if we already generated media this session, inject the existing path
+        const filteredToolUses = toolUses.map(tool => {
+          if (tool.name === 'media' && mediaFilePaths.length > 0 && toolCallCounts['media']! > 1) {
+            console.log(`[Oculo] Blocking redundant media call — already generated ${mediaFilePaths.length} file(s). Returning existing path.`)
+            return { ...tool, _intercepted: true, _result: `Image already generated this session: ${mediaFilePaths[mediaFilePaths.length - 1]}. Use this path for upload — do NOT regenerate.` }
+          }
+          return { ...tool, _intercepted: false, _result: '' }
+        })
+
         // Execute tool calls
         const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = []
 
-        for (const tool of toolUses) {
+        for (const tool of filteredToolUses) {
           this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.input || {}, status: 'running' } })
 
-          const result = await this.callMcpTool(tool.name, tool.input || {})
+          let result: string
+          if (tool._intercepted) {
+            result = tool._result
+          } else {
+            result = await this.callMcpTool(tool.name, tool.input || {})
+          }
+
+          // Track media file paths from successful generation
+          if (tool.name === 'media' && !tool._intercepted && !result.startsWith('Error')) {
+            const pathMatch = result.match(/:\s*(\/[^\s]+\.(png|jpg|jpeg|webp|mp4|gif))/)
+            if (pathMatch) mediaFilePaths.push(pathMatch[1])
+          }
 
           this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
-          this.emit({ type: 'text_delta', text: `\n> ${tool.name} ${this.summarizeToolArgs(tool.name, tool.input)}\n` })
 
           // Cap tool result stored in history — info tools need more, action tools less
           const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools'
@@ -553,6 +711,18 @@ export class AgentController {
         }
 
         this.conversationHistory.push({ role: 'user', content: toolResults })
+      }
+
+      // If we hit the round limit, tell the user
+      if (fullAssistantText && !fullAssistantText.includes('reached the limit')) {
+        // Check if last iteration was cut off by max rounds (toolUses existed)
+        const lastMsg = this.conversationHistory[this.conversationHistory.length - 1]
+        const hadTools = lastMsg && Array.isArray(lastMsg.content) && lastMsg.content.some((c: any) => c.type === 'tool_result')
+        if (hadTools) {
+          const limitMsg = '\n\nI reached my tool call limit. Let me know if you want me to continue.'
+          fullAssistantText += limitMsg
+          this.emit({ type: 'text_delta', text: limitMsg })
+        }
       }
 
       // Emit token usage before done
@@ -600,14 +770,21 @@ export class AgentController {
     const MAX_HISTORY = 14 // Max messages before dropping old pairs
 
     // Phase 1: Drop oldest [assistant, user_tool_result] pairs if history is too long
-    // Always keep history[0] (original user task), drop pairs starting at index 1
+    // Always keep history[0] (original user task)
+    // NEVER drop user text messages (short answers like "no", "yes", corrections) — only drop tool_result pairs
     while (history.length > MAX_HISTORY && history.length >= 3) {
-      // Verify indices 1 and 2 form a valid pair (assistant + user_tool_result)
-      if (history[1]?.role === 'assistant' && history[2]?.role === 'user') {
-        history.splice(1, 2) // Drop the pair atomically
-      } else {
-        break // Unexpected structure, don't corrupt
+      // Find the first droppable pair — assistant + user_tool_result (not a user text message)
+      let dropped = false
+      for (let i = 1; i < history.length - 4 && i + 1 < history.length; i++) {
+        const isAssistant = history[i]?.role === 'assistant'
+        const nextIsToolResult = history[i + 1]?.role === 'user' && Array.isArray(history[i + 1]?.content)
+        if (isAssistant && nextIsToolResult) {
+          history.splice(i, 2)
+          dropped = true
+          break
+        }
       }
+      if (!dropped) break // No more droppable pairs
     }
 
     // Phase 2: Truncate content in older messages (keep last 2 messages full)
@@ -654,12 +831,14 @@ export class AgentController {
 
     try {
       let fullAssistantText = ''
+      let lastToolSignature = ''
+      let consecutiveDupes = 0
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.pruneHistory()
         // Build messages in OpenAI format
         const messages: any[] = [
-          { role: 'system', content: SYSTEM_PROMPT }
+          { role: 'system', content: this.getSystemPrompt() }
         ]
 
         for (const m of this.conversationHistory) {
@@ -704,6 +883,22 @@ export class AgentController {
 
         if (response.toolCalls.length === 0) break
 
+        // Detect duplicate tool calls (stuck loop)
+        const currentSig = response.toolCalls.map((t: any) => `${t.name}:${JSON.stringify(t.args)}`).join('|')
+        if (currentSig === lastToolSignature) {
+          consecutiveDupes++
+          if (consecutiveDupes >= 1) {
+            console.log(`[Oculo] Detected stuck loop — same tools called ${consecutiveDupes + 1} times in a row. Breaking.`)
+            const stuckMsg = "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
+            fullAssistantText += stuckMsg
+            this.emit({ type: 'text_delta', text: stuckMsg })
+            break
+          }
+        } else {
+          consecutiveDupes = 0
+        }
+        lastToolSignature = currentSig
+
         // Execute tool calls
         const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = []
 
@@ -713,7 +908,6 @@ export class AgentController {
           const result = await this.callMcpTool(tool.name, tool.args || {})
 
           this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
-          this.emit({ type: 'text_delta', text: `\n> ${tool.name} ${this.summarizeToolArgs(tool.name, tool.args)}\n` })
 
           // Cap tool result — info tools need more room
           const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools'
@@ -863,7 +1057,9 @@ export class AgentController {
       model: this.activeModel,
       max_tokens: 4096,
       stream: true,
-      system: SYSTEM_PROMPT,
+      system: [
+        { type: 'text', text: this.getSystemPrompt(), cache_control: { type: 'ephemeral' } }
+      ],
       tools: ANTHROPIC_TOOLS,
       messages
     })
@@ -997,7 +1193,7 @@ export class AgentController {
 
     try {
       const messages = [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: this.getSystemPrompt() },
         ...this.conversationHistory.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }))
       ]
       const body = JSON.stringify({ model: this.activeModel, messages, stream: true })
@@ -1099,7 +1295,7 @@ export class AgentController {
 
   private streamOpenAICompat(hostname: string, apiPath: string, apiKey: string): Promise<string> {
     const messages = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: this.getSystemPrompt() },
       ...this.conversationHistory.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }))
     ]
     const body = JSON.stringify({ model: this.activeModel, messages, stream: true })
@@ -1160,7 +1356,7 @@ export class AgentController {
     }))
     const body = JSON.stringify({
       contents,
-      systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      systemInstruction: { parts: [{ text: this.getSystemPrompt() }] },
       generationConfig: { temperature: 0.7 }
     })
 

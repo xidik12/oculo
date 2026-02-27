@@ -49,11 +49,12 @@ export class McpServerManager {
     {
       name: 'page',
       description:
-        'Describe the current page in compact format (~30-80 tokens). Returns URL, title, headings, forms, buttons, and links. Use this to understand what is on screen.',
+        'Describe the current page. Default: compact format (~30-80 tokens). Use detail="a11y" for full accessibility tree with interactive elements numbered [1],[2]... — better for complex React forms.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           scope: { type: 'string', description: 'CSS selector to scope description to a section of the page' },
+          detail: { type: 'string', enum: ['compact', 'a11y'], description: 'compact (default ~30-80 tokens) or a11y (full accessibility tree ~200-500 tokens, better for complex forms)' },
           include: { type: 'array', items: { type: 'string' }, description: 'What to include: "forms", "buttons", "links", "headings", "text", "images". Default: ["forms","buttons","links","headings"]' },
           screenshot: { type: 'boolean', description: 'Attach a screenshot (default: false)' }
         }
@@ -66,7 +67,7 @@ export class McpServerManager {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'clipboardImage'], description: 'Action to perform' },
+          action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork'], description: 'Action to perform' },
           text: { type: 'string', description: 'Visible text on the element to interact with' },
           role: { type: 'string', description: 'ARIA role (button, link, textbox, etc.)' },
           name: { type: 'string', description: 'Accessible name of the element' },
@@ -88,11 +89,11 @@ export class McpServerManager {
     },
     {
       name: 'fill',
-      description: 'Fill multiple form fields at once by label. Handles text, select, checkbox, and textarea fields. Optionally submit the form.',
+      description: 'Fill multiple form fields at once by label text. Use the human-readable label shown on the page (e.g. "Company Name", "Email"), NOT internal field IDs or hex values. Handles text, select, checkbox, textarea, and contenteditable fields.',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          fields: { type: 'object', description: 'Map of field label to value. Use string for text/select, boolean for checkboxes.' },
+          fields: { type: 'object', description: 'Object mapping field label → value. Keys should be the visible label text from the page (e.g. {"Company Name": "Oculo", "Email": "hi@oculo.com"}). Use CSS selectors as keys for unlabeled fields (e.g. {"#field-id": "value"}). Values: string for text/select, boolean for checkboxes.' },
           submit: { description: 'Submit the form. true = first submit button, string = button text' },
           screenshot: { type: 'boolean', description: 'Attach screenshot after filling' }
         },
@@ -116,7 +117,7 @@ export class McpServerManager {
     },
     {
       name: 'run',
-      description: 'Execute a multi-step pipeline in one call. Each step can page/act/fill/read/wait. Much more efficient than calling individual tools.',
+      description: 'Execute a multi-step pipeline in one call. Each step can page/act/fill/read/wait. Successful runs are cached for instant replay. Use workflow ID to replay.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -125,23 +126,25 @@ export class McpServerManager {
             items: { type: 'object', description: 'Pipeline step.' },
             description: 'Array of steps to execute sequentially'
           },
+          workflow: { type: 'string', description: 'Replay a cached workflow by ID (shown in page output). Overrides steps.' },
+          description: { type: 'string', description: 'Short description of what this pipeline does (for caching)' },
           returnAll: { type: 'boolean', description: 'Return results from all steps (default: false, returns last only)' }
-        },
-        required: ['steps']
+        }
       }
     },
     {
       name: 'media',
-      description: 'Generate images or videos from text prompts. Returns saved file path. Reuses Gemini/OpenAI keys from AI Providers settings.',
+      description: 'Generate images (Nano Banana 2 / DALL-E 3) or videos (Veo 3.1). Returns saved file path. Uses Gemini API key for both image and video.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           type: { type: 'string', enum: ['image', 'video'], description: 'Generate an image or video' },
           prompt: { type: 'string', description: 'What to create' },
-          size: { type: 'string', description: '1024x1024, 1792x1024, etc.' },
+          model: { type: 'string', description: 'Image model: nano-banana-2 (default, best balance), nano-banana-pro (highest quality), nano-banana (fastest)' },
+          size: { type: 'string', description: 'Image: 1024x1024, 2K, 4K. Video aspect: 16:9, 9:16' },
           style: { type: 'string', description: 'natural, vivid, cinematic, anime' },
-          provider: { type: 'string', description: 'Override: gemini, openai, stability, runway, kling' },
-          duration: { type: 'number', description: 'Video duration in seconds' }
+          provider: { type: 'string', description: 'Override: gemini, openai, stability' },
+          duration: { type: 'number', description: 'Video duration: 4, 6, or 8 seconds' }
         },
         required: ['type', 'prompt']
       }
@@ -169,12 +172,14 @@ export class McpServerManager {
         'gemini': 'gemini',
         'openai': 'openai',
         'stability': 'stability',
-        'runway': 'runway',
-        'kling': 'kling'
+        'veo': 'gemini'  // Veo 3.1 uses the Gemini API key
       }
       const aiProviderId = providerMap[provider]
       if (!aiProviderId) return null
-      return this.providerConfigs.get(aiProviderId)?.apiKey || null
+      const cfg = this.providerConfigs.get(aiProviderId)
+      const key = cfg?.apiKey || null
+      console.log(`[MCP Media] getApiKey(${provider}) → aiProviderId=${aiProviderId} hasConfig=${!!cfg} hasKey=${!!key} mapSize=${this.providerConfigs.size} mapKeys=[${[...this.providerConfigs.keys()]}]`)
+      return key
     })
 
     // Receive tool results from renderer
@@ -196,11 +201,11 @@ export class McpServerManager {
     return new Promise((resolve) => {
       const callId = crypto.randomUUID()
 
-      // 30 second timeout
+      // 120 second timeout (generous for screenshot capture, CDP uploads, etc.)
       const timer = setTimeout(() => {
         this.pendingToolCalls.delete(callId)
-        resolve('Error: Tool call timed out after 30 seconds.')
-      }, 30_000)
+        resolve('Error: Tool call timed out after 120 seconds.')
+      }, 120_000)
 
       this.pendingToolCalls.set(callId, { resolve, timer })
 
@@ -236,7 +241,7 @@ export class McpServerManager {
       if (name === 'media') {
         const mediaResult = await this.mediaGenerator.generate(args as unknown as MediaRequest)
         let result = mediaResult.success
-          ? `${mediaResult.type === 'video' ? 'Video' : 'Image'} generated (${mediaResult.provider}): ${mediaResult.filePath}`
+          ? `${(args as any).type === 'video' ? 'Video' : 'Image'} generated (${mediaResult.provider}): ${mediaResult.filePath}`
           : `Error: ${mediaResult.error}`
         result = this.redactor.redact(result)
         result = this.antiInjection.sanitize(result)
@@ -353,6 +358,7 @@ export class McpServerManager {
   /** Update provider configs for media generation API key lookup */
   setProviderConfigs(configs: Map<string, AIProviderConfig>): void {
     this.providerConfigs = configs
+    console.log(`[MCP] setProviderConfigs called — size=${configs.size} keys=[${[...configs.keys()]}] hasGeminiKey=${!!(configs.get('gemini')?.apiKey)}`)
   }
 
   stop(): void {

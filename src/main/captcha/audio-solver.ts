@@ -1,10 +1,16 @@
-import { WebContents } from 'electron'
+import { WebContents, app } from 'electron'
 import { CaptchaType } from '../../shared/types'
+import * as https from 'https'
+import * as http from 'http'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as os from 'os'
+import { execFileSync } from 'child_process'
 
 /**
  * Audio CAPTCHA solver.
  * Strategy: Switch to audio challenge → download audio → transcribe locally → submit.
- * 
+ *
  * NOTE: Full Whisper integration requires whisper.cpp or whisper-node bindings.
  * This is a structural implementation that handles the browser interaction part.
  * The actual transcription will be added when Whisper bindings are set up.
@@ -23,6 +29,55 @@ export class AudioSolver {
       return { success: false, message: 'Audio solving not supported for this CAPTCHA type' }
     } catch (err) {
       return { success: false, message: `Audio solver error: ${(err as Error).message}` }
+    }
+  }
+
+  /** Download audio from URL and attempt local transcription via whisper */
+  private async transcribeAudio(audioUrl: string): Promise<string | null> {
+    try {
+      // Download audio file
+      const tempDir = path.join(app.getPath('temp'), 'oculo-captcha')
+      fs.mkdirSync(tempDir, { recursive: true })
+      const audioPath = path.join(tempDir, `captcha-${Date.now()}.mp3`)
+
+      await new Promise<void>((resolve, reject) => {
+        const client = audioUrl.startsWith('https') ? https : http
+        const file = fs.createWriteStream(audioPath)
+        client.get(audioUrl, (response) => {
+          response.pipe(file)
+          file.on('finish', () => { file.close(); resolve() })
+        }).on('error', reject)
+      })
+
+      // Try whisper.cpp CLI if available
+      try {
+        const whisperPaths = [
+          '/usr/local/bin/whisper',
+          '/opt/homebrew/bin/whisper',
+          path.join(os.homedir(), '.local/bin/whisper'),
+        ]
+        let whisperBin: string | null = null
+        for (const p of whisperPaths) {
+          if (fs.existsSync(p)) { whisperBin = p; break }
+        }
+
+        if (whisperBin) {
+          const output = execFileSync(whisperBin, [audioPath, '--language', 'en', '--output-txt'], {
+            timeout: 30000,
+            encoding: 'utf-8'
+          })
+          // Clean up
+          try { fs.unlinkSync(audioPath) } catch { /* ignore */ }
+          return output.trim()
+        }
+      } catch { /* whisper not available */ }
+
+      // Fallback: whisper not available — clean up and return null
+      // In production, this would integrate with MLX Whisper or whisper.cpp
+      try { fs.unlinkSync(audioPath) } catch { /* ignore */ }
+      return null
+    } catch {
+      return null
     }
   }
 

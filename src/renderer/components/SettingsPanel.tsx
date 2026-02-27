@@ -16,7 +16,7 @@ function api() {
   } | undefined
 }
 
-type SettingsTab = 'general' | 'ai' | 'media' | 'privacy'
+type SettingsTab = 'general' | 'ai' | 'media' | 'privacy' | 'support'
 
 export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const [tab, setTab] = useState<SettingsTab>('ai')
@@ -72,6 +72,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     { id: 'ai', label: 'AI Providers' },
     { id: 'media', label: 'Media' },
     { id: 'privacy', label: 'Privacy' },
+    { id: 'support', label: 'Support' },
   ]
 
   return (
@@ -131,6 +132,9 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             )}
             {tab === 'privacy' && settings && (
               <PrivacySettings settings={settings} onSave={handleSaveSetting} />
+            )}
+            {tab === 'support' && (
+              <SupportSettings />
             )}
           </div>
         </div>
@@ -267,8 +271,6 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey }: {
 
 const MEDIA_PROVIDERS = [
   { id: 'stability' as const, name: 'Stability AI', desc: 'Stable Diffusion 3 image generation. Requires separate API key.', placeholder: 'sk-...' },
-  { id: 'runway' as const, name: 'Runway ML', desc: 'Video generation (coming soon).', placeholder: 'rk-...' },
-  { id: 'kling' as const, name: 'Kling', desc: 'Video generation (coming soon).', placeholder: 'API key...' },
 ]
 
 function MediaSettings({ apiKeys, setApiKeys, onSaveKey, onRemoveKey, statuses }: {
@@ -287,7 +289,7 @@ function MediaSettings({ apiKeys, setApiKeys, onSaveKey, onRemoveKey, statuses }
       <div className="p-3 rounded-lg bg-emerald-900/20 border border-emerald-800/30 mb-4">
         <p className="text-[11px] text-emerald-300 font-medium mb-1">Auto-detected keys</p>
         <p className="text-[11px] text-gray-400">
-          If you have a <strong className="text-gray-300">Gemini</strong> or <strong className="text-gray-300">OpenAI</strong> key configured in AI Providers, it will be used for image generation automatically (Gemini Imagen / DALL-E 3).
+          Your <strong className="text-gray-300">Gemini</strong> key powers <strong className="text-gray-300">Nano Banana 2</strong> (images) and <strong className="text-gray-300">Veo 3.1</strong> (videos). Your <strong className="text-gray-300">OpenAI</strong> key powers <strong className="text-gray-300">DALL-E 3</strong>. Both are auto-detected from AI Providers.
         </p>
       </div>
 
@@ -348,6 +350,92 @@ function PrivacySettings({ settings, onSave }: { settings: AppSettings; onSave: 
         <Toggle checked={settings.mcpAutoStart} onChange={v => onSave('mcpAutoStart', v)} />
       </SettingRow>
     </>
+  )
+}
+
+// ── Support / Donate ────────────────────────────────────────────────────────
+
+const BTC_ADDRESS = '12yRGpUfFznzZoz4yVfZKRxLSkAwbanw2B'
+
+function SupportSettings() {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(BTC_ADDRESS).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Heading */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-200 mb-1">Support Oculo Development</h3>
+        <p className="text-xs text-gray-500 leading-relaxed">
+          Oculo is free and open source. If you find it useful, consider supporting development with a donation.
+        </p>
+      </div>
+
+      {/* Bitcoin donation */}
+      <div className="p-4 rounded-lg bg-surface-dark-1 border border-surface-dark-3">
+        <div className="flex items-center gap-2 mb-3">
+          {/* Bitcoin SVG icon */}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="flex-shrink-0">
+            <circle cx="12" cy="12" r="12" fill="#F7931A" />
+            <path
+              d="M16.5 10.2c.22-1.48-.9-2.28-2.44-2.81l.5-2-.97-.24-.49 1.94c-.25-.06-.51-.12-.77-.18l.5-1.95-.97-.24-.5 2c-.21-.05-.42-.1-.62-.15l.001-.005-.34-.08-.47 1.13s.72.16.7.17c.39.1.46.35.45.56l-.46 1.83c.03.01.06.02.1.04l-.1-.02-.64 2.56c-.05.12-.17.29-.44.23.01.01-.7-.18-.7-.18L9 13.47l.9.22.5-1.97c.27.07.53.13.79.19l-.5 1.96.97.24.5-2c2.02.38 3.54.23 4.18-1.6.52-1.48-.03-2.34-1.1-2.9.79-.18 1.38-.69 1.54-1.75l-.18-.05zm-2.75 3.86c-.37 1.48-2.87.68-3.68.48l.66-2.62c.81.2 3.4.6 3.02 2.14zm.37-3.88c-.34 1.35-2.42.66-3.1.5l.59-2.37c.68.17 2.88.48 2.51 1.87z"
+              fill="white"
+            />
+          </svg>
+          <span className="text-sm font-semibold text-gray-200">Bitcoin (BTC)</span>
+        </div>
+        <p className="text-[11px] text-gray-500 mb-2">Send BTC to the address below:</p>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 h-8 px-2 flex items-center rounded bg-surface-dark-2 border border-surface-dark-3 text-[11px] font-mono text-gray-300 truncate select-all">
+            {BTC_ADDRESS}
+          </code>
+          <button
+            onClick={handleCopy}
+            className={`h-8 px-3 text-xs font-medium rounded transition-all flex-shrink-0 ${
+              copied
+                ? 'bg-emerald-900/50 text-emerald-300 border border-emerald-700/50'
+                : 'bg-accent/10 text-accent hover:bg-accent/20 border border-transparent'
+            }`}>
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+      </div>
+
+      {/* GitHub Sponsors */}
+      <div className="p-4 rounded-lg bg-surface-dark-1 border border-surface-dark-3">
+        <div className="flex items-center gap-2 mb-2">
+          {/* GitHub icon */}
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="text-gray-300 flex-shrink-0">
+            <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+          </svg>
+          <span className="text-sm font-semibold text-gray-200">GitHub</span>
+        </div>
+        <p className="text-[11px] text-gray-500 mb-2">You can also support us on GitHub:</p>
+        <a
+          href="https://github.com/xidik12/oculo"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 h-8 px-3 text-xs font-medium bg-accent/10 text-accent rounded hover:bg-accent/20 transition-colors border border-transparent">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+          </svg>
+          github.com/xidik12/oculo
+        </a>
+      </div>
+
+      {/* Thank you */}
+      <div className="px-4 py-3 rounded-lg bg-surface-dark-1 border border-surface-dark-3 text-center">
+        <p className="text-xs text-gray-400 leading-relaxed">
+          Every contribution helps keep Oculo free for everyone. Thank you! 🙏
+        </p>
+      </div>
+    </div>
   )
 }
 

@@ -25,6 +25,8 @@ export const IPC = {
   VAULT_ADD: 'vault:add',
   VAULT_DELETE: 'vault:delete',
   VAULT_GET: 'vault:get',
+  VAULT_TOTP: 'vault:totp',
+  VAULT_SET_TOTP: 'vault:set-totp',
   PERMISSION_REQUEST: 'permission:request',
   PERMISSION_RESPONSE: 'permission:response',
   AUDIT_QUERY: 'audit:query',
@@ -108,7 +110,13 @@ export const IPC = {
   FILE_READ_SAFE: 'file:read-safe',
 
   // Clipboard (Phase 5)
-  CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image'
+  CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image',
+
+  // Accessibility Tree (CDP)
+  A11Y_SNAPSHOT: 'a11y:snapshot',
+
+  // Print to PDF
+  PRINT_TO_PDF: 'print:to-pdf',
 } as const
 
 export type IPCChannel = typeof IPC[keyof typeof IPC]
