@@ -34,9 +34,9 @@ Claude Code → bin/oculo-mcp.mjs (stdio bridge) → HTTP POST :19516/mcp
 claude mcp add oculo -- node ~/Desktop/oculo/bin/oculo-mcp.mjs
 ```
 
-Oculo must be running first (it writes the port file on startup).
+Tools are always discoverable (static definitions in bridge), but Oculo must be running for tool calls to succeed.
 
-### 5 MCP Tools
+### 6 MCP Tools
 
 | Tool | What it does | Token cost |
 |------|-------------|------------|
@@ -45,6 +45,7 @@ Oculo must be running first (it writes the port file on startup).
 | `fill` | Fill form fields by label matching, optional submit | ~1 line |
 | `read` | Extract structured data (lists, tables, cards) | compact |
 | `run` | Multi-step pipeline with conditionals (page/act/fill/read/wait/if) | header + last |
+| `media` | Generate images (Nano Banana / DALL-E 3) or videos (Veo 3.1) | file path |
 
 ### Directory Structure
 
@@ -158,11 +159,12 @@ All persisted in `~/Library/Application Support/oculo/oculo-data/`:
 
 ## What's NOT Done Yet
 
-- Git repo not initialized
-- No tests (unit, integration, e2e)
 - No ESLint/Prettier config
 - Whisper model integration incomplete (CAPTCHA audio solving)
-- No code signing / notarization
+- No code signing / notarization (Apple Developer account expired)
 - Audit log should migrate to SQLite
 - Touch ID for confirm-level permissions
 - TOTP / 2FA vault support
+- Windows/Linux builds
+- Auto-updater integration
+- npm package publication
