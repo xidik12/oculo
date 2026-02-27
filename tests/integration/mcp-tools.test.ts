@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 
 const SRC_ROOT = path.join(__dirname, '../../src')
+const PROJECT_ROOT = path.join(__dirname, '../..')
 
 describe('MCP Tool Schema Consistency', () => {
   const serverPath = path.join(SRC_ROOT, 'main/mcp/server.ts')
@@ -148,5 +149,60 @@ describe('MCP Server HTTP endpoints', () => {
   it('should delete port file on stop', () => {
     const serverCode = fs.readFileSync(serverPath, 'utf-8')
     expect(serverCode).toContain('unlinkSync')
+  })
+})
+
+describe('MCP Tool Improvements', () => {
+  const serverPath = path.join(SRC_ROOT, 'main/mcp/server.ts')
+  const bridgePath = path.join(PROJECT_ROOT, 'bin/oculo-mcp.mjs')
+  const pipelinePath = path.join(SRC_ROOT, 'main/engine/pipeline.ts')
+  const describerPath = path.join(SRC_ROOT, 'main/engine/describer.ts')
+
+  it('run tool schema should document all 6 step types', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf-8')
+    const runIdx = serverCode.indexOf("name: 'run'")
+    expect(runIdx).toBeGreaterThan(-1)
+    // Look at the run tool block (generous window for the expanded schema)
+    const runBlock = serverCode.substring(runIdx, runIdx + 5000)
+    const stepTypes = ['page', 'act', 'fill', 'read', 'wait', 'if']
+    for (const step of stepTypes) {
+      expect(runBlock).toContain(`${step}:`)
+    }
+  })
+
+  it('bridge STATIC_TOOLS should define the same tools as server.ts', () => {
+    const serverCode = fs.readFileSync(serverPath, 'utf-8')
+    const bridgeCode = fs.readFileSync(bridgePath, 'utf-8')
+
+    // Extract tool names from server.ts tools array (between 'tools = [' and matching ']')
+    const serverToolsSection = serverCode.substring(
+      serverCode.indexOf('tools = ['),
+      serverCode.indexOf(']', serverCode.indexOf("name: 'media'") + 500) + 1
+    )
+    const serverTools = [...serverToolsSection.matchAll(/name:\s*'(\w+)'/g)].map(m => m[1])
+
+    // Extract tool names from bridge STATIC_TOOLS array
+    const bridgeToolsSection = bridgeCode.substring(
+      bridgeCode.indexOf('STATIC_TOOLS = ['),
+      bridgeCode.indexOf(']', bridgeCode.indexOf("name: 'media'", bridgeCode.indexOf('STATIC_TOOLS')) + 500) + 1
+    )
+    const bridgeTools = [...bridgeToolsSection.matchAll(/name:\s*'(\w+)'/g)].map(m => m[1])
+
+    expect(serverTools.sort()).toEqual(bridgeTools.sort())
+  })
+
+  it('pipeline wait should throw on timeout instead of returning a string', () => {
+    const pipelineCode = fs.readFileSync(pipelinePath, 'utf-8')
+    // Should throw, not return
+    expect(pipelineCode).toContain('throw new Error(`Wait timeout')
+    expect(pipelineCode).not.toContain('return `Wait timeout')
+  })
+
+  it('describer should not skip unlabeled inputs with if (label) guard', () => {
+    const describerCode = fs.readFileSync(describerPath, 'utf-8')
+    // The old pattern was: if (label) { fields.push(...) }
+    // New code uses: const displayLabel = label || ...
+    expect(describerCode).not.toMatch(/if\s*\(label\)\s*\{[\s\S]*?fields\.push/)
+    expect(describerCode).toContain('displayLabel')
   })
 })

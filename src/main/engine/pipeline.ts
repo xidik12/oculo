@@ -96,7 +96,7 @@ export class PipelineRunner {
       await new Promise(r => setTimeout(r, 250))
     }
 
-    return `Wait timeout after ${timeout}ms`
+    throw new Error(`Wait timeout after ${timeout}ms`)
   }
 
   private async executeConditional(webContents: WebContents, cond: any, steps: PipelineStep[], idx: number): Promise<string> {

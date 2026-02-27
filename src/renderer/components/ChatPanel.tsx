@@ -261,8 +261,23 @@ function useChatState() {
 
   const handleStop = useCallback(() => {
     api()?.abortChat()
+    // Commit whatever was streamed so far as a partial message
+    const partialText = streamingText
+    const partialToolCalls = toolCallsRef.current
+    if (partialText || partialToolCalls.length > 0) {
+      setMessages(prev => [...prev, {
+        id: `msg-${Date.now()}-assistant-stopped`,
+        role: 'assistant' as const,
+        content: partialText || '(stopped)',
+        toolCalls: partialToolCalls.length > 0 ? partialToolCalls : undefined,
+        timestamp: Date.now()
+      }])
+    }
+    setStreamingText('')
+    setStreamingToolCalls([])
+    toolCallsRef.current = []
     setIsStreaming(false)
-  }, [])
+  }, [streamingText])
 
   return {
     messages, streamingText, streamingToolCalls, isStreaming, error,

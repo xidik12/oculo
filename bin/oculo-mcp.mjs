@@ -107,11 +107,82 @@ const STATIC_TOOLS = [
   },
   {
     name: 'run',
-    description: 'Execute a multi-step pipeline in Oculo browser. Each step can page/act/fill/read/wait. Cached for replay.',
+    description: 'Execute a multi-step pipeline in Oculo browser. Each step is an object with exactly ONE key: page, act, fill, read, wait, or if. Cached for replay.',
     inputSchema: {
       type: 'object',
       properties: {
-        steps: { type: 'array', items: { type: 'object' }, description: 'Array of steps to execute sequentially' },
+        steps: {
+          type: 'array',
+          description: 'Array of steps. Each step is an object with exactly ONE key: page, act, fill, read, wait, or if.',
+          items: {
+            type: 'object',
+            properties: {
+              page: {
+                type: 'object',
+                description: 'Describe the page.',
+                properties: {
+                  scope: { type: 'string', description: 'CSS selector scope' },
+                  include: { type: 'array', items: { type: 'string' }, description: 'Categories: forms, buttons, links, headings, text, images' }
+                }
+              },
+              act: {
+                type: 'object',
+                description: 'Perform an action (click, navigate, scroll, etc.).',
+                properties: {
+                  action: { type: 'string', description: 'click, navigate, scroll, press, type, hover, etc.' },
+                  text: { type: 'string' },
+                  url: { type: 'string' },
+                  selector: { type: 'string' },
+                  key: { type: 'string' },
+                  direction: { type: 'string' },
+                  value: { type: 'string' }
+                },
+                required: ['action']
+              },
+              fill: {
+                type: 'object',
+                description: 'Fill form fields by label.',
+                properties: {
+                  fields: { type: 'object', description: 'Map of label → value' },
+                  submit: { description: 'true or button text' }
+                },
+                required: ['fields']
+              },
+              read: {
+                type: 'object',
+                description: 'Extract structured data.',
+                properties: {
+                  what: { type: 'string', description: 'What to extract' },
+                  scope: { type: 'string' },
+                  fields: { type: 'array', items: { type: 'string' } },
+                  limit: { type: 'number' },
+                  format: { type: 'string', enum: ['text', 'json'] }
+                },
+                required: ['what']
+              },
+              wait: {
+                type: 'object',
+                description: 'Wait for a condition (throws on timeout).',
+                properties: {
+                  text: { type: 'string', description: 'Wait for text to appear' },
+                  url: { type: 'string', description: 'Wait for URL to contain string' },
+                  selector: { type: 'string', description: 'Wait for CSS selector to match' },
+                  timeout: { type: 'number', description: 'Timeout in ms (default: 5000)' }
+                }
+              },
+              if: {
+                type: 'object',
+                description: 'Conditional branch.',
+                properties: {
+                  text: { type: 'string', description: 'Condition: page contains text' },
+                  url: { type: 'string', description: 'Condition: URL contains string' },
+                  then: { type: 'object', description: 'Step to execute if true' },
+                  else: { type: 'object', description: 'Step to execute if false' }
+                }
+              }
+            }
+          }
+        },
         workflow: { type: 'string', description: 'Replay a cached workflow by ID' },
         description: { type: 'string', description: 'Short description for caching' },
         returnAll: { type: 'boolean', description: 'Return results from all steps (default: false)' }

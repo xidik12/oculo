@@ -82,9 +82,8 @@ export class PageDescriber {
               value = input.value ? input.value.substring(0, 30) : 'empty';
             }
             
-            if (label) {
-              fields.push(label.substring(0, 30) + ' (' + type + ', ' + value + ')');
-            }
+            const displayLabel = label || input.getAttribute('name') || input.id || type;
+            fields.push(displayLabel.substring(0, 30) + ' (' + type + ', ' + value + ')');
           });
           if (fields.length > 0) result.push('Forms: ' + fields.join(', '));
         }
@@ -101,19 +100,38 @@ export class PageDescriber {
           if (btnTexts.length > 0) result.push('Buttons: ' + [...new Set(btnTexts)].slice(0, 10).join(' '));
         }
 
-        // Links
+        // Links (region-aware: content links first, then nav links)
         if (includes.includes('links')) {
-          const links = root.querySelectorAll('a[href]');
-          const linkTexts = [];
-          links.forEach(a => {
+          const navContainers = new Set();
+          root.querySelectorAll('nav, header, footer, [role="navigation"], [role="banner"], [role="contentinfo"]').forEach(el => navContainers.add(el));
+
+          function isNavLink(a) {
+            let el = a.parentElement;
+            while (el && el !== root) {
+              if (navContainers.has(el)) return true;
+              el = el.parentElement;
+            }
+            return false;
+          }
+
+          const contentLinks = [];
+          const navLinks = [];
+          const seen = new Set();
+          root.querySelectorAll('a[href]').forEach(a => {
             { const cs = getComputedStyle(a); if (cs.display === 'none' || cs.visibility === 'hidden') return; }
-            const text = a.textContent?.trim();
-            if (text && text.length > 1 && text.length < 50 && !text.includes('\\n')) {
-              linkTexts.push(text);
+            let text = a.textContent?.trim();
+            if (!text || text.length < 2 || text.length > 120 || text.includes('\\n')) return;
+            if (seen.has(text)) return;
+            seen.add(text);
+            const display = text.length > 80 ? text.substring(0, 80) + '...' : text;
+            if (isNavLink(a)) {
+              navLinks.push(display);
+            } else {
+              contentLinks.push(display);
             }
           });
-          const unique = [...new Set(linkTexts)].slice(0, 15);
-          if (unique.length > 0) result.push('Links: ' + unique.join(', '));
+          const picked = contentLinks.slice(0, 12).concat(navLinks.slice(0, 3));
+          if (picked.length > 0) result.push('Links: ' + picked.join(', '));
         }
 
         // Text content (main content summary)

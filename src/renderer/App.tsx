@@ -33,6 +33,8 @@ export default function App() {
     { id: newId(), url: NEW_TAB_URL, title: 'New Tab', isLoading: false, canGoBack: false, canGoForward: false }
   ])
   const [activeTabId, setActiveTabId] = useState(tabs[0].id)
+  const activeTabIdRef = useRef(activeTabId)
+  useEffect(() => { activeTabIdRef.current = activeTabId }, [activeTabId])
   const [darkMode, setDarkMode] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches)
   const [chatOpen, setChatOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
@@ -624,7 +626,7 @@ export default function App() {
         // No webview exists (newtab) — for navigate, update state and return immediately.
         // React will render a WebViewContainer, the user will see the page load.
         if (!wv && toolName === 'act' && args?.action === 'navigate' && args?.url) {
-          setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, url: args.url, isLoading: true } : t))
+          setTabs(prev => prev.map(t => t.id === activeTabIdRef.current ? { ...t, url: args.url, isLoading: true } : t))
           // Return immediately — don't block the React render cycle
           api.sendMcpToolResult(callId, 'Navigating to ' + args.url + ' — page is loading.')
           return
@@ -2283,7 +2285,7 @@ export default function App() {
     })
 
     return cleanup
-  }, [activeTabId])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps — register once, use activeTabIdRef inside
 
   const activeTab = tabs.find(t => t.id === activeTabId)
 

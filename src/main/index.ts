@@ -342,6 +342,12 @@ app.whenReady().then(async () => {
       })();
     `
 
+    // Intercept window.open / target="_blank" → open as new tab, not new window
+    wc.setWindowOpenHandler((details) => {
+      mainWindow?.webContents.send('tab:create', details.url)
+      return { action: 'deny' }
+    })
+
     wc.on('did-start-navigation', (_event, _url, isInPlace) => {
       if (isInPlace) return
       // Reset patch flag so it re-runs on new pages
