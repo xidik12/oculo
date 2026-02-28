@@ -48,7 +48,7 @@ export class PipelineRunner {
         } else if (step.wait) {
           result = await this.executeWait(webContents, step.wait)
         } else if (step.if) {
-          result = await this.executeConditional(webContents, step.if, steps, i)
+          result = await this.executeConditional(webContents, step.if)
         }
 
         results.push(result)
@@ -99,15 +99,14 @@ export class PipelineRunner {
     throw new Error(`Wait timeout after ${timeout}ms`)
   }
 
-  private async executeConditional(webContents: WebContents, cond: any, steps: PipelineStep[], idx: number): Promise<string> {
+  private async executeConditional(webContents: WebContents, cond: any): Promise<string> {
     let conditionMet = false
 
     if (cond.text) {
       conditionMet = await webContents.executeJavaScript(
         `document.body.textContent.toLowerCase().includes(${JSON.stringify(cond.text.toLowerCase())})`
       )
-    }
-    if (cond.url) {
+    } else if (cond.url) {
       conditionMet = webContents.getURL().includes(cond.url)
     }
 

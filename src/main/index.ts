@@ -34,6 +34,7 @@ import { CardStore } from './data/cards'
 import { WorkspaceStore } from './data/workspaces'
 import { MacroStore } from './data/macros'
 import { PinnedAppStore } from './data/pinned-apps'
+import { PatternDetector } from './data/pattern-detector'
 
 /** Clean up temp files older than 1 hour (only transient dirs, NOT ~/Pictures/Oculo) */
 function cleanupTempFiles(): void {
@@ -79,6 +80,7 @@ let cardStore: CardStore | null = null
 let workspaceStore: WorkspaceStore | null = null
 let macroStore: MacroStore | null = null
 let pinnedAppStore: PinnedAppStore | null = null
+let patternDetector: PatternDetector | null = null
 
 function createWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
@@ -216,11 +218,18 @@ app.whenReady().then(async () => {
   // --- Ad/Tracker/Malware Blocking (Brave Shields-style) ---
   const adBlocker = new AdBlocker()
 
-  // Apply saved setting
-  const initSettings = securityManager ? securityManager.getSettings() : {} as any
-  if (initSettings.adBlockEnabled === false) {
-    adBlocker.setEnabled(false)
-  }
+  // Apply saved ad-block setting (read directly from disk since securityManager
+  // isn't initialized yet at this point in the startup sequence)
+  try {
+    const { existsSync: fileExists, readFileSync: readFile } = require('fs')
+    const settingsPath = require('path').join(app.getPath('userData'), 'oculo-data', 'settings.json')
+    if (fileExists(settingsPath)) {
+      const saved = JSON.parse(readFile(settingsPath, 'utf-8'))
+      if (saved.adBlockEnabled === false) {
+        adBlocker.setEnabled(false)
+      }
+    }
+  } catch { /* settings not available yet, keep default (enabled) */ }
 
   // Block ad/tracking/malware requests at network level — before content loads
   webviewSession.webRequest.onBeforeRequest(
@@ -502,8 +511,18 @@ app.whenReady().then(async () => {
   try {
     securityManager = new SecurityManager()
   } catch (err) {
-    console.error('SecurityManager init failed:', err)
-    securityManager = {} as SecurityManager
+    console.error('SecurityManager init failed — retrying without vault:', err)
+    // Create a functional SecurityManager — vault/settings load gracefully handle errors internally,
+    // so a second attempt should succeed even if the data dir didn't exist yet
+    try {
+      securityManager = new SecurityManager()
+    } catch (err2) {
+      console.error('SecurityManager init failed twice — app may have limited functionality:', err2)
+      // Last resort: still create the instance so method calls don't TypeError
+      securityManager = Object.create(SecurityManager.prototype) as SecurityManager
+      ;(securityManager as any).vault = []
+      ;(securityManager as any).settings = {}
+    }
   }
 
   // Initialize data stores
@@ -527,8 +546,11 @@ app.whenReady().then(async () => {
   // Create app menu
   createMenu(window)
 
+  // Initialize pattern detector
+  patternDetector = new PatternDetector(window)
+
   // Start MCP server
-  mcpServer = new McpServerManager(window, securityManager, auditLog, redactor)
+  mcpServer = new McpServerManager(window, securityManager, auditLog, redactor, patternDetector)
   try {
     await mcpServer.start()
   } catch (err) {
@@ -586,7 +608,7 @@ app.whenReady().then(async () => {
   agentController.setMcpClientManager(mcpClientManager)
 
   // Setup IPC handlers (after agent init so chat handlers are wired)
-  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache, ptyManager, mcpClientManager, sessionMemoryStore, containerStore, cardStore, workspaceStore, macroStore, pinnedAppStore)
+  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache, ptyManager, mcpClientManager, sessionMemoryStore, containerStore, cardStore, workspaceStore, macroStore, pinnedAppStore, patternDetector)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

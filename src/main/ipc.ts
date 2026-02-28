@@ -122,14 +122,24 @@ export function setupIPC(
     return security.saveSettings(settings)
   })
 
-  // Permission request from MCP server
+  // Permission request from MCP server (uses requestId to handle concurrent requests)
+  let permReqCounter = 0
   ipcMain.handle(IPC.PERMISSION_REQUEST, async (_, action: string, details: string) => {
-    // Send to renderer to show confirmation dialog
+    const requestId = `perm-${++permReqCounter}`
     return new Promise((resolve) => {
-      mainWindow.webContents.send(IPC.PERMISSION_REQUEST, { action, details })
-      ipcMain.once(IPC.PERMISSION_RESPONSE, (_, approved: boolean) => {
-        resolve(approved)
-      })
+      mainWindow.webContents.send(IPC.PERMISSION_REQUEST, { action, details, requestId })
+      const handler = (_: any, approved: boolean, respId?: string) => {
+        if (!respId || respId === requestId) {
+          ipcMain.removeListener(IPC.PERMISSION_RESPONSE, handler)
+          resolve(approved)
+        }
+      }
+      ipcMain.on(IPC.PERMISSION_RESPONSE, handler)
+      // Timeout after 2 minutes to prevent permanent hangs
+      setTimeout(() => {
+        ipcMain.removeListener(IPC.PERMISSION_RESPONSE, handler)
+        resolve(false)
+      }, 120_000)
     })
   })
 
@@ -286,7 +296,17 @@ export function setupIPC(
     if (!filePath || typeof filePath !== 'string') return 'Invalid file path'
     const resolved = path.resolve(filePath.replace(/^~\//, os.homedir() + '/'))
     if (!fs.existsSync(resolved)) return 'File not found'
-    return shell.openPath(resolved)
+    // Block executable file types
+    const blockedExts = new Set(['.app', '.exe', '.bat', '.cmd', '.sh', '.bash', '.zsh', '.ps1', '.msi', '.dmg', '.pkg', '.deb', '.rpm', '.run', '.bin', '.command', '.jar', '.dll', '.so', '.dylib'])
+    const ext = path.extname(resolved).toLowerCase()
+    if (blockedExts.has(ext)) return 'Cannot open executable files'
+    // Restrict to safe directories
+    const safeDirs = [app.getPath('temp'), app.getPath('downloads'), app.getPath('desktop'), app.getPath('pictures'), app.getPath('documents')]
+    let real: string
+    try { real = fs.realpathSync(resolved) } catch { return 'Cannot resolve file path' }
+    const inSafeDir = safeDirs.some(dir => real.startsWith(dir))
+    if (!inSafeDir) return 'Cannot open files outside safe directories (downloads, desktop, pictures, documents)'
+    return shell.openPath(real)
   })
 
   // === File dialog (pick files) ===
@@ -388,19 +408,22 @@ export function setupIPC(
       } catch { /* invalid URL, skip */ }
     }
     const resolved = path.resolve(filePath)
-    const allowed = allowedDirs.some(dir => resolved.startsWith(dir))
-    if (!allowed) {
-      return `Error: Cannot read file outside allowed directories (temp, downloads, desktop, or current file:// dir): ${filePath}`
-    }
     if (!fs.existsSync(resolved)) {
       return `Error: File not found: ${filePath}`
     }
+    // Resolve symlinks to prevent path traversal
+    let real: string
+    try { real = fs.realpathSync(resolved) } catch { return `Error: Cannot resolve file path: ${filePath}` }
+    const allowed = allowedDirs.some(dir => real.startsWith(dir))
+    if (!allowed) {
+      return `Error: Cannot read file outside allowed directories (temp, downloads, desktop, or current file:// dir): ${filePath}`
+    }
     try {
-      const stat = fs.statSync(resolved)
+      const stat = fs.statSync(real)
       if (stat.size > 1024 * 1024) {
         return `Error: File too large (${Math.round(stat.size / 1024)}KB, max 1MB)`
       }
-      return fs.readFileSync(resolved, 'utf-8')
+      return fs.readFileSync(real, 'utf-8')
     } catch (err) {
       return `Error: Failed to read file — ${(err as Error).message}`
     }
@@ -421,12 +444,17 @@ export function setupIPC(
       } catch { /* invalid URL, skip */ }
     }
     const resolved = path.resolve(filePath)
-    const allowed = allowedDirs.some(dir => resolved.startsWith(dir))
+    // For writes, check parent dir exists and resolve symlinks
+    const parentDir = path.dirname(resolved)
+    let realParent: string
+    try { realParent = fs.realpathSync(parentDir) } catch { return `Error: Cannot resolve directory: ${parentDir}` }
+    const allowed = allowedDirs.some(dir => realParent.startsWith(dir))
     if (!allowed) {
       return `Error: Cannot write file outside allowed directories (temp, downloads, desktop, or current file:// dir): ${filePath}`
     }
     try {
-      fs.writeFileSync(resolved, content, 'utf-8')
+      const realPath = path.join(realParent, path.basename(resolved))
+      fs.writeFileSync(realPath, content, 'utf-8')
       return `Written ${content.length} bytes to ${filePath}`
     } catch (err) {
       return `Error: Failed to write file — ${(err as Error).message}`

@@ -14,6 +14,7 @@ import { MediaGenerator, MediaRequest } from '../engine/media-generator'
 import { AIProviderConfig } from '../../shared/ai-types'
 import { PtyManager } from '../terminal/pty-manager'
 import { Previewer } from '../engine/previewer'
+import { PatternDetector } from '../data/pattern-detector'
 
 const PORT_FILE = path.join(os.homedir(), '.oculo-port')
 const BASE_PORT = 19516
@@ -51,6 +52,9 @@ export class McpServerManager {
 
   /** URL previewer for preview tool */
   private previewer = new Previewer()
+
+  /** Pattern detector for learning action sequences */
+  private patternDetector: PatternDetector | null = null
 
   /** Tool definitions served on `tools/list` */
   private readonly tools = [
@@ -321,12 +325,14 @@ export class McpServerManager {
     mainWindow: BrowserWindow,
     security: SecurityManager,
     auditLog: AuditLog,
-    redactor: Redactor
+    redactor: Redactor,
+    patternDetector?: PatternDetector
   ) {
     this.mainWindow = mainWindow
     this.security = security
     this.auditLog = auditLog
     this.redactor = redactor
+    this.patternDetector = patternDetector || null
     this.antiInjection = new AntiInjection()
     this.permissionGate = new PermissionGate(mainWindow, auditLog)
     this.authToken = crypto.randomBytes(32).toString('hex')
@@ -473,6 +479,9 @@ export class McpServerManager {
 
       // Audit log
       this.auditLog.log(actionDesc, targetDesc, 'success', result.substring(0, 200), name)
+
+      // Record for pattern detection (pass full args for accurate step reconstruction)
+      this.patternDetector?.recordToolCall(name, args, String(targetDesc))
 
       return { content: [{ type: 'text', text: result }] }
     } catch (err) {

@@ -66,6 +66,7 @@ const IPC = {
   PTY_EXIT: 'pty:exit',
   PTY_KILL: 'pty:kill',
   AUTH_LOGIN: 'auth:login',
+  AUTH_LOGOUT: 'auth:logout',
   AUTH_STATUS: 'auth:status',
   COOKIES_EXPORT: 'cookies:export',
   COOKIES_IMPORT: 'cookies:import',

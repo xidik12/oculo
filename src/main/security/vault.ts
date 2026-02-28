@@ -76,7 +76,8 @@ export class SecurityManager {
   }
 
   getCredential(domain: string): { domain: string; username: string; password: string } | null {
-    const entry = this.vault.find(v => v.domain === domain || domain.includes(v.domain))
+    // Match exact domain or subdomain-of (e.g., "sub.bank.com" matches stored "bank.com")
+    const entry = this.vault.find(v => v.domain === domain || domain.endsWith('.' + v.domain))
     if (!entry) return null
     return { domain: entry.domain, username: entry.username, password: entry.password }
   }
@@ -100,7 +101,8 @@ export class SecurityManager {
 
   /** Generate current TOTP code from a stored secret (RFC 6238) */
   generateTOTP(domain: string): { code: string; remainingSeconds: number } | null {
-    const entry = this.vault.find(v => v.domain === domain || domain.includes(v.domain))
+    // Match exact domain or subdomain-of (e.g., "sub.bank.com" matches stored "bank.com")
+    const entry = this.vault.find(v => v.domain === domain || domain.endsWith('.' + v.domain))
     if (!entry?.totpSecret) return null
 
     try {

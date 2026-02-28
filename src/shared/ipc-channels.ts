@@ -78,7 +78,7 @@ export const IPC = {
   ZOOM_RESET: 'zoom:reset',
 
   // Find in page
-  FIND_IN_PAGE: 'find:in-page',
+  FIND_IN_PAGE: 'find-in-page',
   FIND_CLOSE: 'find:close',
 
   // Command palette

@@ -1,4 +1,19 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
+
+// Minimal HTML sanitizer — only allow safe tags from our extraction
+function sanitizeHtml(html: string): string {
+  const allowedTags = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'blockquote'])
+  // Strip everything except our known safe tags
+  return html.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g, (match, tag) => {
+    const lower = tag.toLowerCase()
+    if (allowedTags.has(lower)) {
+      // Only allow the tag itself, no attributes
+      if (match.startsWith('</')) return `</${lower}>`
+      return `<${lower}>`
+    }
+    return '' // strip unknown tags
+  })
+}
 
 interface ReaderModeProps {
   isOpen: boolean
@@ -114,7 +129,7 @@ export default function ReaderMode({ isOpen, onClose, activeTabId }: ReaderModeP
             <div
               className="prose prose-sm dark:prose-invert max-w-none text-gray-800 dark:text-gray-200 leading-relaxed"
               style={{ fontSize: `${fontSize}px`, lineHeight: 1.75 }}
-              dangerouslySetInnerHTML={{ __html: article.content }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(article.content) }}
             />
           </>
         ) : null}

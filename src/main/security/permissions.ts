@@ -45,9 +45,12 @@ export class PermissionGate {
       return PERMISSION_MAP[action]
     }
     
-    // Check if action contains a known keyword
-    for (const [key, level] of Object.entries(PERMISSION_MAP)) {
-      if (action.toLowerCase().includes(key)) {
+    // Check if action contains a known keyword (longest match first to prevent
+    // "read" matching before "read_vault", which would bypass security)
+    const actionLower = action.toLowerCase()
+    const entries = Object.entries(PERMISSION_MAP).sort((a, b) => b[0].length - a[0].length)
+    for (const [key, level] of entries) {
+      if (actionLower.includes(key)) {
         return level
       }
     }

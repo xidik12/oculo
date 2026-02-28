@@ -61,7 +61,7 @@ export const PERMISSION_MAP: Record<string, import('./types').PermissionLevel> =
   'exportCookies': 'confirm',
   'importCookies': 'confirm',
   'oauth': 'confirm',
-  'shell': 'notify',
+  'shell': 'confirm',
 
   // New MCP tools (auto)
   'tabs': 'auto',

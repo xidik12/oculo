@@ -13,6 +13,11 @@ import os from 'os'
 import { BrowserWindow } from 'electron'
 import { AIProviderConfig, AIProviderId } from '../../shared/ai-types'
 
+/** Escape HTML special characters to prevent XSS in OAuth callback pages */
+function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
 export class OAuthManager {
   // Claude (stubbed)
   oauthToken: string | null = null
@@ -255,7 +260,7 @@ export class OAuthManager {
 
         if (error) {
           res.writeHead(200, { 'Content-Type': 'text/html' })
-          res.end('<html><body><h2>Authentication Failed</h2><p>' + error + '</p><p>You can close this window.</p></body></html>')
+          res.end('<html><body><h2>Authentication Failed</h2><p>' + esc(error) + '</p><p>You can close this window.</p></body></html>')
           cleanup()
           resolve({ success: false, error })
           return
@@ -300,13 +305,13 @@ export class OAuthManager {
                 resolve({ success: true })
               } else {
                 res.writeHead(200, { 'Content-Type': 'text/html' })
-                res.end('<html><body><h2>Token Exchange Failed</h2><p>' + (tokens.error_description || tokens.error || 'Unknown error') + '</p></body></html>')
+                res.end('<html><body><h2>Token Exchange Failed</h2><p>' + esc(tokens.error_description || tokens.error || 'Unknown error') + '</p></body></html>')
                 cleanup()
                 resolve({ success: false, error: tokens.error_description || tokens.error || 'Token exchange failed' })
               }
             } catch (e: any) {
               res.writeHead(500, { 'Content-Type': 'text/html' })
-              res.end('<html><body><h2>Error</h2><p>' + e.message + '</p></body></html>')
+              res.end('<html><body><h2>Error</h2><p>' + esc(e.message) + '</p></body></html>')
               cleanup()
               resolve({ success: false, error: e.message })
             }
@@ -314,7 +319,7 @@ export class OAuthManager {
         })
         tokenReq.on('error', (e) => {
           res.writeHead(500, { 'Content-Type': 'text/html' })
-          res.end('<html><body><h2>Connection Error</h2><p>' + e.message + '</p></body></html>')
+          res.end('<html><body><h2>Connection Error</h2><p>' + esc(e.message) + '</p></body></html>')
           cleanup()
           resolve({ success: false, error: e.message })
         })
@@ -323,11 +328,13 @@ export class OAuthManager {
       })
 
       this.pendingAuthServer = server
+      let authWindow: BrowserWindow | null = null
 
       const cleanup = () => {
         try { server.close() } catch {}
         this.pendingAuthServer = null
         if (authWindow && !authWindow.isDestroyed()) authWindow.close()
+        authWindow = null
       }
 
       server.listen(0, '127.0.0.1', () => {
@@ -344,16 +351,31 @@ export class OAuthManager {
           state
         }).toString()
 
+        // Standalone window (no parent) with full web capabilities for Auth0
         authWindow = new BrowserWindow({
-          width: 600,
+          width: 500,
           height: 700,
           title: 'Sign in to OpenAI',
-          parent: this.mainWindow!,
-          modal: false,
+          show: false,
           webPreferences: {
             nodeIntegration: false,
-            contextIsolation: true
+            contextIsolation: true,
+            sandbox: false,
+            partition: `persist:oauth-openai`
           }
+        })
+
+        authWindow.webContents.once('did-finish-load', () => {
+          authWindow?.show()
+        })
+
+        authWindow.webContents.once('did-navigate', () => {
+          setTimeout(() => authWindow?.show(), 500)
+        })
+
+        authWindow.webContents.setWindowOpenHandler(({ url }) => {
+          authWindow?.loadURL(url)
+          return { action: 'deny' }
         })
 
         authWindow.loadURL(authUrl)
@@ -373,8 +395,6 @@ export class OAuthManager {
           }
         }, 300_000)
       })
-
-      let authWindow: BrowserWindow | null = null
     })
   }
 }
