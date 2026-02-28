@@ -2478,41 +2478,35 @@ export default function App() {
           }
 
           case 'tabs': {
-            // Multi-Tab AI Context — list all tabs or describe a specific one
-            const tabIds = api.listWebviews()
+            // Multi-Tab AI Context — use React tabs state as source of truth
+            const currentTabs = tabs
             if (args.describe !== undefined && args.describe !== null) {
               const targetIdx = Number(args.describe)
-              if (targetIdx >= 0 && targetIdx < tabIds.length) {
-                const targetId = tabIds[targetIdx]
-                const info = api.getWebviewInfo(targetId)
-                if (info) {
-                  try {
-                    const detail = args.detail || 'compact'
-                    if (detail === 'a11y') {
-                      const wcId = api.getWebContentsId(targetId)
-                      if (wcId) {
-                        const snapshot = await api.a11ySnapshot(wcId)
-                        result = `Tab ${targetIdx}: ${info.title}\n${snapshot}`
-                      } else {
-                        result = `Tab ${targetIdx}: ${info.title} | ${info.url} (not ready for a11y)`
-                      }
+              if (targetIdx >= 0 && targetIdx < currentTabs.length) {
+                const targetTab = currentTabs[targetIdx]
+                try {
+                  const detail = args.detail || 'compact'
+                  if (detail === 'a11y' && !targetTab.url.startsWith('oculo://')) {
+                    const wcId = api.getWebContentsId(targetTab.id)
+                    if (wcId) {
+                      const snapshot = await api.a11ySnapshot(wcId)
+                      result = `Tab ${targetIdx}: ${targetTab.title}\n${snapshot}`
                     } else {
-                      result = `Tab ${targetIdx}: ${info.title} | ${info.url}`
+                      result = `Tab ${targetIdx}: ${targetTab.title} | ${targetTab.url} (webview not ready)`
                     }
-                  } catch {
-                    result = `Tab ${targetIdx}: ${info.title} | ${info.url}`
+                  } else {
+                    result = `Tab ${targetIdx}: ${targetTab.title} | ${targetTab.url}`
                   }
-                } else {
-                  result = `Tab ${targetIdx}: not available`
+                } catch {
+                  result = `Tab ${targetIdx}: ${targetTab.title} | ${targetTab.url}`
                 }
               } else {
-                result = `Error: Tab index ${targetIdx} out of range (0-${tabIds.length - 1})`
+                result = `Error: Tab index ${targetIdx} out of range (0-${currentTabs.length - 1})`
               }
             } else {
-              const lines = tabIds.map((id, i) => {
-                const info = api.getWebviewInfo(id)
-                const active = id === activeTabIdRef.current ? ' (active)' : ''
-                return `Tab ${i}: ${info?.title || 'Loading...'} | ${info?.url || '...'}${active}`
+              const lines = currentTabs.map((t, i) => {
+                const active = t.id === activeTabIdRef.current ? ' (active)' : ''
+                return `Tab ${i}: ${t.title || 'Loading...'} | ${t.url}${active}`
               })
               result = lines.join('\n') || 'No tabs open'
             }
