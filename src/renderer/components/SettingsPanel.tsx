@@ -25,6 +25,7 @@ function api() {
     cardList(): Promise<Card[]>
     cardActivate(id: string): Promise<Card>
     cardDelete(id: string): Promise<boolean>
+    authLogin(providerId: string): Promise<{ success: boolean; error?: string }>
   } | undefined
 }
 
@@ -135,6 +136,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 statuses={statuses}
                 onSaveKey={handleSaveApiKey}
                 onRemoveKey={handleRemoveApiKey}
+                refreshStatuses={refreshStatuses}
                 flash={flash}
               />
             )}
@@ -300,12 +302,13 @@ function GeneralSettings({ settings, onSave, flash }: { settings: AppSettings; o
 
 // ── AI Providers ────────────────────────────────────────────────────────────
 
-function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, flash }: {
+function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, refreshStatuses, flash }: {
   apiKeys: Record<string, string>
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>
   statuses: Record<string, { ready?: boolean; authMode?: string }>
   onSaveKey: (providerId: AIProviderId) => void
   onRemoveKey: (providerId: AIProviderId) => void
+  refreshStatuses: () => void
   flash: (msg: string) => void
 }) {
   const [cards, setCards] = useState<Card[]>([])
@@ -350,7 +353,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, fla
                     ? 'bg-emerald-900/50 text-emerald-300'
                     : 'bg-oculo-900/50 text-oculo-300'
                 }`}>
-                  {authMode === 'api-key' ? 'API Key' : (__ENABLE_OAUTH__ ? 'CLI Subscription' : 'Active')}
+                  {authMode === 'api-key' ? 'API Key' : ((provider.id !== 'claude' || __ENABLE_CLAUDE_OAUTH__) ? 'Signed In' : 'Active')}
                 </span>
               )}
               {isReady && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 ml-auto" />}
@@ -359,22 +362,62 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, fla
 
             <p className="text-[11px] text-gray-500 mb-2">{provider.description}</p>
 
-            {__ENABLE_OAUTH__ && provider.id === 'claude' && authMode === 'subscription' && isReady && (
+            {__ENABLE_CLAUDE_OAUTH__ && provider.id === 'claude' && authMode === 'subscription' && isReady && (
               <p className="text-[11px] text-oculo-400 mb-2">
-                Using Claude CLI subscription. Add an API key below for instant responses.
+                Signed in with Claude account. Add an API key below for instant responses.
               </p>
             )}
 
-            {__ENABLE_OAUTH__ && provider.id === 'openai' && authMode === 'subscription' && isReady && (
+            {__ENABLE_CLAUDE_OAUTH__ && provider.id === 'claude' && !isReady && (
+              <div className="mb-2">
+                <button
+                  onClick={async () => {
+                    const result = await api()?.authLogin('claude')
+                    if (result?.success) refreshStatuses()
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-[#d97706]/10 border border-[#d97706]/20 hover:bg-[#d97706]/15 transition-colors text-left mb-2"
+                >
+                  <span className="text-[#d97706] text-sm font-bold">C</span>
+                  <div>
+                    <div className="text-xs font-medium text-gray-200">Sign in with Claude</div>
+                    <div className="text-[10px] text-gray-500">Use your Max or Pro subscription</div>
+                  </div>
+                </button>
+                <div className="flex items-center gap-2 my-1.5">
+                  <div className="flex-1 border-t border-surface-dark-3" />
+                  <span className="text-[10px] text-gray-600">or use an API key</span>
+                  <div className="flex-1 border-t border-surface-dark-3" />
+                </div>
+              </div>
+            )}
+
+            {provider.id === 'openai' && authMode === 'subscription' && isReady && (
               <p className="text-[11px] text-oculo-400 mb-2">
-                Using Codex CLI subscription (ChatGPT Plus/Pro). Add an API key below for direct API access.
+                Signed in with ChatGPT account. Add an API key below for direct API access.
               </p>
             )}
 
-            {__ENABLE_OAUTH__ && provider.id === 'openai' && !isReady && (
-              <p className="text-[11px] text-gray-500 mb-2">
-                Run <code className="px-1 py-0.5 bg-surface-dark-2 rounded text-[10px] font-mono text-gray-400">codex auth</code> in terminal to use your ChatGPT subscription, or paste an API key below.
-              </p>
+            {provider.id === 'openai' && !isReady && (
+              <div className="mb-2">
+                <button
+                  onClick={async () => {
+                    const result = await api()?.authLogin('openai')
+                    if (result?.success) refreshStatuses()
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/15 transition-colors text-left mb-2"
+                >
+                  <span className="text-emerald-400 text-sm font-bold">G</span>
+                  <div>
+                    <div className="text-xs font-medium text-gray-200">Sign in with ChatGPT</div>
+                    <div className="text-[10px] text-gray-500">Use your Plus or Pro subscription</div>
+                  </div>
+                </button>
+                <div className="flex items-center gap-2 my-1.5">
+                  <div className="flex-1 border-t border-surface-dark-3" />
+                  <span className="text-[10px] text-gray-600">or use an API key</span>
+                  <div className="flex-1 border-t border-surface-dark-3" />
+                </div>
+              </div>
             )}
 
             <div className="flex items-center gap-2">
@@ -805,7 +848,7 @@ function SupportSettings() {
       <div>
         <h3 className="text-sm font-semibold text-gray-200 mb-1">Support Oculo Development</h3>
         <p className="text-xs text-gray-500 leading-relaxed">
-          Oculo is free and open source. If you find it useful, consider supporting development with a donation.
+          Oculo is free. If you find it useful, consider supporting development with a donation.
         </p>
       </div>
 

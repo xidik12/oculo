@@ -624,22 +624,27 @@ export class AgentController {
       if (!this.claudePath) {
         return {
           providerId: 'claude', connected: false, ready: false,
-          error: 'Add an API key in Settings.',
-          authMode: 'api-key'
+          error: 'Sign in with your Claude account to get started.',
+          authMode: 'subscription'
         }
       }
       if (this.oauth.claudeAuthChecked && !this.oauth.claudeLoggedIn) {
         return {
           providerId: 'claude', connected: true, ready: false,
-          error: 'Add an API key in Settings.',
-          authMode: 'api-key'
+          error: 'Sign in with your Claude account to get started.',
+          authMode: 'subscription'
         }
       }
       return { providerId: 'claude', connected: true, ready: this.oauth.claudeLoggedIn, authMode: 'subscription' }
     }
 
-    // OpenAI: check API key first, then Codex subscription
+    // OpenAI: check ChatGPT subscription first, then API key
     if (providerId === 'openai') {
+      if (this.oauth.codexToken) {
+        return { providerId: 'openai', connected: true, ready: true, authMode: 'subscription',
+          error: undefined }
+      }
+
       const config = this.providerConfigs.get('openai')
       const hasApiKey = !!(config?.apiKey)
 
@@ -647,15 +652,10 @@ export class AgentController {
         return { providerId: 'openai', connected: true, ready: true, authMode: 'api-key' }
       }
 
-      if (this.oauth.codexToken) {
-        return { providerId: 'openai', connected: true, ready: true, authMode: 'subscription',
-          error: undefined }
-      }
-
       return {
         providerId: 'openai', connected: false, ready: false,
-        error: 'Add an API key in Settings.',
-        authMode: 'api-key'
+        error: 'Sign in with your ChatGPT account to get started.',
+        authMode: 'subscription'
       }
     }
 
@@ -700,28 +700,28 @@ export class AgentController {
       // Priority 3: No auth available
       this.emit({
         type: 'error',
-        error: 'Not authenticated with Claude.\n\nAdd an API key in Settings > AI Providers.'
+        error: 'Not authenticated with Claude.\n\nSign in with your Claude account, or add an API key in Settings > AI Providers.'
       })
       return
     }
 
     if (this.activeProvider === 'openai') {
-      // Priority 1: API key
-      const config = this.providerConfigs.get('openai')
-      if (config?.apiKey) {
-        return this.handleOpenAIWithTools(config.apiKey, 'api-key')
-      }
-
-      // Priority 2: Codex CLI subscription token
+      // Priority 1: ChatGPT subscription token
       const codexToken = await this.oauth.getCodexToken()
       if (codexToken) {
         return this.handleOpenAIWithTools(codexToken, 'oauth')
       }
 
+      // Priority 2: API key
+      const config = this.providerConfigs.get('openai')
+      if (config?.apiKey) {
+        return this.handleOpenAIWithTools(config.apiKey, 'api-key')
+      }
+
       // Priority 3: No auth available
       this.emit({
         type: 'error',
-        error: 'Not authenticated with OpenAI.\n\nAdd an API key in Settings > AI Providers.'
+        error: 'Not authenticated with OpenAI.\n\nSign in with your ChatGPT account, or add an API key in Settings > AI Providers.'
       })
       return
     }

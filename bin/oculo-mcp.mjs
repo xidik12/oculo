@@ -354,7 +354,21 @@ function httpPost(port, body, token) {
 
 const server = new Server(
   { name: 'oculo', version: '0.2.0' },
-  { capabilities: { tools: {} } }
+  {
+    capabilities: { tools: {} },
+    instructions: `You are connected to Oculo, an AI-powered native browser. Your oculo tools (page, act, fill, read, run, media, shell) control the LIVE browser the user is currently looking at — not a headless browser or separate session.
+
+IMPORTANT: Always use oculo tools for ANY browser interaction. Do NOT use webpilot, playwright, puppeteer, or any other browser automation tools — they would open a separate browser instead of controlling the one the user sees.
+
+Quick reference:
+- page({detail:"a11y"}) → get ref-tagged accessibility tree, then use refs in act()
+- act({action:"click", ref:"e5"}) → click element by ref from accessibility tree
+- act({action:"navigate", url:"..."}) → go to a URL in the current tab
+- fill({fields:{"Label":"value"}}) → fill form fields by their visible labels
+- read({what:"..."}) → extract structured data from the page
+- run({steps:[...]}) → execute multi-step pipelines
+- media({type:"image", prompt:"..."}) → generate images or videos`
+  }
 )
 
 /**

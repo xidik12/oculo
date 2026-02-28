@@ -123,7 +123,7 @@ function ProviderSelector({ activeProvider, activeModel, onSelect }: {
                     {isReady && provider.id === 'ollama' && (
                       <span className="text-[9px] px-1 py-0.5 rounded bg-purple-900/50 text-purple-300">Local</span>
                     )}
-                    {__ENABLE_OAUTH__ && isReady && provider.id !== 'ollama' && authMode === 'subscription' && (
+                    {isReady && provider.id !== 'ollama' && authMode === 'subscription' && (provider.id !== 'claude' || __ENABLE_CLAUDE_OAUTH__) && (
                       <span className="text-[9px] px-1 py-0.5 rounded bg-oculo-900/50 text-oculo-300">CLI</span>
                     )}
                     {isReady && provider.id !== 'ollama' && authMode === 'api-key' && (
@@ -785,14 +785,12 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
       <div>
         <h3 className="text-sm font-semibold text-gray-200 mb-1">Welcome to Oculo AI</h3>
         <p className="text-xs text-gray-500 leading-relaxed max-w-[280px]">
-          {__ENABLE_OAUTH__
-            ? 'Sign in with your existing subscription or add an API key in Settings to get started.'
-            : 'Add an API key in Settings to get started.'}
+          Sign in with your ChatGPT or Claude subscription to get started.
         </p>
       </div>
 
-      {__ENABLE_OAUTH__ && (
-        <div className="w-full max-w-[280px] space-y-2 mt-1">
+      <div className="w-full max-w-[280px] space-y-2 mt-1">
+          {__ENABLE_CLAUDE_OAUTH__ && (
           <button
             onClick={() => handleLogin('claude')}
             disabled={loading !== null}
@@ -806,6 +804,7 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
             </div>
             {loading === 'claude' && <span className="w-3 h-3 border-2 border-[#d97706] border-t-transparent rounded-full animate-spin flex-shrink-0" />}
           </button>
+          )}
 
           <button
             onClick={() => handleLogin('openai')}
@@ -821,18 +820,15 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
             {loading === 'openai' && <span className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
           </button>
         </div>
-      )}
 
-      {__ENABLE_OAUTH__ && (
-        <div className="flex items-center gap-2 w-full max-w-[280px]">
+      <div className="flex items-center gap-2 w-full max-w-[280px]">
           <div className="flex-1 border-t border-surface-dark-3" />
           <span className="text-[10px] text-gray-600">or</span>
           <div className="flex-1 border-t border-surface-dark-3" />
         </div>
-      )}
 
       <p className="text-[10px] text-gray-600 max-w-[280px]">
-        Add an API key in <span className="text-gray-400">Settings &gt; AI Providers</span> {__ENABLE_OAUTH__ ? 'for direct access' : 'to get started'}.
+        Add an API key in <span className="text-gray-400">Settings &gt; AI Providers</span> for direct access.
       </p>
     </div>
   )
@@ -1096,7 +1092,7 @@ export default function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
       <div className="flex items-center h-11 px-2 border-b border-surface-dark-3 flex-shrink-0 gap-1">
         <ProviderSelector activeProvider={state.activeProvider} activeModel={state.activeModel} onSelect={state.handleProviderSelect} />
 
-        {authMode && (authMode !== 'subscription' || __ENABLE_OAUTH__) && (
+        {authMode && (authMode !== 'subscription' || state.activeProvider !== 'claude' || __ENABLE_CLAUDE_OAUTH__) && (
           <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
             authMode === 'subscription' ? 'bg-oculo-900/50 text-oculo-300' :
             authMode === 'api-key' ? 'bg-emerald-900/50 text-emerald-300' :
