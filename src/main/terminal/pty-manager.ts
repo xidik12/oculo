@@ -26,7 +26,7 @@ export class PtyManager {
 
   constructor(mainWindow: BrowserWindow) {
     this.mainWindow = mainWindow
-    this.shellPath = process.env['SHELL'] || (process.platform === 'win32' ? 'powershell.exe' : '/bin/bash')
+    this.shellPath = process.env['SHELL'] || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh')
     this.shellEnv = this.buildEnv()
   }
 
@@ -56,8 +56,13 @@ export class PtyManager {
     const seen = new Set<string>()
     const dedupedPath = allPaths.filter(p => { if (!p || seen.has(p)) return false; seen.add(p); return true }).join(sep)
 
+    // Build clean env — strip CLAUDECODE so the embedded terminal can launch Claude Code
+    const env = { ...process.env as Record<string, string> }
+    delete env['CLAUDECODE']
+    delete env['CLAUDE_CODE_SESSION']
+
     return {
-      ...process.env as Record<string, string>,
+      ...env,
       PATH: dedupedPath,
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
