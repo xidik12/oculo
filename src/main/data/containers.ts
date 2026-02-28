@@ -27,7 +27,7 @@ export class ContainerStore {
 
   private save(): void {
     try {
-      if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+      mkdirSync(DATA_DIR, { recursive: true })
       writeFileSync(CONTAINERS_FILE, JSON.stringify(this.containers, null, 2))
     } catch (err) {
       console.error('Failed to save containers:', err)

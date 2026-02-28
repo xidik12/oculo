@@ -64,7 +64,7 @@ export class CardStore {
 
   private save(): void {
     try {
-      if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+      mkdirSync(DATA_DIR, { recursive: true })
       writeFileSync(CARDS_FILE, JSON.stringify(this.cards, null, 2))
     } catch (err) {
       console.error('Failed to save cards:', err)

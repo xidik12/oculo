@@ -1,28 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { AI_PROVIDERS, AIProviderId } from '../../shared/ai-types'
-import { AppSettings } from '../../shared/types'
+import { AppSettings, Container, Card } from '../../shared/types'
 
 interface SettingsPanelProps {
   isOpen: boolean
   onClose: () => void
-}
-
-interface Container {
-  id: string
-  name: string
-  color: string
-  icon: string
-  partition: string
-}
-
-interface Card {
-  id: string
-  name: string
-  icon: string
-  systemInstruction: string
-  triggerDomains?: string[]
-  isActive: boolean
-  createdAt: number
 }
 
 function api() {
@@ -52,7 +34,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const [tab, setTab] = useState<SettingsTab>('ai')
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
-  const [statuses, setStatuses] = useState<Record<string, any>>({})
+  const [statuses, setStatuses] = useState<Record<string, { ready?: boolean; authMode?: string }>>({})
   const [saved, setSaved] = useState<string | null>(null)
 
   // Load settings on open
@@ -319,7 +301,7 @@ function GeneralSettings({ settings, onSave, flash }: { settings: AppSettings; o
 function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, flash }: {
   apiKeys: Record<string, string>
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>
-  statuses: Record<string, any>
+  statuses: Record<string, { ready?: boolean; authMode?: string }>
   onSaveKey: (providerId: AIProviderId) => void
   onRemoveKey: (providerId: AIProviderId) => void
   flash: (msg: string) => void
@@ -487,9 +469,9 @@ const MEDIA_PROVIDERS = [
 function MediaSettings({ apiKeys, setApiKeys, onSaveKey, onRemoveKey, statuses }: {
   apiKeys: Record<string, string>
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>
-  onSaveKey: (providerId: any) => void
-  onRemoveKey: (providerId: any) => void
-  statuses: Record<string, any>
+  onSaveKey: (providerId: string) => void
+  onRemoveKey: (providerId: string) => void
+  statuses: Record<string, { ready?: boolean }>
 }) {
   return (
     <>
@@ -547,9 +529,11 @@ const PRE_CONFIGURED_APPS = [
   { id: 'slack', name: 'Slack', icon: '💬', transport: 'stdio' as const, command: 'npx -y @anthropic/slack-mcp-server', description: 'Send messages and interact with Slack channels' },
 ]
 
+interface McpServerStatus { id: string; status: 'connected' | 'disconnected' | 'error' | 'connecting'; toolCount?: number; error?: string }
+
 function ConnectedAppsSettings({ flash }: { flash: (msg: string) => void }) {
-  const [configs, setConfigs] = useState<any[]>([])
-  const [statuses, setStatuses] = useState<any[]>([])
+  const [configs, setConfigs] = useState<import('../../shared/types').McpClientConfig[]>([])
+  const [statuses, setStatuses] = useState<McpServerStatus[]>([])
   const [showAddForm, setShowAddForm] = useState(false)
   const [newName, setNewName] = useState('')
   const [newCommand, setNewCommand] = useState('')
@@ -614,7 +598,7 @@ function ConnectedAppsSettings({ flash }: { flash: (msg: string) => void }) {
     refresh()
   }
 
-  const getStatus = (id: string) => statuses.find(s => s.id === id)
+  const getStatus = (id: string): McpServerStatus | undefined => statuses.find(s => s.id === id)
 
   return (
     <>

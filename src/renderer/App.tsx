@@ -22,11 +22,14 @@ function newId(): string {
   return `tab-${Date.now()}-${++tabCounter}`
 }
 
+function oculoApi(): any {
+  return (window as any).oculo
+}
+
 const NEW_TAB_URL = 'oculo://newtab'
 const ABOUT_URL = 'oculo://about'
 const CONTACT_URL = 'oculo://contact'
 const GUIDE_URL = 'oculo://guide'
-const DEFAULT_URL = 'https://www.google.com'
 
 export default function App() {
   const [tabs, setTabs] = useState<Tab[]>([
@@ -35,6 +38,8 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState(tabs[0].id)
   const activeTabIdRef = useRef(activeTabId)
   useEffect(() => { activeTabIdRef.current = activeTabId }, [activeTabId])
+  const tabsRef = useRef(tabs)
+  useEffect(() => { tabsRef.current = tabs }, [tabs])
   const [darkMode, setDarkMode] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches)
   const [chatOpen, setChatOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
@@ -43,7 +48,6 @@ export default function App() {
   const [bookmarksBarOpen, setBookmarksBarOpen] = useState(true)
   const [isCurrentBookmarked, setIsCurrentBookmarked] = useState(false)
   const [readerModeOpen, setReaderModeOpen] = useState(false)
-  const [splitViewOpen, setSplitViewOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tabGroups, setTabGroups] = useState<TabGroup[]>([])
   const [devToolsHeight, setDevToolsHeight] = useState(0)
@@ -75,7 +79,7 @@ export default function App() {
 
   // Load pinned sidebar apps on mount
   useEffect(() => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api?.pinnedAppList) return
     api.pinnedAppList().then((apps: PinnedApp[]) => {
       if (apps && apps.length > 0) setPinnedApps(apps)
@@ -84,7 +88,7 @@ export default function App() {
 
   // IPC event listeners
   useEffect(() => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api) return
     const cleanups = [
       api.onNewTab((url?: string) => handleNewTab(url)),
@@ -101,7 +105,7 @@ export default function App() {
       api.onNavBack?.(() => api.goBack(activeTabId)),
       api.onNavForward?.(() => api.goForward(activeTabId)),
       api.onReaderMode?.(() => setReaderModeOpen(prev => !prev)),
-      api.onSplitView?.(() => setSplitViewOpen(prev => !prev)),
+      api.onSplitView?.(() => {}),
       api.onToggleBookmarksBar?.(() => setBookmarksBarOpen(prev => !prev)),
       api.onOpenSettings?.(() => setSettingsOpen(true)),
       api.onNavigateTo?.((url: string) => handleNavigate(url)),
@@ -116,7 +120,7 @@ export default function App() {
 
   // MCP tool execution — separate effect with inline handler
   useEffect(() => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api?.onMcpToolCall) return
 
     // Helper: find the active (visible) webview element
@@ -450,6 +454,15 @@ export default function App() {
       await new Promise(r => setTimeout(r, delay))
     }
 
+    // Helper: convert a NativeImage (from capturePage()) to a base64 PNG string
+    function nativeImageToBase64(nativeImage: any): string {
+      const pngBuffer = nativeImage.toPNG()
+      const bytes = new Uint8Array(pngBuffer)
+      let binary = ''
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
+      return btoa(binary)
+    }
+
     // Helper: parse and strip ---REFMAP--- block from a11y snapshot result.
     // Returns { snapshot, refMap } where snapshot has the block removed.
     function parseRefMapFromSnapshot(raw: string): { snapshot: string; refMap: Record<string, { name: string; role: string; backendDOMNodeId?: number }> } {
@@ -671,7 +684,8 @@ export default function App() {
         // No webview exists (newtab) — for navigate, update state and return immediately.
         // React will render a WebViewContainer, the user will see the page load.
         if (!wv && toolName === 'act' && args?.action === 'navigate' && args?.url) {
-          setTabs(prev => prev.map(t => t.id === activeTabIdRef.current ? { ...t, url: args.url, isLoading: true } : t))
+          const tempTitle = new URL(args.url).hostname.replace('www.', '')
+          setTabs(prev => prev.map(t => t.id === activeTabIdRef.current ? { ...t, url: args.url, title: tempTitle, isLoading: true } : t))
           // Return immediately — don't block the React render cycle
           api.sendMcpToolResult(callId, 'Navigating to ' + args.url + ' — page is loading.')
           return
@@ -761,11 +775,7 @@ export default function App() {
             if (args.screenshot) {
               try {
                 const nativeImage = await (wv as any).capturePage()
-                const pngBuffer = nativeImage.toPNG()
-                const bytes = new Uint8Array(pngBuffer)
-                let binary = ''
-                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-                const base64 = btoa(binary)
+                const base64 = nativeImageToBase64(nativeImage)
                 const filePath = await api.screenshotSave(base64)
                 result += '\n[Screenshot: ' + filePath + ']'
               } catch { /* screenshot failed, non-critical */ }
@@ -1346,47 +1356,44 @@ export default function App() {
                 'return JSON.stringify(attrs);})()'
               result = await (wv as any).executeJavaScript(attrCode)
             } else if (action === 'newTab') {
-              // Open a new tab
-              const tabUrl = args.url || 'oculo://newtab'
-              const api = (window as any).oculo
-              if (api?.newTab) {
-                api.newTab(tabUrl)
-                result = 'Opened new tab' + (args.url ? ' with ' + args.url : '')
-              } else {
-                result = 'Tab API not available'
-              }
+              // Open a new tab directly via React state
+              const tabUrl = args.url || NEW_TAB_URL
+              const tabTitle = tabUrl === NEW_TAB_URL ? 'New Tab' : (() => { try { return new URL(tabUrl).hostname.replace('www.', '') } catch { return 'New Tab' } })()
+              const newTabObj: Tab = { id: newId(), url: tabUrl, title: tabTitle, isLoading: false, canGoBack: false, canGoForward: false }
+              setTabs(prev => [...prev, newTabObj])
+              setActiveTabId(newTabObj.id)
+              result = 'Opened new tab' + (args.url ? ' with ' + args.url : '')
             } else if (action === 'closeTab') {
-              // Close the current tab via the renderer's handleCloseTab
-              const tabToClose = document.querySelector('webview:not(.hidden)')?.closest('[data-tab-id]')?.getAttribute('data-tab-id')
-              result = 'Current tab close requested'
-            } else if (action === 'switchTab') {
-              // Switch to tab by text (title match) or index
-              const target = args.text || args.value || ''
-              const idx = parseInt(target, 10)
-              // Try to find and switch to the tab
-              const allWvs = document.querySelectorAll('webview')
-              let found = false
-              allWvs.forEach((wvEl: any, i: number) => {
-                try {
-                  const wvTitle = wvEl.getTitle?.() || ''
-                  const wvUrl = wvEl.getURL?.() || ''
-                  if ((!isNaN(idx) && i === idx) ||
-                      (target && (wvTitle.toLowerCase().includes(target.toLowerCase()) ||
-                                   wvUrl.toLowerCase().includes(target.toLowerCase())))) {
-                    // Get the tab container's tab-id
-                    const container = wvEl.closest('[data-tab-id]')
-                    if (container) {
-                      const tabId = container.getAttribute('data-tab-id')
-                      if (tabId) {
-                        // Dispatch a custom event or directly update
-                        found = true
-                        result = 'Switched to tab [' + i + ']: ' + wvTitle + ' — ' + wvUrl.substring(0, 60)
-                      }
-                    }
-                  }
-                } catch { /* skip */ }
+              // Close the active tab
+              setTabs(prev => {
+                if (prev.length <= 1) return prev
+                const tabId = activeTabIdRef.current
+                const newTabs = prev.filter(t => t.id !== tabId)
+                setActiveTabId(cur => {
+                  if (cur !== tabId) return cur
+                  const idx = prev.findIndex(t => t.id === tabId)
+                  return newTabs[Math.min(idx, newTabs.length - 1)].id
+                })
+                return newTabs
               })
-              if (!found) result = 'Tab not found: ' + target + '. Use listTabs to see available tabs.'
+              result = 'Tab closed'
+            } else if (action === 'switchTab') {
+              // Switch to tab by text (title/URL match) or numeric index
+              const target = args.text || args.value || ''
+              const numIdx = parseInt(target, 10)
+              const currentTabs = tabsRef.current
+              const tab = !isNaN(numIdx) && numIdx >= 0 && numIdx < currentTabs.length
+                ? currentTabs[numIdx]
+                : currentTabs.find(t =>
+                    t.title?.toLowerCase().includes(target.toLowerCase()) ||
+                    t.url.toLowerCase().includes(target.toLowerCase())
+                  )
+              if (tab) {
+                setActiveTabId(tab.id)
+                result = 'Switched to tab: ' + (tab.title || tab.url.substring(0, 60))
+              } else {
+                result = 'Tab not found: ' + target + '. Use listTabs to see available tabs.'
+              }
             } else if (action === 'upload') {
               // Programmatic file upload via CDP — no OS dialog
               const filePaths = args.value ? args.value.split(',').map((p: string) => p.trim()) : []
@@ -1438,11 +1445,7 @@ export default function App() {
                       width: Math.min(rect.w, nativeImage.getSize().width - rect.x),
                       height: Math.min(rect.h, nativeImage.getSize().height - rect.y)
                     })
-                    const pngBuffer = cropped.toPNG()
-                    const bytes = new Uint8Array(pngBuffer)
-                    let binary = ''
-                    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-                    const base64 = btoa(binary)
+                    const base64 = nativeImageToBase64(cropped)
                     const filePath = await api.screenshotSave(base64)
                     result = 'Element screenshot saved: ' + filePath + ' (' + rect.w + 'x' + rect.h + 'px, <' + rect.tag + '>)'
                   }
@@ -1488,11 +1491,7 @@ export default function App() {
 
                 // Capture screenshot
                 const nativeImage = await (wv as any).capturePage()
-                const pngBuffer = nativeImage.toPNG()
-                const bytes = new Uint8Array(pngBuffer)
-                let binary = ''
-                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-                const base64 = btoa(binary)
+                const base64 = nativeImageToBase64(nativeImage)
                 const filePath = await api.screenshotSave(base64)
 
                 // Remove markers
@@ -1508,12 +1507,7 @@ export default function App() {
               // Capture page screenshot and save to temp file
               try {
                 const nativeImage = await (wv as any).capturePage()
-                const pngBuffer = nativeImage.toPNG()
-                // Convert buffer to base64 safely (avoid spread operator stack overflow)
-                const bytes = new Uint8Array(pngBuffer)
-                let binary = ''
-                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-                const base64 = btoa(binary)
+                const base64 = nativeImageToBase64(nativeImage)
                 const filePath = await api.screenshotSave(base64)
                 result = 'Screenshot saved: ' + filePath
               } catch (e: any) {
@@ -1562,37 +1556,20 @@ export default function App() {
               // Copy page screenshot to clipboard
               try {
                 const nativeImage = await (wv as any).capturePage()
-                const pngBuffer = nativeImage.toPNG()
-                const bytes = new Uint8Array(pngBuffer)
-                let binary = ''
-                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-                const base64 = btoa(binary)
-                const ok = await api.clipboardWriteImage(base64)
+                const ok = await api.clipboardWriteImage(nativeImageToBase64(nativeImage))
                 result = ok ? 'Page screenshot copied to clipboard' : 'Error: Failed to write image to clipboard'
               } catch (e: any) {
                 result = 'Error capturing screenshot: ' + e.message
               }
             } else if (action === 'listTabs') {
-              // List all open tabs with their URLs and titles
-              try {
-                const allWebviews = document.querySelectorAll('webview')
-                const tabInfo: string[] = []
-                let activeIndex = -1
-                allWebviews.forEach((wvEl: any, i: number) => {
-                  try {
-                    const url = wvEl.getURL?.() || 'about:blank'
-                    const title = wvEl.getTitle?.() || 'Untitled'
-                    const parent = wvEl.closest('div')
-                    const isActive = parent && !parent.classList.contains('hidden')
-                    if (isActive) activeIndex = i
-                    tabInfo.push(`${isActive ? '→ ' : '  '}[${i}] ${title} — ${url.substring(0, 80)}`)
-                  } catch { tabInfo.push(`  [${i}] (not ready)`) }
-                })
-                result = tabInfo.length ? `Tabs (${tabInfo.length}):\n` + tabInfo.join('\n') : 'No tabs found'
-                if (tabInfo.length > 1) result += '\n\nTip: Switch between tabs with act({action:"switchTab", text:"tab title or index"})'
-              } catch (e: any) {
-                result = 'Error listing tabs: ' + e.message
-              }
+              // List all open tabs from React state
+              const currentTabs = tabsRef.current
+              const activeId = activeTabIdRef.current
+              const tabInfo = currentTabs.map((t, i) =>
+                `${t.id === activeId ? '→ ' : '  '}[${i}] ${t.title || 'Loading...'} — ${t.url.substring(0, 80)}`
+              )
+              result = tabInfo.length ? `Tabs (${tabInfo.length}):\n` + tabInfo.join('\n') : 'No tabs found'
+              if (tabInfo.length > 1) result += '\n\nTip: Switch between tabs with act({action:"switchTab", text:"tab title or index"})'
             } else if (action === 'monitorNetwork') {
               // Start/read network request monitoring (XHR + fetch)
               const monitorCode = '(function(){' +
@@ -1735,12 +1712,7 @@ export default function App() {
               // Take "after" screenshot and compare with previous screenshot
               try {
                 const nativeImage = await (wv as any).capturePage()
-                const pngBuffer = nativeImage.toPNG()
-                const bytes = new Uint8Array(pngBuffer)
-                let binary = ''
-                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
-                const base64After = btoa(binary)
-                const afterPath = await api.screenshotSave(base64After)
+                const afterPath = await api.screenshotSave(nativeImageToBase64(nativeImage))
                 // Compare with page snapshot text diff
                 const currentSnapshot = await (wv as any).executeJavaScript(buildPageCode())
                 const diff = diffPageSnapshot(lastPageSnapshot.current, currentSnapshot)
@@ -2304,24 +2276,14 @@ export default function App() {
               api.closeDevToolsById?.(wcId as any)
               result = 'DevTools panel closed'
             } else if (dtAction === 'console') {
-              // Read captured console logs
+              // Read captured console logs, and ensure capture is enabled
               const consoleCode = '(function(){' +
                 'if(!window.__oc_logs)return "No console logs captured. Console capture is now enabled.";' +
                 'var logs=window.__oc_logs.slice(-' + (args.limit || 20) + ');' +
                 'return logs.map(function(l){return "["+l.type+"] "+l.msg}).join("\\n")||"No logs";' +
                 '})()'
               result = await (wv as any).executeJavaScript(consoleCode)
-              // Enable console capture for future calls
-              await (wv as any).executeJavaScript(
-                '(function(){if(window.__oc_logs)return;window.__oc_logs=[];' +
-                'var orig={log:console.log,warn:console.warn,error:console.error,info:console.info};' +
-                '["log","warn","error","info"].forEach(function(t){' +
-                'console[t]=function(){' +
-                'window.__oc_logs.push({type:t,msg:Array.from(arguments).map(function(a){try{return typeof a==="object"?JSON.stringify(a):String(a)}catch(e){return String(a)}}).join(" "),ts:Date.now()});' +
-                'if(window.__oc_logs.length>200)window.__oc_logs.shift();' +
-                'orig[t].apply(console,arguments);};});' +
-                '})()'
-              )
+              await (wv as any).executeJavaScript(buildConsoleCapture())
             } else if (dtAction === 'inspect') {
               const sel = args.selector || 'body'
               const inspectCode = '(function(){' +
@@ -2478,8 +2440,12 @@ export default function App() {
           }
 
           case 'tabs': {
-            // Multi-Tab AI Context — use React tabs state as source of truth
-            const currentTabs = tabs
+            // Multi-Tab AI Context — use tabsRef to avoid stale closure
+            // If any tab is still loading, wait briefly for title to settle
+            if (tabsRef.current.some(t => t.isLoading)) {
+              await new Promise(r => setTimeout(r, 800))
+            }
+            const currentTabs = tabsRef.current
             if (args.describe !== undefined && args.describe !== null) {
               const targetIdx = Number(args.describe)
               if (targetIdx >= 0 && targetIdx < currentTabs.length) {
@@ -2546,29 +2512,8 @@ export default function App() {
               break
             }
             try {
-              const target = args.target || 'page'
-              let base64: string
-              if (target === 'element' && args.selector) {
-                // Capture specific element
-                base64 = await (wv as any).executeJavaScript(
-                  `(async function() {
-                    var el = document.querySelector(${JSON.stringify(args.selector)});
-                    if (!el) return null;
-                    var rect = el.getBoundingClientRect();
-                    var canvas = document.createElement('canvas');
-                    canvas.width = rect.width;
-                    canvas.height = rect.height;
-                    // Use html2canvas if available, otherwise take full page
-                    return null; // Fallback to page capture
-                  })()`
-                )
-                // Fallback: capture full page
-                const nativeImage = await (wv as any).capturePage()
-                base64 = nativeImage.toDataURL().replace(/^data:image\/png;base64,/, '')
-              } else {
-                const nativeImage = await (wv as any).capturePage()
-                base64 = nativeImage.toDataURL().replace(/^data:image\/png;base64,/, '')
-              }
+              const nativeImage = await (wv as any).capturePage()
+              const base64 = nativeImageToBase64(nativeImage)
               const question = args.question || 'Describe what you see in this screenshot.'
               result = `[LENS_IMAGE:${base64.substring(0, 100)}...]\nQuestion: ${question}\n(Screenshot captured — ${base64.length} chars base64)`
             } catch (err: any) {
@@ -2616,26 +2561,26 @@ export default function App() {
     }
   }, [activeTab?.url])
 
-  // Check bookmark status
-  useEffect(() => { checkBookmarkStatus() }, [activeTab?.url])
-
-  async function checkBookmarkStatus() {
-    const api = (window as any).oculo
+  const checkBookmarkStatus = useCallback(async () => {
+    const api = oculoApi()
     if (!api?.bookmarksFindUrl || !activeTab?.url) return
     const bm = await api.bookmarksFindUrl(activeTab.url)
     setIsCurrentBookmarked(!!bm)
-  }
+  }, [activeTab?.url])
+
+  // Check bookmark status
+  useEffect(() => { checkBookmarkStatus() }, [checkBookmarkStatus])
 
   // Record history
   const recordHistory = useCallback((url: string, title: string) => {
     if (url.startsWith('oculo://')) return
-    const api = (window as any).oculo
+    const api = oculoApi()
     api?.historyAdd?.(url, title)
   }, [])
 
   // Zoom per site
   const handleZoom = useCallback(async (delta: number) => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api || !activeTab) return
     try {
       const domain = new URL(activeTab.url).hostname
@@ -2648,7 +2593,7 @@ export default function App() {
   }, [activeTab])
 
   const handleZoomReset = useCallback(async () => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api || !activeTab) return
     try {
       const domain = new URL(activeTab.url).hostname
@@ -2671,13 +2616,12 @@ export default function App() {
   // Apply zoom when navigating to a new domain
   useEffect(() => {
     if (!activeTab?.url || activeTab.url.startsWith('oculo://')) return
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api?.zoomGet) return
     try {
       const domain = new URL(activeTab.url).hostname
       api.zoomGet(domain).then((level: number) => {
-        if (level !== 1.0) applyZoom(level)
-        else applyZoom(1.0)
+        applyZoom(level)
       })
     } catch { /* ignore */ }
   }, [activeTab?.url])
@@ -2699,18 +2643,20 @@ export default function App() {
       const closedTab = prev.find(t => t.id === tabId)
       if (closedTab) closedTabs.current.push({ url: closedTab.url, title: closedTab.title })
       const newTabs = prev.filter(t => t.id !== tabId)
-      if (activeTabId === tabId) {
-        const idx = prev.findIndex(t => t.id === tabId)
-        const newActive = newTabs[Math.min(idx, newTabs.length - 1)]
-        setActiveTabId(newActive.id)
-      }
+      setActiveTabId(currentActiveId => {
+        if (currentActiveId === tabId) {
+          const idx = prev.findIndex(t => t.id === tabId)
+          return newTabs[Math.min(idx, newTabs.length - 1)].id
+        }
+        return currentActiveId
+      })
       // Remove from groups
       setTabGroups(groups => groups.map(g => ({
         ...g, tabIds: g.tabIds.filter(id => id !== tabId)
       })).filter(g => g.tabIds.length > 0))
       return newTabs
     })
-  }, [activeTabId])
+  }, [])
 
   const handleReopenClosedTab = useCallback(() => {
     const last = closedTabs.current.pop()
@@ -2728,21 +2674,21 @@ export default function App() {
     setReaderModeOpen(false)
   }, [activeTabId])
 
-  const handleWebViewUpdate = useCallback((tabId: string, updates: Partial<Tab>) => {
+  const handleWebViewUpdate = useCallback((tabId: string, updates: Partial<Tab>): void => {
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, ...updates } : t))
     if (updates.url && !updates.isLoading) {
       recordHistory(updates.url, updates.title || updates.url)
     }
   }, [recordHistory])
 
-  const handleGoBack = useCallback(() => { (window as any).oculo?.goBack(activeTabId) }, [activeTabId])
-  const handleGoForward = useCallback(() => { (window as any).oculo?.goForward(activeTabId) }, [activeTabId])
-  const handleReload = useCallback(() => { (window as any).oculo?.reload(activeTabId) }, [activeTabId])
+  const handleGoBack = useCallback(() => { oculoApi()?.goBack(activeTabId) }, [activeTabId])
+  const handleGoForward = useCallback(() => { oculoApi()?.goForward(activeTabId) }, [activeTabId])
+  const handleReload = useCallback(() => { oculoApi()?.reload(activeTabId) }, [activeTabId])
 
   // View page source — opens in a new tab with view-source: prefix
   const handleViewSource = useCallback(async () => {
     if (!activeTab || activeTab.url.startsWith('oculo://')) return
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api?.getPageSource) return
     const source = await api.getPageSource(activeTabId)
     if (source) {
@@ -2755,7 +2701,7 @@ export default function App() {
 
   // Bookmarks
   const handleToggleBookmark = useCallback(async () => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api || !activeTab) return
     const existing = await api.bookmarksFindUrl(activeTab.url)
     if (existing) {
@@ -2769,7 +2715,7 @@ export default function App() {
   }, [activeTab, addToast])
 
   const handleSaveBookmark = useCallback(async (title: string) => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api || !activeTab) return
     const existing = await api.bookmarksFindUrl(activeTab.url)
     if (existing) await api.bookmarksUpdate(existing.id, { title })
@@ -2777,7 +2723,7 @@ export default function App() {
   }, [activeTab])
 
   const handleRemoveBookmark = useCallback(async () => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api || !activeTab) return
     const existing = await api.bookmarksFindUrl(activeTab.url)
     if (existing) await api.bookmarksDelete(existing.id)
@@ -2819,7 +2765,7 @@ export default function App() {
 
   // === Pinned Sidebar Apps ===
   const handlePinToSidebar = useCallback(async (tab: Tab) => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api?.pinnedAppAdd) return
     // Don't pin internal pages
     if (tab.url.startsWith('oculo://')) return
@@ -2835,7 +2781,7 @@ export default function App() {
   }, [addToast])
 
   const handleUnpinFromSidebar = useCallback(async (id: string) => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api?.pinnedAppRemove) return
     const removed = await api.pinnedAppRemove(id)
     if (removed) {
@@ -2844,7 +2790,7 @@ export default function App() {
   }, [])
 
   const handlePinnedAppWidthChange = useCallback(async (id: string, width: number) => {
-    const api = (window as any).oculo
+    const api = oculoApi()
     if (!api?.pinnedAppUpdate) return
     await api.pinnedAppUpdate(id, { width })
     setPinnedApps(prev => prev.map(a => a.id === id ? { ...a, width } : a))
@@ -2899,13 +2845,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [focusMode])
 
-  // Highlight-to-Ask: Listen for text selection from webview
-  useEffect(() => {
-    const api = (window as any).oculo
-    if (!api) return
-    // Each webview's ipc-message for 'text:selected' is handled in WebViewContainer
-    // but we can listen globally via a custom event from ContentArea
-  }, [])
 
   // Tab suspension timer (Feature 11)
   useEffect(() => {
@@ -2921,7 +2860,7 @@ export default function App() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const api = (window as any).oculo
+      const api = oculoApi()
       api?.getSettings?.().then((settings: any) => {
         if (!settings?.performanceMode) return
         const suspendAfter = (settings.tabSuspendAfterMinutes || 15) * 60 * 1000

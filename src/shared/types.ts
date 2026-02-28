@@ -223,7 +223,7 @@ export interface AppSettings {
 export interface WebviewCommand {
   tabId: string
   action: string
-  payload?: any
+  payload?: unknown
 }
 
 // Chat panel types
@@ -316,7 +316,7 @@ export interface Workspace {
   color: string
   tabIds: string[]
   tabUrls: string[]
-  aiHistory: Array<{ role: string; content: any }>
+  aiHistory: Array<{ role: string; content: unknown }>
   createdAt: number
   lastActiveAt: number
 }

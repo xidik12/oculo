@@ -27,7 +27,7 @@ export class PinnedAppStore {
 
   private save(): void {
     try {
-      if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+      mkdirSync(DATA_DIR, { recursive: true })
       writeFileSync(PINNED_APPS_FILE, JSON.stringify(this.apps, null, 2))
     } catch (err) {
       console.error('Failed to save pinned apps:', err)

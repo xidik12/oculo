@@ -2,11 +2,6 @@ import { contextBridge, ipcRenderer } from 'electron'
 import path from 'path'
 
 // IPC channel constants (duplicated here to avoid import issues in preload)
-const IPC_AUTH = {
-  AUTH_LOGIN: 'auth:login',
-  AUTH_STATUS: 'auth:status',
-}
-
 const IPC = {
   TAB_CREATE: 'tab:create',
   TAB_CLOSE: 'tab:close',
@@ -70,6 +65,8 @@ const IPC = {
   PTY_RESIZE: 'pty:resize',
   PTY_EXIT: 'pty:exit',
   PTY_KILL: 'pty:kill',
+  AUTH_LOGIN: 'auth:login',
+  AUTH_STATUS: 'auth:status',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -395,8 +392,8 @@ const api = {
   openExternal: (url: string) => ipcRenderer.send(IPC.OPEN_EXTERNAL, url),
 
   // === Auth (in-app OAuth login) ===
-  authLogin: (providerId: string) => ipcRenderer.invoke(IPC_AUTH.AUTH_LOGIN, providerId),
-  authStatus: () => ipcRenderer.invoke(IPC_AUTH.AUTH_STATUS),
+  authLogin: (providerId: string) => ipcRenderer.invoke(IPC.AUTH_LOGIN, providerId),
+  authStatus: () => ipcRenderer.invoke(IPC.AUTH_STATUS),
 
   // === DevTools panel resize events ===
   onDevToolsResized: (callback: (height: number) => void) => {

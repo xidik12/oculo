@@ -28,7 +28,7 @@ export class SessionMemoryStore {
 
   private save(): void {
     try {
-      if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+      mkdirSync(DATA_DIR, { recursive: true })
       writeFileSync(MEMORY_FILE, JSON.stringify(this.entries, null, 2))
     } catch (err) {
       console.error('Failed to save session memory:', err)

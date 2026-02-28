@@ -27,7 +27,7 @@ export class MacroStore {
 
   private save(): void {
     try {
-      if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+      mkdirSync(DATA_DIR, { recursive: true })
       writeFileSync(MACROS_FILE, JSON.stringify(this.macros, null, 2))
     } catch (err) {
       console.error('Failed to save macros:', err)

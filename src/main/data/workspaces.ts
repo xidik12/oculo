@@ -41,7 +41,7 @@ export class WorkspaceStore {
 
   private save(): void {
     try {
-      if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+      mkdirSync(DATA_DIR, { recursive: true })
       writeFileSync(WORKSPACES_FILE, JSON.stringify(this.workspaces, null, 2))
     } catch (err) {
       console.error('Failed to save workspaces:', err)
@@ -80,7 +80,7 @@ export class WorkspaceStore {
     return this.workspaces[idx]
   }
 
-  saveState(id: string, tabIds: string[], tabUrls: string[], aiHistory: Array<{ role: string; content: any }>): void {
+  saveState(id: string, tabIds: string[], tabUrls: string[], aiHistory: Array<{ role: string; content: unknown }>): void {
     const idx = this.workspaces.findIndex(w => w.id === id)
     if (idx === -1) return
     this.workspaces[idx].tabIds = tabIds

@@ -19,11 +19,11 @@ function api() {
     getChatStatus(): Promise<{ hasClaudeCode: boolean; messageCount: number; activeProvider: string; activeModel: string; loggedIn: boolean; email?: string; authMode?: string }>
     onChatStream(callback: (event: ChatStreamEvent) => void): () => void
     aiSetProvider(providerId: string, modelId?: string): Promise<boolean>
-    aiSetConfig(config: any): Promise<boolean>
+    aiSetConfig(config: { providerId: string; enabled?: boolean; apiKey?: string; modelId?: string }): Promise<boolean>
     aiGetProviderStatus(providerId: string): Promise<{ providerId: string; connected: boolean; ready: boolean; error?: string; authMode?: string }>
     aiGetActive(): Promise<{ providerId: string; modelId: string }>
     authLogin(providerId: string): Promise<{ success: boolean; error?: string }>
-    authStatus(): Promise<any>
+    authStatus(): Promise<{ loggedIn?: boolean; authMode?: string }>
     ptySpawn(cols: number, rows: number): void
     ptyWrite(data: string): void
     ptyResize(cols: number, rows: number): void
@@ -81,7 +81,7 @@ function ProviderSelector({ activeProvider, activeModel, onSelect }: {
   onSelect: (providerId: string, modelId: string) => void
 }) {
   const [open, setOpen] = useState(false)
-  const [statuses, setStatuses] = useState<Record<string, any>>({})
+  const [statuses, setStatuses] = useState<Record<string, { ready?: boolean; authMode?: string; error?: string }>>({})
 
   useEffect(() => {
     AI_PROVIDERS.forEach(async (p) => {
@@ -744,7 +744,7 @@ function ToolCallGroup({ toolCalls }: { toolCalls: ChatToolCall[] }) {
 
 function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
   const [loading, setLoading] = useState<string | null>(null)
-  const [statuses, setStatuses] = useState<Record<string, any>>({})
+  const [statuses, setStatuses] = useState<Record<string, { ready?: boolean }>>({})
 
   useEffect(() => {
     // Check which providers are ready

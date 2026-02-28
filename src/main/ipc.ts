@@ -96,12 +96,12 @@ export function setupIPC(
   })
 
   // TOTP generation
-  ipcMain.handle('vault:totp', async (_, domain: string) => {
+  ipcMain.handle(IPC.VAULT_TOTP, async (_, domain: string) => {
     return security.generateTOTP(domain)
   })
 
   // Set TOTP secret
-  ipcMain.handle('vault:set-totp', async (_, domain: string, secret: string) => {
+  ipcMain.handle(IPC.VAULT_SET_TOTP, async (_, domain: string, secret: string) => {
     return security.setTotpSecret(domain, secret)
   })
 
@@ -115,7 +115,7 @@ export function setupIPC(
     return security.getSettings()
   })
 
-  ipcMain.handle(IPC.SETTINGS_SET, async (_, settings: any) => {
+  ipcMain.handle(IPC.SETTINGS_SET, async (_, settings: Partial<import('../shared/types').AppSettings>) => {
     return security.saveSettings(settings)
   })
 
@@ -162,7 +162,7 @@ export function setupIPC(
     return true
   })
 
-  ipcMain.handle(IPC.AI_SET_CONFIG, async (_, config: any) => {
+  ipcMain.handle(IPC.AI_SET_CONFIG, async (_, config: { providerId: string; enabled?: boolean; apiKey?: string; modelId?: string }) => {
     agent?.setProviderConfig(config)
     return true
   })
@@ -196,7 +196,7 @@ export function setupIPC(
     return bookmarkStore?.add(title, url, favicon) || null
   })
 
-  ipcMain.handle(IPC.BOOKMARKS_UPDATE, async (_, id: string, updates: any) => {
+  ipcMain.handle(IPC.BOOKMARKS_UPDATE, async (_, id: string, updates: Partial<import('../shared/types').Bookmark>) => {
     return bookmarkStore?.update(id, updates) || null
   })
 
@@ -419,7 +419,7 @@ export function setupIPC(
   })
 
   // === Accessibility Tree Snapshot via CDP ===
-  ipcMain.handle('a11y:snapshot', async (_, wcId: number) => {
+  ipcMain.handle(IPC.A11Y_SNAPSHOT, async (_, wcId: number) => {
     try {
       const wc = webContents.fromId(wcId)
       if (!wc || wc.isDestroyed()) return 'Error: WebContents not found'
@@ -567,7 +567,7 @@ export function setupIPC(
   })
 
   // === Print to PDF ===
-  ipcMain.handle('print:to-pdf', async (_, wcId: number) => {
+  ipcMain.handle(IPC.PRINT_TO_PDF, async (_, wcId: number) => {
     try {
       const wc = webContents.fromId(wcId)
       if (!wc || wc.isDestroyed()) return 'Error: WebContents not found'
@@ -653,29 +653,28 @@ export function setupIPC(
   ipcMain.handle('lessons:for-domain', async (_, domain: string) => {
     if (!agent) return ''
     try {
-      const lessons = agent.getLessons()
-      // Filter lessons relevant to this domain
-      const relevant = lessons.filter((l: any) =>
+      const lessons = agent.getLessons() as Array<{ text: string }>
+      const domainRoot = domain.split('.').slice(-2, -1)[0]?.toLowerCase() || ''
+      const relevant = lessons.filter(l =>
         l.text.toLowerCase().includes(domain.toLowerCase()) ||
-        l.text.toLowerCase().includes(domain.split('.').slice(-2, -1)[0]?.toLowerCase() || '')
+        (domainRoot && l.text.toLowerCase().includes(domainRoot))
       )
       if (!relevant.length) return ''
       return '\nLearned from past experience on this site:\n' +
-        relevant.map((l: any) => '  - ' + l.text).join('\n')
+        relevant.map(l => '  - ' + l.text).join('\n')
     } catch { return '' }
   })
 
   // === MCP Client (Connected Apps) ===
   ipcMain.handle(IPC.MCP_CLIENT_LIST, async () => {
-    const settings = security.getSettings() as any
-    return settings?.mcpClients || []
+    return security.getSettings()?.mcpClients || []
   })
 
-  ipcMain.handle(IPC.MCP_CLIENT_ADD, async (_, config: any) => {
-    const settings = security.getSettings() as any
+  ipcMain.handle(IPC.MCP_CLIENT_ADD, async (_, config: import('../shared/types').McpClientConfig) => {
+    const settings = security.getSettings()
     const clients = settings?.mcpClients || []
     clients.push(config)
-    security.saveSettings({ mcpClients: clients } as any)
+    security.saveSettings({ mcpClients: clients })
     if (config.enabled && mcpClientManager) {
       await mcpClientManager.connect(config)
     }
@@ -684,19 +683,19 @@ export function setupIPC(
 
   ipcMain.handle(IPC.MCP_CLIENT_REMOVE, async (_, serverId: string) => {
     if (mcpClientManager) await mcpClientManager.disconnect(serverId)
-    const settings = security.getSettings() as any
-    const clients = (settings?.mcpClients || []).filter((c: any) => c.id !== serverId)
-    security.saveSettings({ mcpClients: clients } as any)
+    const settings = security.getSettings()
+    const clients = (settings?.mcpClients || []).filter(c => c.id !== serverId)
+    security.saveSettings({ mcpClients: clients })
     return true
   })
 
   ipcMain.handle(IPC.MCP_CLIENT_TOGGLE, async (_, serverId: string, enabled: boolean) => {
-    const settings = security.getSettings() as any
+    const settings = security.getSettings()
     const clients = settings?.mcpClients || []
-    const cfg = clients.find((c: any) => c.id === serverId)
+    const cfg = clients.find(c => c.id === serverId)
     if (!cfg) return false
     cfg.enabled = enabled
-    security.saveSettings({ mcpClients: clients } as any)
+    security.saveSettings({ mcpClients: clients })
     if (mcpClientManager) {
       if (enabled) await mcpClientManager.connect(cfg)
       else await mcpClientManager.disconnect(serverId)
@@ -712,120 +711,120 @@ export function setupIPC(
     return mcpClientManager?.listAllTools() || []
   })
 
-  ipcMain.handle(IPC.MCP_CLIENT_CALL, async (_, namespacedName: string, args: any) => {
+  ipcMain.handle(IPC.MCP_CLIENT_CALL, async (_, namespacedName: string, args: Record<string, unknown>) => {
     if (!mcpClientManager) return 'Error: MCP client not initialized'
     return mcpClientManager.callTool(namespacedName, args || {})
   })
 
   // === Session Memory ===
-  ipcMain.handle('memory:list', async () => {
+  ipcMain.handle(IPC.MEMORY_LIST, async () => {
     return sessionMemoryStore?.list() || []
   })
 
-  ipcMain.handle('memory:add', async (_, summary: string, urls: string[], tags?: string[]) => {
+  ipcMain.handle(IPC.MEMORY_ADD, async (_, summary: string, urls: string[], tags?: string[]) => {
     return sessionMemoryStore?.add(summary, urls, tags) || null
   })
 
-  ipcMain.handle('memory:clear', async () => {
+  ipcMain.handle(IPC.MEMORY_CLEAR, async () => {
     sessionMemoryStore?.clear()
     return true
   })
 
   // === Containers ===
-  ipcMain.handle('container:list', async () => {
+  ipcMain.handle(IPC.CONTAINER_LIST, async () => {
     return containerStore?.list() || []
   })
 
-  ipcMain.handle('container:create', async (_, name: string, color: string, icon: string) => {
+  ipcMain.handle(IPC.CONTAINER_CREATE, async (_, name: string, color: string, icon: string) => {
     return containerStore?.create(name, color, icon) || null
   })
 
-  ipcMain.handle('container:update', async (_, id: string, updates: any) => {
+  ipcMain.handle(IPC.CONTAINER_UPDATE, async (_, id: string, updates: Partial<Pick<import('../shared/types').Container, 'name' | 'color' | 'icon'>>) => {
     return containerStore?.update(id, updates) || null
   })
 
-  ipcMain.handle('container:delete', async (_, id: string) => {
+  ipcMain.handle(IPC.CONTAINER_DELETE, async (_, id: string) => {
     return containerStore?.delete(id) || false
   })
 
   // === Cards / AI Skills ===
-  ipcMain.handle('card:list', async () => {
+  ipcMain.handle(IPC.CARD_LIST, async () => {
     return cardStore?.list() || []
   })
 
-  ipcMain.handle('card:create', async (_, name: string, icon: string, systemInstruction: string, triggerDomains?: string[]) => {
+  ipcMain.handle(IPC.CARD_CREATE, async (_, name: string, icon: string, systemInstruction: string, triggerDomains?: string[]) => {
     return cardStore?.create(name, icon, systemInstruction, triggerDomains) || null
   })
 
-  ipcMain.handle('card:update', async (_, id: string, updates: any) => {
+  ipcMain.handle(IPC.CARD_UPDATE, async (_, id: string, updates: Partial<Omit<import('../shared/types').Card, 'id' | 'createdAt'>>) => {
     return cardStore?.update(id, updates) || null
   })
 
-  ipcMain.handle('card:delete', async (_, id: string) => {
+  ipcMain.handle(IPC.CARD_DELETE, async (_, id: string) => {
     return cardStore?.delete(id) || false
   })
 
-  ipcMain.handle('card:activate', async (_, id: string) => {
+  ipcMain.handle(IPC.CARD_ACTIVATE, async (_, id: string) => {
     return cardStore?.activate(id) || null
   })
 
   // === Workspaces ===
-  ipcMain.handle('workspace:list', async () => {
+  ipcMain.handle(IPC.WORKSPACE_LIST, async () => {
     return workspaceStore?.list() || []
   })
 
-  ipcMain.handle('workspace:create', async (_, name: string, color: string) => {
+  ipcMain.handle(IPC.WORKSPACE_CREATE, async (_, name: string, color: string) => {
     return workspaceStore?.create(name, color) || null
   })
 
-  ipcMain.handle('workspace:switch', async (_, id: string) => {
+  ipcMain.handle(IPC.WORKSPACE_SWITCH, async (_, id: string) => {
     return workspaceStore?.get(id) || null
   })
 
-  ipcMain.handle('workspace:delete', async (_, id: string) => {
+  ipcMain.handle(IPC.WORKSPACE_DELETE, async (_, id: string) => {
     return workspaceStore?.delete(id) || false
   })
 
-  ipcMain.handle('workspace:save', async (_, id: string, tabIds: string[], tabUrls: string[], aiHistory: any[]) => {
+  ipcMain.handle(IPC.WORKSPACE_SAVE, async (_, id: string, tabIds: string[], tabUrls: string[], aiHistory: Array<{ role: string; content: unknown }>) => {
     workspaceStore?.saveState(id, tabIds, tabUrls, aiHistory)
     return true
   })
 
   // === Macros ===
-  ipcMain.handle('macro:list', async () => {
+  ipcMain.handle(IPC.MACRO_LIST, async () => {
     return macroStore?.list() || []
   })
 
-  ipcMain.handle('macro:create', async (_, name: string, steps: any[], shortcut?: string, description?: string) => {
+  ipcMain.handle(IPC.MACRO_CREATE, async (_, name: string, steps: import('../shared/types').PipelineStep[], shortcut?: string, description?: string) => {
     return macroStore?.create(name, steps, shortcut, description) || null
   })
 
-  ipcMain.handle('macro:update', async (_, id: string, updates: any) => {
+  ipcMain.handle(IPC.MACRO_UPDATE, async (_, id: string, updates: Partial<Omit<import('../shared/types').Macro, 'id' | 'createdAt'>>) => {
     return macroStore?.update(id, updates) || null
   })
 
-  ipcMain.handle('macro:delete', async (_, id: string) => {
+  ipcMain.handle(IPC.MACRO_DELETE, async (_, id: string) => {
     return macroStore?.delete(id) || false
   })
 
   // === Pinned Sidebar Apps ===
-  ipcMain.handle('pinned-app:list', async () => {
+  ipcMain.handle(IPC.PINNED_APP_LIST, async () => {
     return pinnedAppStore?.list() || []
   })
 
-  ipcMain.handle('pinned-app:add', async (_, url: string, title: string, favicon?: string, width?: number) => {
+  ipcMain.handle(IPC.PINNED_APP_ADD, async (_, url: string, title: string, favicon?: string, width?: number) => {
     return pinnedAppStore?.add(url, title, favicon, width) || null
   })
 
-  ipcMain.handle('pinned-app:remove', async (_, id: string) => {
+  ipcMain.handle(IPC.PINNED_APP_REMOVE, async (_, id: string) => {
     return pinnedAppStore?.remove(id) || false
   })
 
-  ipcMain.handle('pinned-app:update', async (_, id: string, updates: any) => {
+  ipcMain.handle(IPC.PINNED_APP_UPDATE, async (_, id: string, updates: Partial<Pick<import('../shared/types').PinnedApp, 'title' | 'favicon' | 'width' | 'position'>>) => {
     return pinnedAppStore?.update(id, updates) || null
   })
 
-  ipcMain.handle('pinned-app:save', async (_, apps: any[]) => {
+  ipcMain.handle(IPC.PINNED_APP_SAVE, async (_, apps: import('../shared/types').PinnedApp[]) => {
     pinnedAppStore?.saveAll(apps)
     return true
   })

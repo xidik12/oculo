@@ -15,6 +15,15 @@ import { CardStore } from '../data/cards'
 
 const PORT_FILE = path.join(os.homedir(), '.oculo-port')
 
+type TextBlock = { type: 'text'; text: string }
+type ToolUseBlock = { type: 'tool_use'; id: string; name: string; input: Record<string, unknown> | string }
+type ToolResultBlock = { type: 'tool_result'; tool_use_id: string; content: string }
+type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock
+
+type OpenAIMessage = { role: string; content: string | null; tool_calls?: OpenAIToolCall[]; tool_call_id?: string }
+type OpenAIToolCall = { id: string; type: 'function'; function: { name: string; arguments: string } }
+type OpenAITool = { type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }
+
 /** Safely truncate a string without splitting emoji/surrogate pairs */
 function safeTruncate(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str
@@ -340,7 +349,7 @@ export class AgentController {
   private activeModel: string = 'claude-sonnet-4-6'
   private providerConfigs: Map<AIProviderId, AIProviderConfig> = new Map()
   private currentAbort: AbortController | null = null
-  private conversationHistory: Array<{ role: string; content: any }> = []
+  private conversationHistory: Array<{ role: string; content: string | ContentBlock[] }> = []
   private persistFn: ((configs: Record<string, any>) => void) | null = null
   private mcpClientManager: McpClientManager | null = null
 
@@ -539,11 +548,11 @@ export class AgentController {
         res.on('data', (c) => { data += c })
         res.on('end', () => {
           try {
-            const result = JSON.parse(data)
+            const result = JSON.parse(data) as { content?: Array<{ type: string; text: string }> }
             if (result.content) {
               const texts = result.content
-                .filter((c: any) => c.type === 'text')
-                .map((c: any) => c.text)
+                .filter(c => c.type === 'text')
+                .map(c => c.text)
               resolve(texts.join('\n') || 'Done.')
             } else {
               resolve(data)
@@ -575,9 +584,9 @@ export class AgentController {
     this.providerConfigs.set(config.providerId, config)
     // Persist to disk
     if (this.persistFn) {
-      const serialized: Record<string, any> = {}
+      const serialized: Record<string, { apiKey?: string; enabled: boolean; modelId?: string }> = {}
       for (const [id, cfg] of this.providerConfigs) {
-        serialized[id] = { apiKey: cfg.apiKey, enabled: cfg.enabled, modelId: (cfg as any).modelId }
+        serialized[id] = { apiKey: cfg.apiKey, enabled: cfg.enabled, modelId: cfg.selectedModelId }
       }
       this.persistFn(serialized)
     }
@@ -718,7 +727,7 @@ export class AgentController {
     }
 
     if (this.activeProvider === 'ollama') {
-      return this.handleOllamaMessage(userText)
+      return this.handleOllamaMessage()
     }
 
     return this.handleAPIMessage(userText)
@@ -734,10 +743,9 @@ export class AgentController {
       let fullAssistantText = ''
       let totalInputTokens = 0
       let totalOutputTokens = 0
-      let lastToolSignature = '' // Track duplicate calls
-      let consecutiveDupes = 0
-      const toolCallCounts: Record<string, number> = {} // Track how many times each tool is called
-      const mediaFilePaths: string[] = [] // Track generated media file paths
+      const loopState = { lastSig: '', dupes: 0 }
+      const toolCallCounts: Record<string, number> = {}
+      const mediaFilePaths: string[] = []
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.pruneHistory()
@@ -748,13 +756,13 @@ export class AgentController {
         totalOutputTokens += response.outputTokens
 
         let roundText = ''
-        const toolUses: Array<{ id: string; name: string; input: any }> = []
+        const toolUses: Array<{ id: string; name: string; input: Record<string, unknown> }> = []
 
         for (const block of response.content) {
           if (block.type === 'text') {
             roundText += block.text
           } else if (block.type === 'tool_use') {
-            toolUses.push({ id: block.id, name: block.name, input: block.input })
+            toolUses.push({ id: block.id, name: block.name, input: block.input as Record<string, unknown> })
           }
         }
 
@@ -768,58 +776,37 @@ export class AgentController {
           break
         }
 
-        // Detect duplicate tool calls (same name + same args = stuck in a loop)
+        // Detect duplicate tool calls (stuck in a loop)
         const currentSig = toolUses.map(t => `${t.name}:${JSON.stringify(t.input)}`).join('|')
-        if (currentSig === lastToolSignature) {
-          consecutiveDupes++
-          if (consecutiveDupes >= 1) {
-            console.log(`[Oculo] Detected stuck loop — same tools called ${consecutiveDupes + 1} times in a row. Breaking.`)
-            const stuckMsg = "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
-            fullAssistantText += stuckMsg
-            this.emit({ type: 'text_delta', text: stuckMsg })
-            break
-          }
-        } else {
-          consecutiveDupes = 0
+        if (this.checkStuckLoop(currentSig, loopState)) {
+          fullAssistantText += "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
+          break
         }
-        lastToolSignature = currentSig
 
-        // Track tool call counts and intercept redundant media calls
+        // Track call counts and intercept redundant media calls
         for (const tool of toolUses) {
           toolCallCounts[tool.name] = (toolCallCounts[tool.name] || 0) + 1
         }
 
-        // Block redundant media calls — if we already generated media this session, inject the existing path
-        const filteredToolUses = toolUses.map(tool => {
-          if (tool.name === 'media' && mediaFilePaths.length > 0 && toolCallCounts['media']! > 1) {
-            console.log(`[Oculo] Blocking redundant media call — already generated ${mediaFilePaths.length} file(s). Returning existing path.`)
-            return { ...tool, _intercepted: true, _result: `Image already generated this session: ${mediaFilePaths[mediaFilePaths.length - 1]}. Use this path for upload — do NOT regenerate.` }
-          }
-          return { ...tool, _intercepted: false, _result: '' }
-        })
-
-        // Execute tool calls
-        const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = []
-
-        for (const tool of filteredToolUses) {
-          this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.input || {}, status: 'running' } })
+        // Execute tool calls — intercept redundant media regeneration
+        const toolResults: ToolResultBlock[] = []
+        for (const tool of toolUses) {
+          this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.input, status: 'running' } })
 
           let result: string
-          if (tool._intercepted) {
-            result = tool._result
+          if (tool.name === 'media' && mediaFilePaths.length > 0 && toolCallCounts['media']! > 1) {
+            console.log(`[Oculo] Blocking redundant media call — already generated ${mediaFilePaths.length} file(s). Returning existing path.`)
+            result = `Image already generated this session: ${mediaFilePaths[mediaFilePaths.length - 1]}. Use this path for upload — do NOT regenerate.`
           } else {
-            result = await this.callMcpTool(tool.name, tool.input || {})
-          }
-
-          // Track media file paths from successful generation
-          if (tool.name === 'media' && !tool._intercepted && !result.startsWith('Error')) {
-            const pathMatch = result.match(/:\s*(\/[^\s]+\.(png|jpg|jpeg|webp|mp4|gif))/)
-            if (pathMatch) mediaFilePaths.push(pathMatch[1])
+            result = await this.callMcpTool(tool.name, tool.input)
+            if (tool.name === 'media' && !result.startsWith('Error')) {
+              const pathMatch = result.match(/:\s*(\/[^\s]+\.(png|jpg|jpeg|webp|mp4|gif))/)
+              if (pathMatch) mediaFilePaths.push(pathMatch[1])
+            }
           }
 
           this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
 
-          // Cap tool result stored in history — info tools need more, action tools less
           const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools' || tool.name === 'shell'
           const maxLen = infoTool ? 1200 : 500
           const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
@@ -831,9 +818,9 @@ export class AgentController {
 
       // If we hit the round limit, tell the user
       if (fullAssistantText && !fullAssistantText.includes('reached the limit')) {
-        // Check if last iteration was cut off by max rounds (toolUses existed)
         const lastMsg = this.conversationHistory[this.conversationHistory.length - 1]
-        const hadTools = lastMsg && Array.isArray(lastMsg.content) && lastMsg.content.some((c: any) => c.type === 'tool_result')
+        const hadTools = Array.isArray(lastMsg?.content) &&
+          (lastMsg.content as ContentBlock[]).some(c => c.type === 'tool_result')
         if (hadTools) {
           const limitMsg = '\n\nI reached my tool call limit. Let me know if you want me to continue.'
           fullAssistantText += limitMsg
@@ -841,7 +828,6 @@ export class AgentController {
         }
       }
 
-      // Emit token usage before done
       if (totalInputTokens > 0 || totalOutputTokens > 0) {
         this.emit({ type: 'usage', usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens } })
       }
@@ -850,28 +836,57 @@ export class AgentController {
         type: 'done',
         message: { id: crypto.randomUUID(), role: 'assistant', content: fullAssistantText, timestamp: Date.now() }
       })
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        // If OAuth fails, clear the token so we don't keep trying
-        if (authMode === 'oauth' && err.message?.includes('401')) {
+    } catch (err: unknown) {
+      const error = err as Error
+      if (error.name !== 'AbortError') {
+        if (authMode === 'oauth' && error.message?.includes('401')) {
           this.oauth.oauthToken = null
         }
-        this.emit({ type: 'error', error: err.message || 'Request failed' })
+        this.emit({ type: 'error', error: error.message || 'Request failed' })
       }
     } finally {
       this.currentAbort = null
     }
   }
 
-  private summarizeToolArgs(name: string, input: any): string {
-    if (!input) return ''
-    if (name === 'act') return `→ ${input.action || ''}${input.text ? ` "${input.text}"` : ''}${input.url ? ` ${input.url}` : ''}`
-    if (name === 'fill') return `→ ${Object.keys(input.fields || {}).join(', ')}`
-    if (name === 'read') return `→ "${input.what || ''}"`
-    if (name === 'run') return `→ ${(input.steps || []).length} steps`
-    if (name === 'devtools') return `→ ${input.action || ''}${input.selector ? ` "${input.selector}"` : ''}${input.expression ? ` "${input.expression.substring(0, 40)}"` : ''}`
-    if (name === 'shell') return `→ $ ${(input.command || '').substring(0, 60)}`
-    return ''
+  /** Returns true if stuck (same tool signature appeared consecutively). Mutates the counter. */
+  private checkStuckLoop(
+    currentSig: string,
+    state: { lastSig: string; dupes: number }
+  ): boolean {
+    if (currentSig === state.lastSig) {
+      state.dupes++
+      if (state.dupes >= 1) {
+        console.log(`[Oculo] Detected stuck loop — same tools called ${state.dupes + 1} times in a row. Breaking.`)
+        const stuckMsg = "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
+        this.emit({ type: 'text_delta', text: stuckMsg })
+        return true
+      }
+    } else {
+      state.dupes = 0
+    }
+    state.lastSig = currentSig
+    return false
+  }
+
+  /** Execute a list of tool calls, emit events, cap results, return tool_result blocks. */
+  private async executeToolCalls(
+    toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>
+  ): Promise<ToolResultBlock[]> {
+    const toolResults: ToolResultBlock[] = []
+    for (const tool of toolCalls) {
+      this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.args, status: 'running' } })
+
+      const result = await this.callMcpTool(tool.name, tool.args)
+
+      this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
+
+      const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools' || tool.name === 'shell'
+      const maxLen = infoTool ? 1200 : 500
+      const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
+      toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: cappedResult })
+    }
+    return toolResults
   }
 
   /**
@@ -894,7 +909,9 @@ export class AgentController {
       let dropped = false
       for (let i = 1; i < history.length - 4 && i + 1 < history.length; i++) {
         const isAssistant = history[i]?.role === 'assistant'
-        const nextIsToolResult = history[i + 1]?.role === 'user' && Array.isArray(history[i + 1]?.content)
+        const nextMsg = history[i + 1]
+        const nextIsToolResult = nextMsg?.role === 'user' && Array.isArray(nextMsg.content) &&
+          (nextMsg.content as ContentBlock[])[0]?.type === 'tool_result'
         if (isAssistant && nextIsToolResult) {
           history.splice(i, 2)
           dropped = true
@@ -911,15 +928,15 @@ export class AgentController {
     for (let i = 1; i < cutoff; i++) {
       const msg = history[i]
       if (msg.role === 'user' && Array.isArray(msg.content)) {
-        msg.content = msg.content.map((item: any) => {
-          if (item.type === 'tool_result' && typeof item.content === 'string' && item.content.length > 200) {
+        msg.content = (msg.content as ContentBlock[]).map((item) => {
+          if (item.type === 'tool_result' && item.content.length > 200) {
             return { ...item, content: safeTruncate(item.content, 150) + '...[t]' }
           }
           return item
         })
       } else if (msg.role === 'assistant' && Array.isArray(msg.content)) {
-        msg.content = msg.content.map((item: any) => {
-          if (item.type === 'text' && typeof item.text === 'string' && item.text.length > 150) {
+        msg.content = (msg.content as ContentBlock[]).map((item) => {
+          if (item.type === 'text' && item.text.length > 150) {
             return { ...item, text: safeTruncate(item.text, 120) + '...' }
           }
           return item
@@ -935,67 +952,39 @@ export class AgentController {
   private async handleOpenAIWithTools(token: string, authMode: 'api-key' | 'oauth'): Promise<void> {
     this.currentAbort = new AbortController()
     const MAX_TOOL_ROUNDS = 25
-
     const openaiTools = this.getOpenAITools()
 
     try {
       let fullAssistantText = ''
-      let lastToolSignature = ''
-      let consecutiveDupes = 0
+      const loopState = { lastSig: '', dupes: 0 }
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.pruneHistory()
         const messages = this.buildOpenAIMessages()
-
-        // Call OpenAI streaming API
         const response = await this.callOpenAIRaw(token, authMode, messages, openaiTools)
 
-        let roundText = response.text || ''
+        const roundText = response.text || ''
         fullAssistantText += roundText
 
-        // Store in conversation history in Anthropic-compatible format (our internal format)
-        const contentBlocks: any[] = []
+        // Store in Anthropic-compatible format (our internal format)
+        const contentBlocks: ContentBlock[] = []
         if (roundText) contentBlocks.push({ type: 'text', text: roundText })
         for (const tc of response.toolCalls) {
-          contentBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args })
+          contentBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args || {} })
         }
         this.conversationHistory.push({ role: 'assistant', content: contentBlocks })
 
         if (response.toolCalls.length === 0) break
 
-        // Detect duplicate tool calls (stuck loop)
-        const currentSig = response.toolCalls.map((t: any) => `${t.name}:${JSON.stringify(t.args)}`).join('|')
-        if (currentSig === lastToolSignature) {
-          consecutiveDupes++
-          if (consecutiveDupes >= 1) {
-            console.log(`[Oculo] Detected stuck loop — same tools called ${consecutiveDupes + 1} times in a row. Breaking.`)
-            const stuckMsg = "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
-            fullAssistantText += stuckMsg
-            this.emit({ type: 'text_delta', text: stuckMsg })
-            break
-          }
-        } else {
-          consecutiveDupes = 0
-        }
-        lastToolSignature = currentSig
-
-        // Execute tool calls
-        const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = []
-
-        for (const tool of response.toolCalls) {
-          this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.args || {}, status: 'running' } })
-
-          const result = await this.callMcpTool(tool.name, tool.args || {})
-
-          this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
-
-          // Cap tool result — info tools need more room
-          const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools' || tool.name === 'shell'
-          const maxLen = infoTool ? 1200 : 500
-          const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
-          toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: cappedResult })
+        const currentSig = response.toolCalls.map(t => `${t.name}:${JSON.stringify(t.args)}`).join('|')
+        if (this.checkStuckLoop(currentSig, loopState)) {
+          fullAssistantText += "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
+          break
         }
 
+        const toolResults = await this.executeToolCalls(
+          response.toolCalls.map(t => ({ id: t.id, name: t.name, args: t.args || {} }))
+        )
         this.conversationHistory.push({ role: 'user', content: toolResults })
       }
 
@@ -1003,12 +992,13 @@ export class AgentController {
         type: 'done',
         message: { id: crypto.randomUUID(), role: 'assistant', content: fullAssistantText, timestamp: Date.now() }
       })
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        if (authMode === 'oauth' && err.message?.includes('401')) {
+    } catch (err: unknown) {
+      const error = err as Error
+      if (error.name !== 'AbortError') {
+        if (authMode === 'oauth' && error.message?.includes('401')) {
           this.oauth.codexToken = null
         }
-        this.emit({ type: 'error', error: err.message || 'Request failed' })
+        this.emit({ type: 'error', error: error.message || 'Request failed' })
       }
     } finally {
       this.currentAbort = null
@@ -1018,7 +1008,12 @@ export class AgentController {
   /**
    * Call OpenAI Chat Completions API with streaming and tool support.
    */
-  private callOpenAIRaw(token: string, authMode: 'api-key' | 'oauth', messages: any[], tools: any[]): Promise<{ text: string; toolCalls: Array<{ id: string; name: string; args: any }> }> {
+  private callOpenAIRaw(
+    token: string,
+    authMode: 'api-key' | 'oauth',
+    messages: OpenAIMessage[],
+    tools: OpenAITool[]
+  ): Promise<{ text: string; toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> }> {
     const body = JSON.stringify({
       model: this.activeModel,
       messages,
@@ -1102,8 +1097,8 @@ export class AgentController {
 
         res.on('end', () => {
           const toolCalls = Array.from(toolCallsMap.values()).map(tc => {
-            let args: any = {}
-            try { args = JSON.parse(tc.args || '{}') } catch { /* ignore */ }
+            let args: Record<string, unknown> = {}
+            try { args = JSON.parse(tc.args || '{}') as Record<string, unknown> } catch { /* ignore */ }
             return { id: tc.id, name: tc.name, args }
           })
           resolve({ text: fullText, toolCalls })
@@ -1127,7 +1122,7 @@ export class AgentController {
    * Call Anthropic Messages API with streaming.
    * Supports both API key auth (x-api-key header) and OAuth auth (Bearer + beta header).
    */
-  private callAnthropicRaw(token: string, authMode: 'api-key' | 'oauth'): Promise<{ content: any[]; stop_reason: string; inputTokens: number; outputTokens: number }> {
+  private callAnthropicRaw(token: string, authMode: 'api-key' | 'oauth'): Promise<{ content: ContentBlock[]; stop_reason: string; inputTokens: number; outputTokens: number }> {
     const messages = this.conversationHistory.map(m => ({
       role: m.role as 'user' | 'assistant',
       content: m.content
@@ -1189,12 +1184,22 @@ export class AgentController {
           return
         }
 
-        const contentBlocks: any[] = []
-        let currentBlock: any = null
+        type StreamingBlock = { type: 'text'; text: string } | { type: 'tool_use'; id: string; name: string; input: string }
+        const contentBlocks: ContentBlock[] = []
+        let currentBlock: StreamingBlock | null = null
         let stopReason = 'end_turn'
         let inputTokens = 0
         let outputTokens = 0
         let buf = ''
+
+        const finalizeBlock = (block: StreamingBlock): ContentBlock => {
+          if (block.type === 'tool_use') {
+            let input: Record<string, unknown> = {}
+            try { input = JSON.parse(block.input || '{}') as Record<string, unknown> } catch { /* ignore */ }
+            return { type: 'tool_use', id: block.id, name: block.name, input }
+          }
+          return block
+        }
 
         res.on('data', (chunk: Buffer) => {
           buf += chunk.toString()
@@ -1207,27 +1212,23 @@ export class AgentController {
             if (!data || data === '[DONE]') continue
 
             try {
-              const ev = JSON.parse(data)
+              const ev = JSON.parse(data) as { type: string; content_block?: { type: string; id?: string; name?: string }; delta?: { type: string; text?: string; partial_json?: string; stop_reason?: string }; message?: { usage?: { input_tokens?: number } }; usage?: { output_tokens?: number } }
 
-              if (ev.type === 'content_block_start') {
-                currentBlock = ev.content_block
-                if (currentBlock.type === 'tool_use') {
-                  currentBlock.input = ''
-                }
-              } else if (ev.type === 'content_block_delta') {
-                if (ev.delta?.type === 'text_delta' && currentBlock) {
-                  currentBlock.text = (currentBlock.text || '') + ev.delta.text
-                  this.emit({ type: 'text_delta', text: ev.delta.text })
-                } else if (ev.delta?.type === 'input_json_delta' && currentBlock) {
+              if (ev.type === 'content_block_start' && ev.content_block) {
+                const cb = ev.content_block
+                currentBlock = cb.type === 'tool_use'
+                  ? { type: 'tool_use', id: cb.id || '', name: cb.name || '', input: '' }
+                  : { type: 'text', text: '' }
+              } else if (ev.type === 'content_block_delta' && currentBlock) {
+                if (ev.delta?.type === 'text_delta' && currentBlock.type === 'text') {
+                  currentBlock.text += ev.delta.text || ''
+                  this.emit({ type: 'text_delta', text: ev.delta.text || '' })
+                } else if (ev.delta?.type === 'input_json_delta' && currentBlock.type === 'tool_use') {
                   currentBlock.input += ev.delta.partial_json || ''
                 }
               } else if (ev.type === 'content_block_stop') {
                 if (currentBlock) {
-                  if (currentBlock.type === 'tool_use' && typeof currentBlock.input === 'string') {
-                    try { currentBlock.input = JSON.parse(currentBlock.input || '{}') }
-                    catch { currentBlock.input = {} }
-                  }
-                  contentBlocks.push(currentBlock)
+                  contentBlocks.push(finalizeBlock(currentBlock))
                   currentBlock = null
                 }
               } else if (ev.type === 'message_start') {
@@ -1238,17 +1239,12 @@ export class AgentController {
                 if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason
                 if (ev.usage?.output_tokens) outputTokens = ev.usage.output_tokens
               }
-            } catch { /* skip */ }
+            } catch { /* skip malformed SSE lines */ }
           }
         })
 
         res.on('end', () => {
-          if (currentBlock) {
-            if (currentBlock.type === 'tool_use' && typeof currentBlock.input === 'string') {
-              try { currentBlock.input = JSON.parse(currentBlock.input || '{}') } catch { currentBlock.input = {} }
-            }
-            contentBlocks.push(currentBlock)
-          }
+          if (currentBlock) contentBlocks.push(finalizeBlock(currentBlock))
           resolve({ content: contentBlocks, stop_reason: stopReason, inputTokens, outputTokens })
         })
         res.on('error', reject)
@@ -1269,7 +1265,7 @@ export class AgentController {
   // === Ollama (local, OpenAI-compatible with tool calling) ===
 
   /** Convert ANTHROPIC_TOOLS (input_schema) to OpenAI tool format (function.parameters) */
-  private getOpenAITools(): Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
+  private getOpenAITools(): OpenAITool[] {
     return this.getAllTools().map(t => ({
       type: 'function' as const,
       function: {
@@ -1281,15 +1277,15 @@ export class AgentController {
   }
 
   /** Build OpenAI-format messages from conversation history (shared by OpenAI + Ollama) */
-  private buildOpenAIMessages(): any[] {
-    const messages: any[] = [
+  private buildOpenAIMessages(): OpenAIMessage[] {
+    const messages: OpenAIMessage[] = [
       { role: 'system', content: this.getSystemPrompt() }
     ]
 
     for (const m of this.conversationHistory) {
       if (m.role === 'user' && Array.isArray(m.content)) {
         // Tool results from previous round (Anthropic format → OpenAI format)
-        for (const tr of m.content) {
+        for (const tr of m.content as ContentBlock[]) {
           if (tr.type === 'tool_result') {
             messages.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: tr.content })
           }
@@ -1297,14 +1293,14 @@ export class AgentController {
       } else if (m.role === 'assistant' && Array.isArray(m.content)) {
         // Assistant message with tool calls (Anthropic format → OpenAI format)
         let textParts = ''
-        const toolCalls: any[] = []
-        for (const block of m.content) {
+        const toolCalls: OpenAIToolCall[] = []
+        for (const block of m.content as ContentBlock[]) {
           if (block.type === 'text') textParts += block.text
           else if (block.type === 'tool_use') {
             toolCalls.push({ id: block.id, type: 'function', function: { name: block.name, arguments: JSON.stringify(block.input || {}) } })
           }
         }
-        const msg: any = { role: 'assistant', content: textParts || null }
+        const msg: OpenAIMessage = { role: 'assistant', content: textParts || null }
         if (toolCalls.length > 0) msg.tool_calls = toolCalls
         messages.push(msg)
       } else {
@@ -1315,75 +1311,46 @@ export class AgentController {
     return messages
   }
 
-  private async handleOllamaMessage(_userText: string): Promise<void> {
+  private async handleOllamaMessage(): Promise<void> {
     this.currentAbort = new AbortController()
     const MAX_TOOL_ROUNDS = 10
-
     const openaiTools = this.getOpenAITools()
 
     try {
       let fullAssistantText = ''
-      let lastToolSignature = ''
-      let consecutiveDupes = 0
+      const loopState = { lastSig: '', dupes: 0 }
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.pruneHistory()
         const messages = this.buildOpenAIMessages()
-
         console.log(`[Oculo/Ollama] round=${round + 1} history=${this.conversationHistory.length}msgs model=${this.activeModel}`)
 
         const response = await this.callOllamaRaw(messages, openaiTools)
 
-        let roundText = response.text || ''
+        const roundText = response.text || ''
         fullAssistantText += roundText
 
-        // Store in conversation history in Anthropic-compatible format (our internal format)
-        const contentBlocks: any[] = []
+        const contentBlocks: ContentBlock[] = []
         if (roundText) contentBlocks.push({ type: 'text', text: roundText })
         for (const tc of response.toolCalls) {
-          contentBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args })
+          contentBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args || {} })
         }
         this.conversationHistory.push({ role: 'assistant', content: contentBlocks })
 
-        // No tool calls — model is done, break out
         if (response.toolCalls.length === 0) {
           console.log(`[Oculo/Ollama] No tools, finishing. fullText=${fullAssistantText.length}chars`)
           break
         }
 
-        // Detect duplicate tool calls (stuck loop)
-        const currentSig = response.toolCalls.map((t: any) => `${t.name}:${JSON.stringify(t.args)}`).join('|')
-        if (currentSig === lastToolSignature) {
-          consecutiveDupes++
-          if (consecutiveDupes >= 1) {
-            console.log(`[Oculo/Ollama] Detected stuck loop — same tools called ${consecutiveDupes + 1} times in a row. Breaking.`)
-            const stuckMsg = "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
-            fullAssistantText += stuckMsg
-            this.emit({ type: 'text_delta', text: stuckMsg })
-            break
-          }
-        } else {
-          consecutiveDupes = 0
-        }
-        lastToolSignature = currentSig
-
-        // Execute tool calls
-        const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = []
-
-        for (const tool of response.toolCalls) {
-          this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.args || {}, status: 'running' } })
-
-          const result = await this.callMcpTool(tool.name, tool.args || {})
-
-          this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
-
-          // Cap tool result — info tools need more room
-          const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools' || tool.name === 'shell'
-          const maxLen = infoTool ? 1200 : 500
-          const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
-          toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: cappedResult })
+        const currentSig = response.toolCalls.map(t => `${t.name}:${JSON.stringify(t.args)}`).join('|')
+        if (this.checkStuckLoop(currentSig, loopState)) {
+          fullAssistantText += "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
+          break
         }
 
+        const toolResults = await this.executeToolCalls(
+          response.toolCalls.map(t => ({ id: t.id, name: t.name, args: t.args || {} }))
+        )
         this.conversationHistory.push({ role: 'user', content: toolResults })
       }
 
@@ -1391,9 +1358,10 @@ export class AgentController {
         type: 'done',
         message: { id: crypto.randomUUID(), role: 'assistant', content: fullAssistantText, timestamp: Date.now() }
       })
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        this.emit({ type: 'error', error: err.message || 'Ollama request failed' })
+    } catch (err: unknown) {
+      const error = err as Error
+      if (error.name !== 'AbortError') {
+        this.emit({ type: 'error', error: error.message || 'Ollama request failed' })
       }
     } finally {
       this.currentAbort = null
@@ -1407,10 +1375,10 @@ export class AgentController {
    * depending on whether it supports tool calling — this is backward-compatible.
    */
   private callOllamaRaw(
-    messages: any[],
-    tools: any[]
-  ): Promise<{ text: string; toolCalls: Array<{ id: string; name: string; args: any }> }> {
-    const payload: any = { model: this.activeModel, messages, stream: true }
+    messages: OpenAIMessage[],
+    tools: OpenAITool[]
+  ): Promise<{ text: string; toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }> }> {
+    const payload: Record<string, unknown> = { model: this.activeModel, messages, stream: true }
     // Only include tools if we have them — models that don't support tools will ignore them
     if (tools.length > 0) payload.tools = tools
     const body = JSON.stringify(payload)
@@ -1482,8 +1450,8 @@ export class AgentController {
 
         res.on('end', () => {
           const toolCalls = Array.from(toolCallsMap.values()).map(tc => {
-            let args: any = {}
-            try { args = JSON.parse(tc.args || '{}') } catch { /* ignore */ }
+            let args: Record<string, unknown> = {}
+            try { args = JSON.parse(tc.args || '{}') as Record<string, unknown> } catch { /* ignore */ }
             return { id: tc.id, name: tc.name, args }
           })
           resolve({ text: fullText, toolCalls })
@@ -1491,8 +1459,8 @@ export class AgentController {
         res.on('error', reject)
       })
 
-      req.on('error', (err) => {
-        if ((err as any).code === 'ECONNREFUSED') {
+      req.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'ECONNREFUSED') {
           reject(new Error('Cannot connect to Ollama. Make sure Ollama is running:\n  1. Install: https://ollama.com\n  2. Run: ollama serve\n  3. Pull a model: ollama pull llama3.1:8b'))
         } else {
           reject(err)
@@ -1530,7 +1498,7 @@ export class AgentController {
         res.on('end', () => {
           try {
             const parsed = JSON.parse(data)
-            const models: string[] = (parsed.models || []).map((m: any) => m.name || m.model || '').filter(Boolean)
+            const models: string[] = ((parsed as { models?: Array<{ name?: string; model?: string }> }).models || []).map(m => m.name || m.model || '').filter(Boolean)
             resolve(models)
           } catch {
             resolve([])
@@ -1566,16 +1534,17 @@ export class AgentController {
       }
       this.conversationHistory.push({ role: 'assistant', content: resultText })
       this.emit({ type: 'done', message: { id: crypto.randomUUID(), role: 'assistant', content: resultText, timestamp: Date.now() } })
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        this.emit({ type: 'error', error: err.message || 'Request failed' })
+    } catch (err: unknown) {
+      const error = err as Error
+      if (error.name !== 'AbortError') {
+        this.emit({ type: 'error', error: error.message || 'Request failed' })
       }
     } finally {
       this.currentAbort = null
     }
   }
 
-  // === OpenAI-compatible SSE (OpenAI, Grok, OpenClaw) ===
+  // === OpenAI-compatible SSE (Grok, OpenClaw — no tools) ===
 
   private streamOpenAICompat(hostname: string, apiPath: string, apiKey: string): Promise<string> {
     const messages = [
@@ -1649,18 +1618,18 @@ export class AgentController {
         hostname: 'generativelanguage.googleapis.com', port: 443,
         path: `/v1beta/models/${this.activeModel}:generateContent?key=${apiKey}`,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) }
       }, (res) => {
         let data = ''
         res.on('data', (c) => { data += c })
         res.on('end', () => {
           if (res.statusCode && res.statusCode >= 400) {
-            try { reject(new Error(JSON.parse(data).error?.message || `Gemini error ${res.statusCode}`)) }
+            try { reject(new Error((JSON.parse(data) as { error?: { message?: string } }).error?.message || `Gemini error ${res.statusCode}`)) }
             catch { reject(new Error(`Gemini error ${res.statusCode}`)) }
             return
           }
           try {
-            const result = JSON.parse(data)?.candidates?.[0]?.content?.parts?.[0]?.text || ''
+            const result = (JSON.parse(data) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> })?.candidates?.[0]?.content?.parts?.[0]?.text || ''
             if (result) this.emit({ type: 'text_delta', text: result })
             resolve(result)
           } catch { reject(new Error('Failed to parse Gemini response')) }
@@ -1668,6 +1637,13 @@ export class AgentController {
         res.on('error', reject)
       })
       req.on('error', reject)
+      req.setTimeout(120_000, () => { req.destroy(); reject(new Error('Gemini request timed out')) })
+      if (this.currentAbort) {
+        this.currentAbort.signal.addEventListener('abort', () => {
+          req.destroy()
+          reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+        })
+      }
       req.write(body); req.end()
     })
   }

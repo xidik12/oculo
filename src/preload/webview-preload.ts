@@ -387,7 +387,9 @@ window.addEventListener('beforeunload', (e) => {
 // ── Highlight-to-Ask (Feature 3) ─────────────────────────────────────────
 // Detect text selection and send to host for floating popup
 ;(function setupHighlightToAsk() {
-  const { ipcRenderer } = require('electron')
+  const { ipcRenderer, webFrame } = require('electron')
+  // Set marker in main world (world 0) so evaluate() can see it
+  webFrame.executeJavaScript('window.__oculoHighlightActive = true').catch(() => {})
 
   document.addEventListener('mouseup', () => {
     const selection = window.getSelection()
@@ -409,6 +411,10 @@ window.addEventListener('beforeunload', (e) => {
 // ── Smart Copy (Feature 12) ──────────────────────────────────────────────
 // Intercept copy to preserve table structure as TSV
 ;(function setupSmartCopy() {
+  // Set marker in main world (world 0) so evaluate() can see it
+  const { webFrame } = require('electron')
+  webFrame.executeJavaScript('window.__oculoSmartCopyActive = true').catch(() => {})
+
   function tableToTSV(table: HTMLTableElement): string {
     const rows: string[] = []
     for (const row of Array.from(table.rows)) {
