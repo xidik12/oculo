@@ -89,6 +89,7 @@ export const IPC = {
 
   // Auth
   AUTH_LOGIN: 'auth:login',
+  AUTH_LOGOUT: 'auth:logout',
   AUTH_STATUS: 'auth:status',
 
   // App
@@ -171,6 +172,12 @@ export const IPC = {
   MACRO_UPDATE: 'macro:update',
   MACRO_DELETE: 'macro:delete',
   MACRO_EXECUTE: 'macro:execute',
+
+  // Pipelines / Pattern Detection (Feature 11)
+  RUN_CACHE_LIST: 'run-cache:list',
+  RUN_CACHE_DELETE: 'run-cache:delete',
+  PIPELINE_SUGGEST: 'pipeline:suggest',
+  PIPELINE_DISMISS: 'pipeline:dismiss',
 
   // Text Selection (Feature 3)
   TEXT_SELECTED: 'text:selected',

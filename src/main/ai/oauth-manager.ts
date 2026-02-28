@@ -211,6 +211,41 @@ export class OAuthManager {
     })
   }
 
+  // === Sign Out ===
+
+  signOut(provider: 'claude' | 'openai'): void {
+    if (provider === 'claude') {
+      this.oauthToken = null
+      this.oauthExpiresAt = 0
+      this.claudeLoggedIn = false
+      this.claudeAuthChecked = true
+      this.claudeAuthEmail = undefined
+      // Remove stored credentials
+      if (process.platform === 'darwin') {
+        try { execFileSync('security', ['delete-generic-password', '-s', 'Claude Code-credentials'], { timeout: 5000 }) } catch {}
+      } else {
+        try {
+          const dataDir = path.join(os.homedir(), '.oculo-data')
+          const encPath = path.join(dataDir, 'claude-oauth.enc')
+          const jsonPath = path.join(dataDir, 'claude-oauth.json')
+          if (existsSync(encPath)) { const { unlinkSync } = require('fs'); unlinkSync(encPath) }
+          if (existsSync(jsonPath)) { const { unlinkSync } = require('fs'); unlinkSync(jsonPath) }
+        } catch {}
+      }
+    } else if (provider === 'openai') {
+      this.codexToken = null
+      this.codexRefreshToken = null
+      this.codexTokenExpiresAt = 0
+      this.codexEmail = undefined
+      this.codexPlan = undefined
+      // Remove stored credentials
+      try {
+        const authPath = path.join(os.homedir(), '.codex', 'auth.json')
+        if (existsSync(authPath)) { const { unlinkSync } = require('fs'); unlinkSync(authPath) }
+      } catch {}
+    }
+  }
+
   // === In-App OAuth PKCE Flows ===
 
   async startClaudeAuth(): Promise<{ success: boolean; error?: string }> {

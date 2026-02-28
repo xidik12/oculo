@@ -396,6 +396,7 @@ const api = {
 
   // === Auth (in-app OAuth login) ===
   authLogin: (providerId: string) => ipcRenderer.invoke(IPC.AUTH_LOGIN, providerId),
+  authLogout: (providerId: string) => ipcRenderer.invoke(IPC.AUTH_LOGOUT, providerId),
   authStatus: () => ipcRenderer.invoke(IPC.AUTH_STATUS),
 
   // === DevTools panel resize events ===
@@ -569,6 +570,26 @@ const api = {
     ipcRenderer.invoke('macro:update', id, updates),
   macroDelete: (id: string): Promise<boolean> =>
     ipcRenderer.invoke('macro:delete', id),
+  macroExecute: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('macro:execute', id),
+
+  // === Run Cache (Pipelines Panel) ===
+  runCacheList: (): Promise<any[]> => ipcRenderer.invoke('run-cache:list'),
+  runCacheDelete: (id: string): Promise<boolean> => ipcRenderer.invoke('run-cache:delete', id),
+
+  // === Pipeline Pattern Detection ===
+  onPipelineSuggest: (callback: (suggestion: any) => void): (() => void) => {
+    const handler = (_: any, suggestion: any) => callback(suggestion)
+    ipcRenderer.on('pipeline:suggest', handler)
+    return () => ipcRenderer.removeListener('pipeline:suggest', handler)
+  },
+  pipelineDismiss: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('pipeline:dismiss', id),
+  onMacroExecute: (callback: (macro: any) => void): (() => void) => {
+    const handler = (_: any, macro: any) => callback(macro)
+    ipcRenderer.on('macro:execute', handler)
+    return () => ipcRenderer.removeListener('macro:execute', handler)
+  },
 
   // === Pinned Sidebar Apps ===
   pinnedAppList: (): Promise<any[]> => ipcRenderer.invoke('pinned-app:list'),

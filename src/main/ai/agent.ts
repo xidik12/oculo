@@ -500,6 +500,10 @@ export class AgentController {
     return this.oauth.startCodexAuth()
   }
 
+  signOut(provider: 'claude' | 'openai'): void {
+    this.oauth.signOut(provider)
+  }
+
   // === MCP Tool Execution (calls local Oculo HTTP server) ===
 
   private getMcpConnection(): { port: number; token: string } | null {

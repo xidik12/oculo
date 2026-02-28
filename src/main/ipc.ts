@@ -21,6 +21,7 @@ import { CardStore } from './data/cards'
 import { WorkspaceStore } from './data/workspaces'
 import { MacroStore } from './data/macros'
 import { PinnedAppStore } from './data/pinned-apps'
+import { PatternDetector } from './data/pattern-detector'
 
 export function setupIPC(
   mainWindow: BrowserWindow,
@@ -40,7 +41,8 @@ export function setupIPC(
   cardStore?: CardStore,
   workspaceStore?: WorkspaceStore,
   macroStore?: MacroStore,
-  pinnedAppStore?: PinnedAppStore
+  pinnedAppStore?: PinnedAppStore,
+  patternDetector?: PatternDetector
 ): void {
   // Tab management - forwarded to renderer
   ipcMain.handle(IPC.TAB_CREATE, async (_, url?: string) => {
@@ -184,6 +186,15 @@ export function setupIPC(
     if (!agent) return { success: false, error: 'Agent not initialized' }
     if (providerId === 'claude') return agent.startClaudeAuth()
     if (providerId === 'openai') return agent.startCodexAuth()
+    return { success: false, error: `Unknown provider: ${providerId}` }
+  })
+
+  ipcMain.handle(IPC.AUTH_LOGOUT, async (_, providerId: string) => {
+    if (!agent) return { success: false, error: 'Agent not initialized' }
+    if (providerId === 'claude' || providerId === 'openai') {
+      agent.signOut(providerId)
+      return { success: true }
+    }
     return { success: false, error: `Unknown provider: ${providerId}` }
   })
 
@@ -809,6 +820,28 @@ export function setupIPC(
 
   ipcMain.handle(IPC.MACRO_DELETE, async (_, id: string) => {
     return macroStore?.delete(id) || false
+  })
+
+  // === Run Cache (Pipelines Panel) ===
+  ipcMain.handle(IPC.RUN_CACHE_LIST, async () => {
+    return runCache?.list() || []
+  })
+
+  ipcMain.handle(IPC.RUN_CACHE_DELETE, async (_, id: string) => {
+    return runCache?.delete(id) || false
+  })
+
+  // === Pipeline Pattern Detection ===
+  ipcMain.handle(IPC.PIPELINE_DISMISS, async (_, id: string) => {
+    patternDetector?.dismiss(id)
+    return true
+  })
+
+  ipcMain.handle(IPC.MACRO_EXECUTE, async (_, id: string) => {
+    const macro = macroStore?.get(id)
+    if (!macro) return false
+    mainWindow.webContents.send(IPC.MACRO_EXECUTE, macro)
+    return true
   })
 
   // === Pinned Sidebar Apps ===

@@ -26,6 +26,7 @@ function api() {
     cardActivate(id: string): Promise<Card>
     cardDelete(id: string): Promise<boolean>
     authLogin(providerId: string): Promise<{ success: boolean; error?: string }>
+    authLogout(providerId: string): Promise<{ success: boolean; error?: string }>
   } | undefined
 }
 
@@ -363,9 +364,19 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
             <p className="text-[11px] text-gray-500 mb-2">{provider.description}</p>
 
             {__ENABLE_CLAUDE_OAUTH__ && provider.id === 'claude' && authMode === 'subscription' && isReady && (
-              <p className="text-[11px] text-oculo-400 mb-2">
-                Signed in with Claude account. Add an API key below for instant responses.
-              </p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[11px] text-oculo-400">
+                  Signed in with Claude account.
+                </p>
+                <button
+                  onClick={async () => {
+                    await api()?.authLogout('claude')
+                    refreshStatuses()
+                    flash('Signed out of Claude')
+                  }}
+                  className="text-[10px] text-gray-500 hover:text-red-400 transition-colors"
+                >Sign out</button>
+              </div>
             )}
 
             {__ENABLE_CLAUDE_OAUTH__ && provider.id === 'claude' && !isReady && (
@@ -392,9 +403,19 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
             )}
 
             {provider.id === 'openai' && authMode === 'subscription' && isReady && (
-              <p className="text-[11px] text-oculo-400 mb-2">
-                Signed in with ChatGPT account. Add an API key below for direct API access.
-              </p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-[11px] text-oculo-400">
+                  Signed in with ChatGPT account.
+                </p>
+                <button
+                  onClick={async () => {
+                    await api()?.authLogout('openai')
+                    refreshStatuses()
+                    flash('Signed out of ChatGPT')
+                  }}
+                  className="text-[10px] text-gray-500 hover:text-red-400 transition-colors"
+                >Sign out</button>
+              </div>
             )}
 
             {provider.id === 'openai' && !isReady && (
