@@ -108,6 +108,7 @@ export const IPC = {
   // Downloads & File Access (Phase 4)
   DOWNLOAD_TRIGGER: 'download:trigger',
   FILE_READ_SAFE: 'file:read-safe',
+  FILE_WRITE_SAFE: 'file:write-safe',
 
   // Clipboard (Phase 5)
   CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image',
@@ -117,6 +118,71 @@ export const IPC = {
 
   // Print to PDF
   PRINT_TO_PDF: 'print:to-pdf',
+
+  // File Operations (Chat Features)
+  OPEN_FILE: 'file:open',
+  FILE_DIALOG_OPEN: 'file:dialog-open',
+
+  // MCP Client (Connected Apps)
+  MCP_CLIENT_LIST: 'mcp-client:list',
+  MCP_CLIENT_ADD: 'mcp-client:add',
+  MCP_CLIENT_REMOVE: 'mcp-client:remove',
+  MCP_CLIENT_TOGGLE: 'mcp-client:toggle',
+  MCP_CLIENT_STATUS: 'mcp-client:status',
+  MCP_CLIENT_TOOLS: 'mcp-client:tools',
+  MCP_CLIENT_CALL: 'mcp-client:call',
+
+  // PTY Terminal
+  PTY_SPAWN: 'pty:spawn',
+  PTY_DATA: 'pty:data',
+  PTY_RESIZE: 'pty:resize',
+  PTY_EXIT: 'pty:exit',
+  PTY_KILL: 'pty:kill',
+
+  // Session Memory (Feature 2)
+  MEMORY_LIST: 'memory:list',
+  MEMORY_ADD: 'memory:add',
+  MEMORY_CLEAR: 'memory:clear',
+
+  // Containers (Feature 6)
+  CONTAINER_LIST: 'container:list',
+  CONTAINER_CREATE: 'container:create',
+  CONTAINER_UPDATE: 'container:update',
+  CONTAINER_DELETE: 'container:delete',
+
+  // Cards / AI Skills (Feature 7)
+  CARD_LIST: 'card:list',
+  CARD_CREATE: 'card:create',
+  CARD_UPDATE: 'card:update',
+  CARD_DELETE: 'card:delete',
+  CARD_ACTIVATE: 'card:activate',
+
+  // Workspaces (Feature 8)
+  WORKSPACE_LIST: 'workspace:list',
+  WORKSPACE_CREATE: 'workspace:create',
+  WORKSPACE_SWITCH: 'workspace:switch',
+  WORKSPACE_DELETE: 'workspace:delete',
+  WORKSPACE_SAVE: 'workspace:save',
+
+  // Macros (Feature 10)
+  MACRO_LIST: 'macro:list',
+  MACRO_CREATE: 'macro:create',
+  MACRO_UPDATE: 'macro:update',
+  MACRO_DELETE: 'macro:delete',
+  MACRO_EXECUTE: 'macro:execute',
+
+  // Text Selection (Feature 3)
+  TEXT_SELECTED: 'text:selected',
+
+  // Focus Mode (Feature 4)
+  FOCUS_MODE: 'focus-mode',
+
+  // Pinned Sidebar Apps (Feature 15)
+  PINNED_APP_LIST: 'pinned-app:list',
+  PINNED_APP_ADD: 'pinned-app:add',
+  PINNED_APP_REMOVE: 'pinned-app:remove',
+  PINNED_APP_UPDATE: 'pinned-app:update',
+  PINNED_APP_SAVE: 'pinned-app:save',
 } as const
 
 export type IPCChannel = typeof IPC[keyof typeof IPC]

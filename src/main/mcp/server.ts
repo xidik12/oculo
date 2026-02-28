@@ -12,6 +12,8 @@ import { PermissionGate } from '../security/permissions'
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../../shared/constants'
 import { MediaGenerator, MediaRequest } from '../engine/media-generator'
 import { AIProviderConfig } from '../../shared/ai-types'
+import { PtyManager } from '../terminal/pty-manager'
+import { Previewer } from '../engine/previewer'
 
 const PORT_FILE = path.join(os.homedir(), '.oculo-port')
 const BASE_PORT = 19516
@@ -44,17 +46,23 @@ export class McpServerManager {
   /** Provider configs for API key lookup */
   private providerConfigs: Map<string, AIProviderConfig> = new Map()
 
+  /** PTY manager for shell tool execution */
+  private ptyManager: PtyManager | null = null
+
+  /** URL previewer for preview tool */
+  private previewer = new Previewer()
+
   /** Tool definitions served on `tools/list` */
   private readonly tools = [
     {
       name: 'page',
       description:
-        'Describe the current page. Default: compact format (~30-80 tokens). Use detail="a11y" for full accessibility tree with interactive elements numbered [1],[2]... — better for complex React forms.',
+        'Describe the current page. Default: compact format (~30-80 tokens). Use detail="a11y" for ref-tagged accessibility tree — interactive elements get [ref=e1],[ref=e2]... refs usable in act tool. Use detail="markdown" for full article content as clean markdown.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           scope: { type: 'string', description: 'CSS selector to scope description to a section of the page' },
-          detail: { type: 'string', enum: ['compact', 'a11y'], description: 'compact (default ~30-80 tokens) or a11y (full accessibility tree ~200-500 tokens, better for complex forms)' },
+          detail: { type: 'string', enum: ['compact', 'a11y', 'markdown'], description: 'compact (default ~30-80 tokens), a11y (ref-tagged accessibility tree ~200-500 tokens), or markdown (article extraction via Readability)' },
           include: { type: 'array', items: { type: 'string' }, description: 'What to include: "forms", "buttons", "links", "headings", "text", "images". Default: ["forms","buttons","links","headings"]' },
           screenshot: { type: 'boolean', description: 'Attach a screenshot (default: false)' }
         }
@@ -63,11 +71,12 @@ export class McpServerManager {
     {
       name: 'act',
       description:
-        'Perform an action on the page: click, navigate, scroll, press key, hover, type, or login. Elements are found by text, role, label, placeholder, or data-placeholder (contenteditable) — no snapshots needed.',
+        'Perform an action on the page: click, navigate, scroll, press key, hover, type, or login. Elements found by ref (from a11y snapshot), text, role, label, placeholder, or CSS selector. After click/navigate/back/forward/reload, returns fresh ref-tagged snapshot.',
       inputSchema: {
         type: 'object' as const,
         properties: {
-          action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork'], description: 'Action to perform' },
+          action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'writeFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork'], description: 'Action to perform' },
+          ref: { type: 'string', description: 'Element ref from a11y snapshot (e.g. "e5"). Preferred over text/selector — use page({detail:"a11y"}) first.' },
           text: { type: 'string', description: 'Visible text on the element to interact with' },
           role: { type: 'string', description: 'ARIA role (button, link, textbox, etc.)' },
           name: { type: 'string', description: 'Accessible name of the element' },
@@ -80,7 +89,8 @@ export class McpServerManager {
           amount: { type: 'number', description: 'Scroll amount in pixels' },
           key: { type: 'string', description: 'Key to press (Enter, Tab, Escape, etc.)' },
           modifiers: { type: 'array', items: { type: 'string' }, description: 'Modifier keys (Ctrl, Shift, Alt, Meta)' },
-          value: { type: 'string', description: 'Value for select action' },
+          value: { type: 'string', description: 'Value for select action, file path for readFile/writeFile' },
+          content: { type: 'string', description: 'File content for writeFile action' },
           site: { type: 'string', description: 'Site domain for login action (uses credential vault)' },
           clear: { type: 'boolean', description: 'Clear existing content before typing (for type action). Works with both regular inputs and contenteditable fields.' },
           screenshot: { type: 'boolean', description: 'Attach screenshot after action' }
@@ -202,12 +212,13 @@ export class McpServerManager {
     },
     {
       name: 'media',
-      description: 'Generate images (Nano Banana 2 / DALL-E 3) or videos (Veo 3.1). Returns saved file path. Uses Gemini API key for both image and video.',
+      description: 'Generate images (Nano Banana 2 / DALL-E 3) or videos (Veo 3.1). Returns saved file path. Uses Gemini API key for both image and video. Supports image-to-image editing with reference image.',
       inputSchema: {
         type: 'object' as const,
         properties: {
           type: { type: 'string', enum: ['image', 'video'], description: 'Generate an image or video' },
           prompt: { type: 'string', description: 'What to create' },
+          image: { type: 'string', description: 'Path to reference image for image-to-image editing/transformation (Gemini only)' },
           model: { type: 'string', description: 'Image model: nano-banana-2 (default, best balance), nano-banana-pro (highest quality), nano-banana (fastest)' },
           size: { type: 'string', description: 'Image: 1024x1024, 2K, 4K. Video aspect: 16:9, 9:16' },
           style: { type: 'string', description: 'natural, vivid, cinematic, anime' },
@@ -215,6 +226,85 @@ export class McpServerManager {
           duration: { type: 'number', description: 'Video duration: 4, 6, or 8 seconds' }
         },
         required: ['type', 'prompt']
+      }
+    },
+    {
+      name: 'shell',
+      description: 'Execute a shell command (ls, npm, git, node, python, etc.) and return stdout+stderr. Non-interactive only — no vim, no interactive prompts. Use for file operations, package management, build tools, and system commands.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          command: { type: 'string', description: 'The shell command to execute' },
+          timeout: { type: 'number', description: 'Timeout in milliseconds (default: 30000, max: 120000)' }
+        },
+        required: ['command']
+      }
+    },
+    {
+      name: 'webmcp_list',
+      description: 'Discover WebMCP tools registered by the current page via navigator.modelContext.registerTool() or <form toolname="..."> elements. Returns list of available page-declared tools with their schemas.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {}
+      }
+    },
+    {
+      name: 'webmcp_call',
+      description: 'Call a WebMCP tool registered by the current page. Use webmcp_list first to discover available tools.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          name: { type: 'string', description: 'Tool name to call (from webmcp_list)' },
+          args: { type: 'object', description: 'Arguments to pass to the tool' }
+        },
+        required: ['name']
+      }
+    },
+    {
+      name: 'tabs',
+      description: 'List all open tabs or describe a specific tab. No args → list all tabs with URLs/titles. describe=N → get full page description of tab N.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          describe: { type: 'number', description: 'Tab index to describe (0-indexed). Returns full page description of that tab.' },
+          detail: { type: 'string', enum: ['compact', 'a11y'], description: 'Detail level when describing a tab (default: compact)' }
+        }
+      }
+    },
+    {
+      name: 'preview',
+      description: 'Pre-fetch and summarize a URL without navigating. Returns title, description, and text snippet. 5s timeout, cached for 5 minutes.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          url: { type: 'string', description: 'URL to preview' }
+        },
+        required: ['url']
+      }
+    },
+    {
+      name: 'translate',
+      description: 'Translate text or page content. Extracts visible text and returns it with a translation instruction for the AI to translate.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          to: { type: 'string', description: 'Target language (e.g. "English", "Spanish", "Japanese")' },
+          text: { type: 'string', description: 'Specific text to translate. If omitted, extracts from current page.' },
+          scope: { type: 'string', description: 'CSS selector to scope extraction (optional)' }
+        },
+        required: ['to']
+      }
+    },
+    {
+      name: 'lens',
+      description: 'Visual analysis of page screenshots or specific elements. Captures image and returns it for AI vision analysis.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          target: { type: 'string', enum: ['page', 'element'], description: 'What to capture: full page or specific element' },
+          selector: { type: 'string', description: 'CSS selector for element target' },
+          question: { type: 'string', description: 'What to analyze in the image' }
+        }
       }
     }
   ]
@@ -302,6 +392,51 @@ export class McpServerManager {
       if (!allowed) {
         return {
           content: [{ type: 'text', text: `Action "${actionDesc}" was denied by permission gate.` }]
+        }
+      }
+
+      // Handle shell tool directly in main process
+      if (name === 'shell') {
+        if (!this.ptyManager) {
+          return { content: [{ type: 'text', text: 'Error: Terminal not available.' }], isError: true }
+        }
+        const command = String(args.command || '')
+        if (!command) {
+          return { content: [{ type: 'text', text: 'Error: command is required.' }], isError: true }
+        }
+        const timeout = Math.min(Number(args.timeout) || 30_000, 120_000)
+        const { output, exitCode } = await this.ptyManager.exec(command, timeout)
+
+        // Strip ANSI escape codes for clean text output
+        let cleaned = output.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '')
+        // Cap at 10KB
+        if (cleaned.length > 10240) cleaned = cleaned.substring(0, 10240) + '\n...[output truncated]'
+
+        let result = `$ ${command}\n${cleaned}\n[exit code: ${exitCode}]`
+        result = this.redactor.redact(result)
+        result = this.antiInjection.sanitize(result)
+        result = this.antiInjection.wrapContent(result)
+        this.auditLog.log('shell', command, exitCode === 0 ? 'success' : 'failed', result.substring(0, 200), 'shell')
+        return { content: [{ type: 'text', text: result }], isError: exitCode !== 0 }
+      }
+
+      // Handle preview tool directly in main process (no webview needed)
+      if (name === 'preview') {
+        const url = String(args.url || '')
+        if (!url) {
+          return { content: [{ type: 'text', text: 'Error: url is required.' }], isError: true }
+        }
+        try {
+          const preview = await this.previewer.preview(url)
+          let result = `Title: ${preview.title}\nDescription: ${preview.description}\nSnippet: ${preview.snippet.substring(0, 300)}`
+          if (preview.ogImage) result += `\nImage: ${preview.ogImage}`
+          result = this.redactor.redact(result)
+          result = this.antiInjection.sanitize(result)
+          result = this.antiInjection.wrapContent(result)
+          this.auditLog.log('preview', url, 'success', result.substring(0, 200), 'preview')
+          return { content: [{ type: 'text', text: result }] }
+        } catch (err) {
+          return { content: [{ type: 'text', text: `Error previewing ${url}: ${(err as Error).message}` }], isError: true }
         }
       }
 
@@ -424,6 +559,10 @@ export class McpServerManager {
   }
 
   /** Update provider configs for media generation API key lookup */
+  setPtyManager(pty: PtyManager): void {
+    this.ptyManager = pty
+  }
+
   setProviderConfigs(configs: Map<string, AIProviderConfig>): void {
     this.providerConfigs = configs
     console.log(`[MCP] setProviderConfigs called — size=${configs.size} keys=[${[...configs.keys()]}] hasGeminiKey=${!!(configs.get('gemini')?.apiKey)}`)

@@ -7,16 +7,46 @@ interface SettingsPanelProps {
   onClose: () => void
 }
 
+interface Container {
+  id: string
+  name: string
+  color: string
+  icon: string
+  partition: string
+}
+
+interface Card {
+  id: string
+  name: string
+  icon: string
+  systemInstruction: string
+  triggerDomains?: string[]
+  isActive: boolean
+  createdAt: number
+}
+
 function api() {
   return (window as any).oculo as {
     getSettings(): Promise<AppSettings>
     saveSettings(settings: Partial<AppSettings>): Promise<AppSettings>
     aiSetConfig(config: any): Promise<boolean>
     aiGetProviderStatus(providerId: string): Promise<{ providerId: string; connected: boolean; ready: boolean; error?: string; authMode?: string }>
+    mcpClientList(): Promise<any[]>
+    mcpClientAdd(config: any): Promise<boolean>
+    mcpClientRemove(serverId: string): Promise<boolean>
+    mcpClientToggle(serverId: string, enabled: boolean): Promise<boolean>
+    mcpClientStatus(): Promise<any[]>
+    mcpClientTools(): Promise<any[]>
+    containerList(): Promise<Container[]>
+    containerCreate(name: string, color: string, icon: string): Promise<Container>
+    containerDelete(id: string): Promise<boolean>
+    cardList(): Promise<Card[]>
+    cardActivate(id: string): Promise<Card>
+    cardDelete(id: string): Promise<boolean>
   } | undefined
 }
 
-type SettingsTab = 'general' | 'ai' | 'media' | 'privacy' | 'support'
+type SettingsTab = 'general' | 'ai' | 'media' | 'privacy' | 'apps' | 'performance' | 'support'
 
 export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const [tab, setTab] = useState<SettingsTab>('ai')
@@ -70,8 +100,10 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'General' },
     { id: 'ai', label: 'AI Providers' },
+    { id: 'apps', label: 'Connected Apps' },
     { id: 'media', label: 'Media' },
     { id: 'privacy', label: 'Privacy' },
+    { id: 'performance', label: 'Performance' },
     { id: 'support', label: 'Support' },
   ]
 
@@ -110,7 +142,7 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
           {/* Body */}
           <div className="flex-1 overflow-y-auto p-5 space-y-5" style={{ scrollbarWidth: 'thin', scrollbarColor: '#373a40 transparent' }}>
             {tab === 'general' && settings && (
-              <GeneralSettings settings={settings} onSave={handleSaveSetting} />
+              <GeneralSettings settings={settings} onSave={handleSaveSetting} flash={flash} />
             )}
             {tab === 'ai' && (
               <AISettings
@@ -119,7 +151,11 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
                 statuses={statuses}
                 onSaveKey={handleSaveApiKey}
                 onRemoveKey={handleRemoveApiKey}
+                flash={flash}
               />
+            )}
+            {tab === 'apps' && (
+              <ConnectedAppsSettings flash={flash} />
             )}
             {tab === 'media' && (
               <MediaSettings
@@ -133,6 +169,9 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
             {tab === 'privacy' && settings && (
               <PrivacySettings settings={settings} onSave={handleSaveSetting} />
             )}
+            {tab === 'performance' && settings && (
+              <PerformanceSettings settings={settings} onSave={handleSaveSetting} />
+            )}
             {tab === 'support' && (
               <SupportSettings />
             )}
@@ -145,7 +184,46 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
 
 // ── General ─────────────────────────────────────────────────────────────────
 
-function GeneralSettings({ settings, onSave }: { settings: AppSettings; onSave: (key: string, value: any) => void }) {
+function GeneralSettings({ settings, onSave, flash }: { settings: AppSettings; onSave: (key: string, value: any) => void; flash: (msg: string) => void }) {
+  const [containers, setContainers] = useState<Container[]>([])
+  const [showAddContainer, setShowAddContainer] = useState(false)
+  const [newContainerName, setNewContainerName] = useState('')
+  const [newContainerColor, setNewContainerColor] = useState('#3b82f6')
+  const [newContainerIcon, setNewContainerIcon] = useState('box')
+
+  const CONTAINER_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#a855f7', '#ec4899', '#06b6d4', '#f97316']
+  const CONTAINER_ICONS = [
+    { id: 'box', label: 'Box' },
+    { id: 'briefcase', label: 'Work' },
+    { id: 'user', label: 'Personal' },
+    { id: 'shopping', label: 'Shopping' },
+    { id: 'bank', label: 'Banking' },
+  ]
+
+  const refreshContainers = useCallback(async () => {
+    const list = await api()?.containerList() || []
+    setContainers(list)
+  }, [])
+
+  useEffect(() => { refreshContainers() }, [refreshContainers])
+
+  const handleAddContainer = async () => {
+    if (!newContainerName.trim()) return
+    await api()?.containerCreate(newContainerName.trim(), newContainerColor, newContainerIcon)
+    setNewContainerName('')
+    setNewContainerColor('#3b82f6')
+    setNewContainerIcon('box')
+    setShowAddContainer(false)
+    flash('Container created')
+    refreshContainers()
+  }
+
+  const handleDeleteContainer = async (id: string) => {
+    await api()?.containerDelete(id)
+    flash('Container deleted')
+    refreshContainers()
+  }
+
   return (
     <>
       <SettingRow label="Theme" description="Controls the app's appearance">
@@ -168,19 +246,105 @@ function GeneralSettings({ settings, onSave }: { settings: AppSettings; onSave: 
           onChange={e => onSave('searchEngine', e.target.value)}
           className="h-8 w-64 px-2 rounded bg-surface-dark-1 border border-surface-dark-3 text-gray-200 text-xs font-mono outline-none focus:border-accent/50" />
       </SettingRow>
+
+      {/* Containers */}
+      <div className="mt-4 pt-4 border-t border-surface-dark-3">
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <div className="text-sm text-gray-200">Containers</div>
+            <div className="text-[11px] text-gray-500">Isolate browsing sessions with separate cookies and storage</div>
+          </div>
+          <button onClick={() => setShowAddContainer(true)}
+            className="h-7 px-2.5 text-[11px] font-medium bg-accent/10 text-accent rounded hover:bg-accent/20 transition-colors">
+            + Add
+          </button>
+        </div>
+
+        {containers.length === 0 && !showAddContainer && (
+          <p className="text-xs text-gray-600 py-2">No containers yet. Add one to isolate browsing sessions.</p>
+        )}
+
+        <div className="space-y-2">
+          {containers.map(c => (
+            <div key={c.id} className="flex items-center gap-2 p-2.5 rounded-lg bg-surface-dark-1 border border-surface-dark-3">
+              <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: c.color }} />
+              <span className="text-xs text-gray-200 font-medium flex-1">{c.name}</span>
+              <span className="text-[10px] text-gray-600 font-mono">{c.partition}</span>
+              <button onClick={() => handleDeleteContainer(c.id)}
+                className="text-xs text-gray-600 hover:text-red-400 transition-colors p-1">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {showAddContainer && (
+          <div className="mt-2 p-3 rounded-lg bg-surface-dark-1 border border-surface-dark-3 space-y-2">
+            <input value={newContainerName} onChange={e => setNewContainerName(e.target.value)} placeholder="Container name"
+              className="w-full h-8 px-2 rounded bg-surface-dark-2 border border-surface-dark-3 text-gray-200 text-xs outline-none focus:border-accent/50 placeholder-gray-600" />
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-gray-500 w-10">Color</span>
+              <div className="flex gap-1.5">
+                {CONTAINER_COLORS.map(color => (
+                  <button key={color} onClick={() => setNewContainerColor(color)}
+                    className={`w-5 h-5 rounded-full transition-all ${newContainerColor === color ? 'ring-2 ring-accent ring-offset-1 ring-offset-surface-dark-1' : ''}`}
+                    style={{ backgroundColor: color }} />
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] text-gray-500 w-10">Icon</span>
+              <select value={newContainerIcon} onChange={e => setNewContainerIcon(e.target.value)}
+                className="h-7 px-2 rounded bg-surface-dark-2 border border-surface-dark-3 text-gray-200 text-[11px] outline-none">
+                {CONTAINER_ICONS.map(ic => (
+                  <option key={ic.id} value={ic.id}>{ic.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setShowAddContainer(false)}
+                className="h-7 px-2.5 text-[11px] text-gray-500 rounded hover:text-gray-300 transition-colors">Cancel</button>
+              <button onClick={handleAddContainer} disabled={!newContainerName.trim()}
+                className="h-7 px-2.5 text-[11px] font-medium bg-accent/10 text-accent rounded hover:bg-accent/20 disabled:opacity-30 transition-colors">Create</button>
+            </div>
+          </div>
+        )}
+      </div>
     </>
   )
 }
 
 // ── AI Providers ────────────────────────────────────────────────────────────
 
-function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey }: {
+function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, flash }: {
   apiKeys: Record<string, string>
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>
   statuses: Record<string, any>
   onSaveKey: (providerId: AIProviderId) => void
   onRemoveKey: (providerId: AIProviderId) => void
+  flash: (msg: string) => void
 }) {
+  const [cards, setCards] = useState<Card[]>([])
+
+  const refreshCards = useCallback(async () => {
+    const list = await api()?.cardList() || []
+    setCards(list)
+  }, [])
+
+  useEffect(() => { refreshCards() }, [refreshCards])
+
+  const handleToggleCard = async (id: string) => {
+    await api()?.cardActivate(id)
+    flash('Card updated')
+    refreshCards()
+  }
+
+  const handleDeleteCard = async (id: string) => {
+    await api()?.cardDelete(id)
+    flash('Card deleted')
+    refreshCards()
+  }
+
   return (
     <>
       <p className="text-xs text-gray-500 mb-3">
@@ -263,6 +427,53 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey }: {
           </div>
         )
       })}
+
+      {/* AI Cards / Skills */}
+      <div className="mt-4 pt-4 border-t border-surface-dark-3">
+        <div className="mb-3">
+          <div className="text-sm text-gray-200">AI Cards</div>
+          <div className="text-[11px] text-gray-500">Custom AI personas with system instructions and domain triggers</div>
+        </div>
+
+        {cards.length === 0 && (
+          <p className="text-xs text-gray-600 py-2">No AI cards configured. Cards can be created from the AI chat panel.</p>
+        )}
+
+        <div className="space-y-2">
+          {cards.map(card => (
+            <div key={card.id} className="p-3 rounded-lg bg-surface-dark-1 border border-surface-dark-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm">{card.icon || '🤖'}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-gray-200">{card.name}</span>
+                    {card.isActive && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-300 font-medium">Active</span>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-gray-600 truncate mt-0.5">
+                    {card.systemInstruction.length > 80
+                      ? card.systemInstruction.slice(0, 80) + '...'
+                      : card.systemInstruction}
+                  </p>
+                  {card.triggerDomains && card.triggerDomains.length > 0 && (
+                    <div className="flex gap-1 mt-1">
+                      {card.triggerDomains.map(d => (
+                        <span key={d} className="text-[9px] px-1 py-0.5 rounded bg-surface-dark-2 text-gray-500 font-mono">{d}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Toggle checked={card.isActive} onChange={() => handleToggleCard(card.id)} />
+                <button onClick={() => handleDeleteCard(card.id)}
+                  className="text-xs text-gray-600 hover:text-red-400 transition-colors p-1">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </>
   )
 }
@@ -327,6 +538,208 @@ function MediaSettings({ apiKeys, setApiKeys, onSaveKey, onRemoveKey, statuses }
   )
 }
 
+// ── Connected Apps (MCP Client) ──────────────────────────────────────────────
+
+const PRE_CONFIGURED_APPS = [
+  { id: 'gmail', name: 'Gmail', icon: '📧', transport: 'stdio' as const, command: 'npx -y @anthropic/gmail-mcp-server', description: 'Read, search, and send emails via Gmail API' },
+  { id: 'calendar', name: 'Google Calendar', icon: '📅', transport: 'stdio' as const, command: 'npx -y @anthropic/google-calendar-mcp-server', description: 'Create, update, and list calendar events' },
+  { id: 'notion', name: 'Notion', icon: '📝', transport: 'stdio' as const, command: 'npx -y @anthropic/notion-mcp-server', description: 'Read and edit Notion pages and databases' },
+  { id: 'slack', name: 'Slack', icon: '💬', transport: 'stdio' as const, command: 'npx -y @anthropic/slack-mcp-server', description: 'Send messages and interact with Slack channels' },
+]
+
+function ConnectedAppsSettings({ flash }: { flash: (msg: string) => void }) {
+  const [configs, setConfigs] = useState<any[]>([])
+  const [statuses, setStatuses] = useState<any[]>([])
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newCommand, setNewCommand] = useState('')
+  const [newTransport, setNewTransport] = useState<'stdio' | 'sse'>('stdio')
+  const [newUrl, setNewUrl] = useState('')
+
+  const refresh = useCallback(async () => {
+    const cfgs = await api()?.mcpClientList() || []
+    setConfigs(cfgs)
+    const sts = await api()?.mcpClientStatus() || []
+    setStatuses(sts)
+  }, [])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  const handleToggle = async (serverId: string, enabled: boolean) => {
+    await api()?.mcpClientToggle(serverId, enabled)
+    flash(enabled ? 'Connecting...' : 'Disconnected')
+    // Refresh status after a short delay for connection to complete
+    setTimeout(refresh, enabled ? 2000 : 500)
+  }
+
+  const handleAddPreConfigured = async (app: typeof PRE_CONFIGURED_APPS[0]) => {
+    const existing = configs.find(c => c.id === app.id)
+    if (existing) {
+      flash(`${app.name} already added`)
+      return
+    }
+    await api()?.mcpClientAdd({
+      id: app.id,
+      name: app.name,
+      icon: app.icon,
+      transport: app.transport,
+      command: app.command,
+      enabled: false
+    })
+    flash(`${app.name} added — toggle to connect`)
+    refresh()
+  }
+
+  const handleAddCustom = async () => {
+    if (!newName.trim()) return
+    const id = newName.toLowerCase().replace(/[^a-z0-9]/g, '-')
+    await api()?.mcpClientAdd({
+      id,
+      name: newName.trim(),
+      transport: newTransport,
+      ...(newTransport === 'stdio' ? { command: newCommand } : { url: newUrl }),
+      enabled: false
+    })
+    setNewName('')
+    setNewCommand('')
+    setNewUrl('')
+    setShowAddForm(false)
+    flash('Custom server added')
+    refresh()
+  }
+
+  const handleRemove = async (serverId: string) => {
+    await api()?.mcpClientRemove(serverId)
+    flash('Server removed')
+    refresh()
+  }
+
+  const getStatus = (id: string) => statuses.find(s => s.id === id)
+
+  return (
+    <>
+      <p className="text-xs text-gray-500 mb-3">
+        Connect external MCP servers to extend Oculo's AI with Gmail, Calendar, Notion, and more. Tools become available in the AI chat panel.
+      </p>
+
+      {/* Pre-configured apps */}
+      <div className="space-y-2 mb-4">
+        {PRE_CONFIGURED_APPS.map(app => {
+          const cfg = configs.find(c => c.id === app.id)
+          const status = getStatus(app.id)
+          const isConnected = status?.status === 'connected'
+
+          return (
+            <div key={app.id} className="p-3 rounded-lg bg-surface-dark-1 border border-surface-dark-3">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">{app.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-gray-200">{app.name}</span>
+                    {isConnected && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-300 font-medium">
+                        {status?.toolCount || 0} tools
+                      </span>
+                    )}
+                    {status?.status === 'error' && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-900/50 text-red-300 font-medium">
+                        Error
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-gray-500 truncate">{app.description}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isConnected && <span className="w-2 h-2 rounded-full bg-emerald-500" />}
+                  {status?.status === 'error' && <span className="w-2 h-2 rounded-full bg-red-500" />}
+                  {cfg ? (
+                    <>
+                      <Toggle checked={cfg.enabled} onChange={(v) => handleToggle(app.id, v)} />
+                      <button onClick={() => handleRemove(app.id)}
+                        className="text-xs text-gray-600 hover:text-red-400 transition-colors p-1">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => handleAddPreConfigured(app)}
+                      className="h-7 px-2.5 text-[11px] font-medium bg-accent/10 text-accent rounded hover:bg-accent/20 transition-colors">
+                      Add
+                    </button>
+                  )}
+                </div>
+              </div>
+              {status?.error && (
+                <p className="text-[10px] text-red-400 mt-1 truncate">{status.error}</p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Custom servers */}
+      {configs.filter(c => !PRE_CONFIGURED_APPS.find(a => a.id === c.id)).map(cfg => {
+        const status = getStatus(cfg.id)
+        const isConnected = status?.status === 'connected'
+        return (
+          <div key={cfg.id} className="p-3 rounded-lg bg-surface-dark-1 border border-surface-dark-3 mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">{cfg.icon || '🔧'}</span>
+              <div className="flex-1 min-w-0">
+                <span className="text-sm font-semibold text-gray-200">{cfg.name}</span>
+                {isConnected && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-300 font-medium ml-2">
+                    {status?.toolCount || 0} tools
+                  </span>
+                )}
+                <p className="text-[10px] text-gray-600 font-mono truncate">{cfg.command || cfg.url}</p>
+              </div>
+              {isConnected && <span className="w-2 h-2 rounded-full bg-emerald-500" />}
+              <Toggle checked={cfg.enabled} onChange={(v) => handleToggle(cfg.id, v)} />
+              <button onClick={() => handleRemove(cfg.id)}
+                className="text-xs text-gray-600 hover:text-red-400 transition-colors p-1">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+          </div>
+        )
+      })}
+
+      {/* Add custom server */}
+      {!showAddForm ? (
+        <button onClick={() => setShowAddForm(true)}
+          className="w-full h-9 text-xs font-medium text-gray-500 border border-dashed border-surface-dark-3 rounded-lg hover:border-accent/40 hover:text-accent transition-colors">
+          + Add Custom MCP Server
+        </button>
+      ) : (
+        <div className="p-3 rounded-lg bg-surface-dark-1 border border-surface-dark-3 space-y-2">
+          <div className="flex gap-2">
+            <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Server name"
+              className="flex-1 h-8 px-2 rounded bg-surface-dark-2 border border-surface-dark-3 text-gray-200 text-xs outline-none focus:border-accent/50 placeholder-gray-600" />
+            <select value={newTransport} onChange={e => setNewTransport(e.target.value as 'stdio' | 'sse')}
+              className="h-8 px-2 rounded bg-surface-dark-2 border border-surface-dark-3 text-gray-200 text-xs outline-none">
+              <option value="stdio">stdio</option>
+              <option value="sse">SSE</option>
+            </select>
+          </div>
+          {newTransport === 'stdio' ? (
+            <input value={newCommand} onChange={e => setNewCommand(e.target.value)} placeholder="Command (e.g. npx -y @org/mcp-server)"
+              className="w-full h-8 px-2 rounded bg-surface-dark-2 border border-surface-dark-3 text-gray-200 text-xs font-mono outline-none focus:border-accent/50 placeholder-gray-600" />
+          ) : (
+            <input value={newUrl} onChange={e => setNewUrl(e.target.value)} placeholder="SSE URL (e.g. http://localhost:3001/sse)"
+              className="w-full h-8 px-2 rounded bg-surface-dark-2 border border-surface-dark-3 text-gray-200 text-xs font-mono outline-none focus:border-accent/50 placeholder-gray-600" />
+          )}
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setShowAddForm(false)}
+              className="h-7 px-2.5 text-[11px] text-gray-500 rounded hover:text-gray-300 transition-colors">Cancel</button>
+            <button onClick={handleAddCustom} disabled={!newName.trim()}
+              className="h-7 px-2.5 text-[11px] font-medium bg-accent/10 text-accent rounded hover:bg-accent/20 disabled:opacity-30 transition-colors">Add Server</button>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 // ── Privacy ─────────────────────────────────────────────────────────────────
 
 function PrivacySettings({ settings, onSave }: { settings: AppSettings; onSave: (key: string, value: any) => void }) {
@@ -348,6 +761,39 @@ function PrivacySettings({ settings, onSave }: { settings: AppSettings; onSave: 
 
       <SettingRow label="MCP Auto-Start" description="Automatically start MCP server on launch">
         <Toggle checked={settings.mcpAutoStart} onChange={v => onSave('mcpAutoStart', v)} />
+      </SettingRow>
+    </>
+  )
+}
+
+// ── Performance ─────────────────────────────────────────────────────────────
+
+function PerformanceSettings({ settings, onSave }: { settings: AppSettings; onSave: (key: string, value: any) => void }) {
+  return (
+    <>
+      <SettingRow label="Performance Mode" description="Reduce animations and background activity to improve speed">
+        <Toggle checked={settings.performanceMode ?? false} onChange={v => onSave('performanceMode', v)} />
+      </SettingRow>
+
+      <SettingRow label="Tab Suspend After" description="Auto-suspend inactive tabs to free memory">
+        <select value={settings.tabSuspendAfterMinutes ?? 15} onChange={e => onSave('tabSuspendAfterMinutes', Number(e.target.value))}
+          className="h-8 px-2 rounded bg-surface-dark-1 border border-surface-dark-3 text-gray-200 text-xs outline-none focus:border-accent/50">
+          <option value={5}>5 minutes</option>
+          <option value={10}>10 minutes</option>
+          <option value={15}>15 minutes</option>
+          <option value={30}>30 minutes</option>
+          <option value={60}>60 minutes</option>
+        </select>
+      </SettingRow>
+
+      <SettingRow label="Network Throttling" description="Simulate slower network conditions for testing">
+        <select value={settings.networkThrottling ?? 'none'} onChange={e => onSave('networkThrottling', e.target.value)}
+          className="h-8 px-2 rounded bg-surface-dark-1 border border-surface-dark-3 text-gray-200 text-xs outline-none focus:border-accent/50">
+          <option value="none">None</option>
+          <option value="slow-3g">Slow 3G</option>
+          <option value="fast-3g">Fast 3G</option>
+          <option value="regular-4g">Regular 4G</option>
+        </select>
       </SettingRow>
     </>
   )

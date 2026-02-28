@@ -15,7 +15,7 @@ import { ToastContainer, useToasts } from './components/common/Toast'
 import ReaderMode from './components/common/ReaderMode'
 import SettingsPanel from './components/SettingsPanel'
 import { useSidebarState } from './hooks/useSidebarState'
-import { Tab, TabGroup, TAB_GROUP_COLORS } from '../shared/types'
+import { Tab, TabGroup, TAB_GROUP_COLORS, PinnedApp } from '../shared/types'
 
 let tabCounter = 0
 function newId(): string {
@@ -47,9 +47,15 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tabGroups, setTabGroups] = useState<TabGroup[]>([])
   const [devToolsHeight, setDevToolsHeight] = useState(0)
+  const [focusMode, setFocusMode] = useState(false)
+  const [highlightPopup, setHighlightPopup] = useState<{ text: string; x: number; y: number } | null>(null)
+  const [tabSuspended, setTabSuspended] = useState<Set<string>>(new Set())
+  const [pinnedApps, setPinnedApps] = useState<PinnedApp[]>([])
+  const tabLastActive = useRef<Map<string, number>>(new Map())
   const closedTabs = useRef<{ url: string; title: string }[]>([])
   const lastPageSnapshot = useRef('')
   const lastA11ySnapshot = useRef('')
+  const currentRefMap = useRef<Record<string, { name: string; role: string; backendDOMNodeId?: number }>>({})
 
   const sidebar = useSidebarState()
   const contextMenu = useContextMenu()
@@ -67,6 +73,15 @@ export default function App() {
     document.documentElement.classList.toggle('dark', darkMode)
   }, [darkMode])
 
+  // Load pinned sidebar apps on mount
+  useEffect(() => {
+    const api = (window as any).oculo
+    if (!api?.pinnedAppList) return
+    api.pinnedAppList().then((apps: PinnedApp[]) => {
+      if (apps && apps.length > 0) setPinnedApps(apps)
+    }).catch(() => {})
+  }, [])
+
   // IPC event listeners
   useEffect(() => {
     const api = (window as any).oculo
@@ -83,6 +98,8 @@ export default function App() {
       api.onCommandPalette?.(() => setCommandPaletteOpen(prev => !prev)),
       api.onAddBookmark?.(() => handleToggleBookmark()),
       api.onReopenClosedTab?.(() => handleReopenClosedTab()),
+      api.onNavBack?.(() => api.goBack(activeTabId)),
+      api.onNavForward?.(() => api.goForward(activeTabId)),
       api.onReaderMode?.(() => setReaderModeOpen(prev => !prev)),
       api.onSplitView?.(() => setSplitViewOpen(prev => !prev)),
       api.onToggleBookmarksBar?.(() => setBookmarksBarOpen(prev => !prev)),
@@ -92,6 +109,7 @@ export default function App() {
       api.onZoomOut?.(() => handleZoom(-0.1)),
       api.onZoomReset?.(() => handleZoomReset()),
       api.onDevToolsResized?.((height: number) => setDevToolsHeight(height)),
+      api.onFocusMode?.(() => setFocusMode(prev => !prev)),
     ]
     return () => cleanups.forEach(c => c?.())
   }, [activeTabId])
@@ -406,17 +424,17 @@ export default function App() {
 
     // Helper: inject console capture into webview (called once per page load)
     function buildConsoleCapture(): string {
-      return '(function(){if(window.__oculo_logs)return "already";window.__oculo_logs=[];' +
+      return '(function(){if(window.__oc_logs)return "already";window.__oc_logs=[];' +
         'var orig={log:console.log,warn:console.warn,error:console.error,info:console.info};' +
         '["log","warn","error","info"].forEach(function(t){' +
         'console[t]=function(){' +
-        'window.__oculo_logs.push({type:t,msg:Array.from(arguments).map(function(a){try{return typeof a==="object"?JSON.stringify(a):String(a)}catch(e){return String(a)}}).join(" "),ts:Date.now()});' +
-        'if(window.__oculo_logs.length>200)window.__oculo_logs.shift();' +
+        'window.__oc_logs.push({type:t,msg:Array.from(arguments).map(function(a){try{return typeof a==="object"?JSON.stringify(a):String(a)}catch(e){return String(a)}}).join(" "),ts:Date.now()});' +
+        'if(window.__oc_logs.length>200)window.__oc_logs.shift();' +
         'orig[t].apply(console,arguments);};});' +
         'window.addEventListener("error",function(e){' +
-        'window.__oculo_logs.push({type:"error",msg:"Uncaught: "+(e.message||"")+" at "+(e.filename||"")+":"+(e.lineno||""),ts:Date.now()});});' +
+        'window.__oc_logs.push({type:"error",msg:"Uncaught: "+(e.message||"")+" at "+(e.filename||"")+":"+(e.lineno||""),ts:Date.now()});});' +
         'window.addEventListener("unhandledrejection",function(e){' +
-        'window.__oculo_logs.push({type:"error",msg:"Unhandled promise rejection: "+String(e.reason),ts:Date.now()});});' +
+        'window.__oc_logs.push({type:"error",msg:"Unhandled promise rejection: "+String(e.reason),ts:Date.now()});});' +
         'return "injected";})()'
     }
 
@@ -430,6 +448,32 @@ export default function App() {
       const stddev = (maxMs - minMs) / 6
       const delay = Math.max(minMs, Math.min(maxMs, mean + z * stddev))
       await new Promise(r => setTimeout(r, delay))
+    }
+
+    // Helper: parse and strip ---REFMAP--- block from a11y snapshot result.
+    // Returns { snapshot, refMap } where snapshot has the block removed.
+    function parseRefMapFromSnapshot(raw: string): { snapshot: string; refMap: Record<string, { name: string; role: string; backendDOMNodeId?: number }> } {
+      const marker = '\n---REFMAP---\n'
+      const idx = raw.indexOf(marker)
+      if (idx === -1) return { snapshot: raw, refMap: {} }
+      const snapshot = raw.substring(0, idx)
+      try {
+        const refMap = JSON.parse(raw.substring(idx + marker.length))
+        return { snapshot, refMap }
+      } catch { return { snapshot, refMap: {} } }
+    }
+
+    // Helper: get a ref-tagged a11y snapshot for post-action use (updates currentRefMap)
+    async function getRefTaggedSnapshot(wv: any): Promise<string> {
+      try {
+        const wcId = (wv as any).getWebContentsId?.()
+        if (!wcId) return ''
+        const raw = await api.a11ySnapshot(wcId)
+        if (!raw || raw.startsWith('Error')) return ''
+        const { snapshot, refMap } = parseRefMapFromSnapshot(raw)
+        currentRefMap.current = refMap
+        return snapshot
+      } catch { return '' }
     }
 
     // Helper: build slim page state (appended after every action, ~50-80 tokens)
@@ -642,12 +686,33 @@ export default function App() {
         switch (toolName) {
           case 'page': {
             const detail = args.detail || args.mode || ''
+            if (detail === 'markdown') {
+              // Firecrawl-inspired: extract article content as clean markdown
+              try {
+                const md = await (wv as any).executeJavaScript('window.__oc_extract_markdown ? window.__oc_extract_markdown() : {error:"Not available"}')
+                if (md.error) {
+                  // Fallback to compact description if markdown extraction fails
+                  result = await getPageSnapshot(wv, true)
+                } else {
+                  result = `# ${md.title}\n`
+                  if (md.byline) result += `*${md.byline}*\n\n`
+                  result += md.markdown
+                }
+              } catch {
+                result = await getPageSnapshot(wv, true)
+              }
+              break
+            }
             if (detail === 'a11y' || detail === 'full' || detail === 'interactive') {
               // Use CDP accessibility tree for detailed view
               try {
                 const wcId = (wv as any).getWebContentsId?.()
                 if (wcId) {
-                  result = await api.a11ySnapshot(wcId)
+                  const rawA11y = await api.a11ySnapshot(wcId)
+                  // Parse and strip refMap, store for ref-based act resolution
+                  const { snapshot: parsed, refMap } = parseRefMapFromSnapshot(rawA11y)
+                  currentRefMap.current = refMap
+                  result = parsed
                 } else {
                   result = await getPageSnapshot(wv, true)
                 }
@@ -709,6 +774,21 @@ export default function App() {
           }
 
           case 'act': {
+            // Ref-based resolution: if args.ref is provided (e.g. "e5"), look up in refMap
+            if (args.ref && !args.text && !args.selector && !args.name) {
+              const refId = String(args.ref).startsWith('e') ? args.ref : `e${args.ref}`
+              const refEntry = currentRefMap.current[refId]
+              if (refEntry) {
+                // Set name and role for existing resolver
+                args.name = refEntry.name
+                args.role = refEntry.role
+                // Also set text as fallback
+                if (!args.text && refEntry.name) args.text = refEntry.name
+              } else {
+                result = `Error: ref "${refId}" not found in current snapshot. Call page({detail:"a11y"}) first to get fresh refs.`
+                break
+              }
+            }
             const action = args.action
             // Rate limiting: human-like delay between actions
             if (action !== 'navigate' && action !== 'wait' && action !== 'listTabs') {
@@ -1458,12 +1538,25 @@ export default function App() {
                 ).join('\n')
               }
             } else if (action === 'readFile') {
-              // Read file content (sandboxed to temp/downloads/desktop)
+              // Read file content (sandboxed to temp/downloads/desktop + file:// dir)
               const filePath = args.value || args.text || ''
               if (!filePath) {
                 result = 'Error: No file path provided. Set value to the file path.'
               } else {
-                result = await api.fileReadSafe(filePath)
+                const pageUrl = await (wv as any).executeJavaScript('location.href').catch(() => '')
+                result = await api.fileReadSafe(filePath, pageUrl)
+              }
+            } else if (action === 'writeFile') {
+              // Write file content (sandboxed to file:// dir + temp/downloads/desktop)
+              const filePath = args.value || args.text || ''
+              const content = args.content || ''
+              if (!filePath) {
+                result = 'Error: No file path provided. Set value to the file path.'
+              } else if (!content) {
+                result = 'Error: No content provided. Set content to the file contents.'
+              } else {
+                const pageUrl = await (wv as any).executeJavaScript('location.href').catch(() => '')
+                result = await api.fileWriteSafe(filePath, content, pageUrl)
               }
             } else if (action === 'clipboardImage') {
               // Copy page screenshot to clipboard
@@ -1814,9 +1907,9 @@ export default function App() {
             } else if (action === 'checkDialogs') {
               // Check for intercepted JavaScript dialogs (alert/confirm/prompt)
               const dialogCode = '(function(){' +
-                'if(!window.__oculo_dialogs||!window.__oculo_dialogs.length)return "No dialogs intercepted";' +
-                'var recent=window.__oculo_dialogs.slice(-10);' +
-                'window.__oculo_dialogs=[];' +
+                'if(!window.__oc_dialogs||!window.__oc_dialogs.length)return "No dialogs intercepted";' +
+                'var recent=window.__oc_dialogs.slice(-10);' +
+                'window.__oc_dialogs=[];' +
                 'return "Intercepted dialogs:\\n"+recent.map(function(d){' +
                 'return d.type+" | "+d.message.substring(0,100)+" | response: "+d.response;' +
                 '}).join("\\n");' +
@@ -1933,14 +2026,21 @@ export default function App() {
               }
             } else { result = 'Unknown action: ' + action }
             // Auto-append page state after actions that change the page
-            const noSnapshotActions = ['wait', 'hover', 'getAttribute', 'evaluate', 'copy', 'screenshot', 'screenshotSoM', 'screenshotElement', 'clipboardImage', 'download', 'listDownloads', 'readFile', 'listTabs', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'recordStart', 'recordStop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork']
+            const noSnapshotActions = ['wait', 'hover', 'getAttribute', 'evaluate', 'copy', 'screenshot', 'screenshotSoM', 'screenshotElement', 'clipboardImage', 'download', 'listDownloads', 'readFile', 'writeFile', 'listTabs', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'recordStart', 'recordStop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork']
             if (!noSnapshotActions.includes(action)) {
               // Wait for DOM to stabilize after page-changing actions
               if (action === 'navigate' || action === 'click' || action === 'back' || action === 'forward' || action === 'reload') {
                 try { await (wv as any).executeJavaScript(buildWaitForStableCode(150, 3000)) } catch { /* page might be navigating */ }
               }
-              const snapshot = await getPageSnapshot(wv)
-              if (snapshot) result += '\n---\n' + snapshot
+              // Use ref-tagged a11y snapshot for richer post-action context
+              const refSnapshot = await getRefTaggedSnapshot(wv)
+              if (refSnapshot) {
+                result += '\n---\n' + refSnapshot
+              } else {
+                // Fallback to compact page snapshot if a11y fails
+                const snapshot = await getPageSnapshot(wv)
+                if (snapshot) result += '\n---\n' + snapshot
+              }
             }
             break
           }
@@ -1987,8 +2087,8 @@ export default function App() {
             // Check for JS errors that occurred during fill
             try {
               const jsErrors = await (wv as any).executeJavaScript(
-                '(function(){if(!window.__oculo_logs)return "";' +
-                'var recent=window.__oculo_logs.filter(function(l){return l.type==="error"&&Date.now()-l.ts<5000;});' +
+                '(function(){if(!window.__oc_logs)return "";' +
+                'var recent=window.__oc_logs.filter(function(l){return l.type==="error"&&Date.now()-l.ts<5000;});' +
                 'if(!recent.length)return "";' +
                 'return "\\n⚠ JS errors during fill: "+recent.map(function(l){return l.msg}).join("; ");' +
                 '})()'
@@ -2018,9 +2118,16 @@ export default function App() {
                 } catch { /* a11y fallback failed, continue with normal result */ }
               }
             }
-            // Auto-append page state after fill
-            const snapshot = await getPageSnapshot(wv)
-            if (snapshot) result += '\n---\n' + snapshot
+            // Auto-append ref-tagged snapshot after fill
+            {
+              const refSnapshot = await getRefTaggedSnapshot(wv)
+              if (refSnapshot) {
+                result += '\n---\n' + refSnapshot
+              } else {
+                const snapshot = await getPageSnapshot(wv)
+                if (snapshot) result += '\n---\n' + snapshot
+              }
+            }
             break
           }
 
@@ -2199,19 +2306,19 @@ export default function App() {
             } else if (dtAction === 'console') {
               // Read captured console logs
               const consoleCode = '(function(){' +
-                'if(!window.__oculo_logs)return "No console logs captured. Console capture is now enabled.";' +
-                'var logs=window.__oculo_logs.slice(-' + (args.limit || 20) + ');' +
+                'if(!window.__oc_logs)return "No console logs captured. Console capture is now enabled.";' +
+                'var logs=window.__oc_logs.slice(-' + (args.limit || 20) + ');' +
                 'return logs.map(function(l){return "["+l.type+"] "+l.msg}).join("\\n")||"No logs";' +
                 '})()'
               result = await (wv as any).executeJavaScript(consoleCode)
               // Enable console capture for future calls
               await (wv as any).executeJavaScript(
-                '(function(){if(window.__oculo_logs)return;window.__oculo_logs=[];' +
+                '(function(){if(window.__oc_logs)return;window.__oc_logs=[];' +
                 'var orig={log:console.log,warn:console.warn,error:console.error,info:console.info};' +
                 '["log","warn","error","info"].forEach(function(t){' +
                 'console[t]=function(){' +
-                'window.__oculo_logs.push({type:t,msg:Array.from(arguments).map(function(a){try{return typeof a==="object"?JSON.stringify(a):String(a)}catch(e){return String(a)}}).join(" "),ts:Date.now()});' +
-                'if(window.__oculo_logs.length>200)window.__oculo_logs.shift();' +
+                'window.__oc_logs.push({type:t,msg:Array.from(arguments).map(function(a){try{return typeof a==="object"?JSON.stringify(a):String(a)}catch(e){return String(a)}}).join(" "),ts:Date.now()});' +
+                'if(window.__oc_logs.length>200)window.__oc_logs.shift();' +
                 'orig[t].apply(console,arguments);};});' +
                 '})()'
               )
@@ -2250,8 +2357,8 @@ export default function App() {
             } else if (dtAction === 'errors') {
               const errCode = '(function(){' +
                 'var errors=[];' +
-                'if(window.__oculo_logs){' +
-                'errors=window.__oculo_logs.filter(function(l){return l.type==="error"}).slice(-' + (args.limit || 20) + ')' +
+                'if(window.__oc_logs){' +
+                'errors=window.__oc_logs.filter(function(l){return l.type==="error"}).slice(-' + (args.limit || 20) + ')' +
                 '.map(function(l){return l.msg});' +
                 '}' +
                 'var perfErrors=[];' +
@@ -2324,12 +2431,165 @@ export default function App() {
             break
           }
 
+          case 'webmcp_list': {
+            // Discover WebMCP tools registered by the current page
+            try {
+              // First scan declarative <form toolname="..."> elements
+              await (wv as any).executeJavaScript('window.__oc_webmcp_scan_declarative ? window.__oc_webmcp_scan_declarative() : 0')
+              // Then list all registered tools
+              const tools = await (wv as any).executeJavaScript('window.__oc_webmcp_list ? JSON.stringify(window.__oc_webmcp_list()) : "[]"')
+              const parsed = JSON.parse(tools || '[]')
+              if (!parsed.length) {
+                result = 'No WebMCP tools registered on this page. The page can use navigator.modelContext.registerTool() or <form toolname="..."> to expose tools.'
+              } else {
+                result = `Found ${parsed.length} WebMCP tool(s):\n` +
+                  parsed.map((t: any) =>
+                    `  - ${t.name}: ${t.description || '(no description)'}` +
+                    (t.readOnlyHint ? ' [read-only]' : '') +
+                    (t.inputSchema?.properties ? ` (params: ${Object.keys(t.inputSchema.properties).join(', ')})` : '')
+                  ).join('\n')
+              }
+            } catch (err: any) {
+              result = 'Error: WebMCP not available on this page — ' + (err.message || 'polyfill not loaded')
+            }
+            break
+          }
+
+          case 'webmcp_call': {
+            // Call a WebMCP tool registered by the current page
+            const toolNameToCall = args.name
+            if (!toolNameToCall) {
+              result = 'Error: name is required. Use webmcp_list to see available tools.'
+              break
+            }
+            try {
+              const callResult = await (wv as any).executeJavaScript(
+                `(async function() {
+                  if (!window.__oc_webmcp_call) throw new Error('WebMCP not available');
+                  var result = await window.__oc_webmcp_call(${JSON.stringify(toolNameToCall)}, ${JSON.stringify(args.args || {})});
+                  return JSON.stringify(result);
+                })()`
+              )
+              result = callResult || 'Tool executed (no return value)'
+            } catch (err: any) {
+              result = 'Error calling WebMCP tool "' + toolNameToCall + '": ' + (err.message || 'unknown error')
+            }
+            break
+          }
+
+          case 'tabs': {
+            // Multi-Tab AI Context — list all tabs or describe a specific one
+            const tabIds = api.listWebviews()
+            if (args.describe !== undefined && args.describe !== null) {
+              const targetIdx = Number(args.describe)
+              if (targetIdx >= 0 && targetIdx < tabIds.length) {
+                const targetId = tabIds[targetIdx]
+                const info = api.getWebviewInfo(targetId)
+                if (info) {
+                  try {
+                    const detail = args.detail || 'compact'
+                    if (detail === 'a11y') {
+                      const wcId = api.getWebContentsId(targetId)
+                      if (wcId) {
+                        const snapshot = await api.a11ySnapshot(wcId)
+                        result = `Tab ${targetIdx}: ${info.title}\n${snapshot}`
+                      } else {
+                        result = `Tab ${targetIdx}: ${info.title} | ${info.url} (not ready for a11y)`
+                      }
+                    } else {
+                      result = `Tab ${targetIdx}: ${info.title} | ${info.url}`
+                    }
+                  } catch {
+                    result = `Tab ${targetIdx}: ${info.title} | ${info.url}`
+                  }
+                } else {
+                  result = `Tab ${targetIdx}: not available`
+                }
+              } else {
+                result = `Error: Tab index ${targetIdx} out of range (0-${tabIds.length - 1})`
+              }
+            } else {
+              const lines = tabIds.map((id, i) => {
+                const info = api.getWebviewInfo(id)
+                const active = id === activeTabIdRef.current ? ' (active)' : ''
+                return `Tab ${i}: ${info?.title || 'Loading...'} | ${info?.url || '...'}${active}`
+              })
+              result = lines.join('\n') || 'No tabs open'
+            }
+            break
+          }
+
+          case 'translate': {
+            // Translation via AI — extract text and frame as translation request
+            const targetLang = args.to || 'English'
+            let textToTranslate = args.text || ''
+            if (!textToTranslate && wv) {
+              try {
+                const scope = args.scope || 'body'
+                textToTranslate = await (wv as any).executeJavaScript(
+                  `(function() {
+                    var el = document.querySelector(${JSON.stringify(scope)});
+                    if (!el) return '';
+                    return el.innerText.substring(0, 10000);
+                  })()`
+                )
+              } catch {
+                textToTranslate = ''
+              }
+            }
+            if (!textToTranslate) {
+              result = 'Error: No text to translate. Provide text= or ensure page has content.'
+            } else {
+              result = `[TRANSLATE TO ${targetLang.toUpperCase()}]\n\n${textToTranslate.substring(0, 10000)}`
+            }
+            break
+          }
+
+          case 'lens': {
+            // Visual Search — capture screenshot for AI vision
+            if (!wv) {
+              result = 'Error: No active tab for lens.'
+              break
+            }
+            try {
+              const target = args.target || 'page'
+              let base64: string
+              if (target === 'element' && args.selector) {
+                // Capture specific element
+                base64 = await (wv as any).executeJavaScript(
+                  `(async function() {
+                    var el = document.querySelector(${JSON.stringify(args.selector)});
+                    if (!el) return null;
+                    var rect = el.getBoundingClientRect();
+                    var canvas = document.createElement('canvas');
+                    canvas.width = rect.width;
+                    canvas.height = rect.height;
+                    // Use html2canvas if available, otherwise take full page
+                    return null; // Fallback to page capture
+                  })()`
+                )
+                // Fallback: capture full page
+                const nativeImage = await (wv as any).capturePage()
+                base64 = nativeImage.toDataURL().replace(/^data:image\/png;base64,/, '')
+              } else {
+                const nativeImage = await (wv as any).capturePage()
+                base64 = nativeImage.toDataURL().replace(/^data:image\/png;base64,/, '')
+              }
+              const question = args.question || 'Describe what you see in this screenshot.'
+              result = `[LENS_IMAGE:${base64.substring(0, 100)}...]\nQuestion: ${question}\n(Screenshot captured — ${base64.length} chars base64)`
+            } catch (err: any) {
+              result = 'Error capturing screenshot: ' + (err.message || 'unknown')
+            }
+            break
+          }
+
           default:
             result = 'Unknown tool: ' + toolName
         }
 
-        // Auto-append slim page state after actions so the AI always knows current state
-        if ((toolName === 'act' || toolName === 'fill') && wv && !result.startsWith('Error')) {
+        // Note: ref-tagged a11y snapshots are now appended inside act/fill tool cases.
+        // Only append slim state for other tools that modify page state.
+        if (toolName !== 'act' && toolName !== 'fill' && toolName !== 'page' && toolName !== 'read' && wv && !result.startsWith('Error')) {
           try {
             const state = await (wv as any).executeJavaScript(buildSlimStateCode())
             if (state) result += '\n' + state
@@ -2563,6 +2823,39 @@ export default function App() {
     ))
   }, [])
 
+  // === Pinned Sidebar Apps ===
+  const handlePinToSidebar = useCallback(async (tab: Tab) => {
+    const api = (window as any).oculo
+    if (!api?.pinnedAppAdd) return
+    // Don't pin internal pages
+    if (tab.url.startsWith('oculo://')) return
+    const app = await api.pinnedAppAdd(tab.url, tab.title, tab.favicon)
+    if (app) {
+      setPinnedApps(prev => {
+        // Avoid duplicates
+        if (prev.find(p => p.id === app.id)) return prev
+        return [...prev, app]
+      })
+      addToast?.('Pinned to sidebar', 'success')
+    }
+  }, [addToast])
+
+  const handleUnpinFromSidebar = useCallback(async (id: string) => {
+    const api = (window as any).oculo
+    if (!api?.pinnedAppRemove) return
+    const removed = await api.pinnedAppRemove(id)
+    if (removed) {
+      setPinnedApps(prev => prev.filter(a => a.id !== id))
+    }
+  }, [])
+
+  const handlePinnedAppWidthChange = useCallback(async (id: string, width: number) => {
+    const api = (window as any).oculo
+    if (!api?.pinnedAppUpdate) return
+    await api.pinnedAppUpdate(id, { width })
+    setPinnedApps(prev => prev.map(a => a.id === id ? { ...a, width } : a))
+  }, [])
+
   // Tab context menu
   const handleTabContextMenu = useCallback((e: React.MouseEvent, tabId: string) => {
     const tab = tabs.find(t => t.id === tabId)
@@ -2584,6 +2877,10 @@ export default function App() {
           ]
       ),
       { label: '', action: () => {}, separator: true },
+      ...(!tab.url.startsWith('oculo://') && !pinnedApps.find(p => p.url === tab.url)
+        ? [{ label: 'Pin to Sidebar', action: () => handlePinToSidebar(tab) }]
+        : []
+      ),
       { label: 'Close Tab', action: () => handleCloseTab(tabId), danger: tabs.length > 1, disabled: tabs.length <= 1 },
       { label: 'Close Other Tabs', action: () => {
         tabs.filter(t => t.id !== tabId).forEach(t => handleCloseTab(t.id))
@@ -2591,7 +2888,7 @@ export default function App() {
     ]
 
     contextMenu.showContextMenu(e, items)
-  }, [tabs, tabGroups, handleNewTab, handleCloseTab, handleCreateGroup, handleAddToGroup, handleRemoveFromGroup, contextMenu])
+  }, [tabs, tabGroups, pinnedApps, handleNewTab, handleCloseTab, handleCreateGroup, handleAddToGroup, handleRemoveFromGroup, handlePinToSidebar, contextMenu])
 
   const isSecure = activeTab?.url.startsWith('https://') || false
   const isNewTab = activeTab?.url === NEW_TAB_URL
@@ -2600,85 +2897,209 @@ export default function App() {
   const isGuide = activeTab?.url === GUIDE_URL
   const isInternalPage = isNewTab || isAbout || isContact || isGuide
 
+  // Focus Mode: Esc exits
+  useEffect(() => {
+    if (!focusMode) return
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setFocusMode(false) }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [focusMode])
+
+  // Highlight-to-Ask: Listen for text selection from webview
+  useEffect(() => {
+    const api = (window as any).oculo
+    if (!api) return
+    // Each webview's ipc-message for 'text:selected' is handled in WebViewContainer
+    // but we can listen globally via a custom event from ContentArea
+  }, [])
+
+  // Tab suspension timer (Feature 11)
+  useEffect(() => {
+    tabLastActive.current.set(activeTabId, Date.now())
+    // Un-suspend the tab when switched to
+    setTabSuspended(prev => {
+      if (!prev.has(activeTabId)) return prev
+      const next = new Set(prev)
+      next.delete(activeTabId)
+      return next
+    })
+  }, [activeTabId])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const api = (window as any).oculo
+      api?.getSettings?.().then((settings: any) => {
+        if (!settings?.performanceMode) return
+        const suspendAfter = (settings.tabSuspendAfterMinutes || 15) * 60 * 1000
+        const now = Date.now()
+        const toSuspend = new Set<string>()
+        for (const tab of tabs) {
+          if (tab.id === activeTabId) continue
+          const lastActive = tabLastActive.current.get(tab.id) || 0
+          if (now - lastActive > suspendAfter) {
+            toSuspend.add(tab.id)
+          }
+        }
+        if (toSuspend.size > 0) {
+          setTabSuspended(prev => new Set([...prev, ...toSuspend]))
+        }
+      })
+    }, 60000)
+    return () => clearInterval(interval)
+  }, [tabs, activeTabId])
+
   return (
     <div className="flex h-full" style={devToolsHeight > 0 ? { height: `calc(100% - ${devToolsHeight}px)` } : undefined}>
-      {/* Sidebar */}
-      <Sidebar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        expanded={sidebar.expanded}
-        activePanel={sidebar.activePanel}
-        onMouseEnter={sidebar.onMouseEnter}
-        onMouseLeave={sidebar.onMouseLeave}
-        onTabSwitch={handleTabSwitch}
-        onTabClose={handleCloseTab}
-        onNewTab={() => handleNewTab()}
-        onTogglePanel={sidebar.togglePanel}
-        onToggleChat={() => setChatOpen(prev => !prev)}
-        onOpenSettings={() => setSettingsOpen(true)}
-        chatOpen={chatOpen}
-        tabGroups={tabGroups}
-        onTabContextMenu={handleTabContextMenu}
-        onToggleGroupCollapse={handleToggleGroupCollapse}
-      />
-
-      {/* Sidebar sub-panels */}
-      <BookmarksSidebar isOpen={sidebar.activePanel === 'bookmarks'} onClose={sidebar.closePanel} onNavigate={handleNavigate} />
-      <HistoryPanel isOpen={sidebar.activePanel === 'history'} onClose={sidebar.closePanel} onNavigate={handleNavigate} />
-      <DownloadsPanel isOpen={sidebar.activePanel === 'downloads'} onClose={sidebar.closePanel} />
-
-      {/* Main content */}
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        {/* Title bar drag region — matches sidebar's traffic light spacer */}
-        <div className="h-[38px] flex-shrink-0" style={{ WebkitAppRegion: 'drag' } as any} />
-        <Toolbar
-          url={isInternalPage ? '' : (activeTab?.url || '')}
-          isLoading={activeTab?.isLoading || false}
-          canGoBack={activeTab?.canGoBack || false}
-          canGoForward={activeTab?.canGoForward || false}
-          isBookmarked={isCurrentBookmarked}
-          isSecure={isSecure}
-          onNavigate={handleNavigate}
-          onGoBack={handleGoBack}
-          onGoForward={handleGoForward}
-          onReload={handleReload}
-          onToggleBookmark={handleToggleBookmark}
-          onFindInPage={() => setFindOpen(true)}
-        />
-
-        {/* Bookmarks bar */}
-        <BookmarksBar isOpen={bookmarksBarOpen} onNavigate={handleNavigate} />
-
-        {/* Bookmark popover */}
-        <AddBookmarkPopover
-          isOpen={bookmarkPopoverOpen}
-          url={activeTab?.url || ''}
-          title={activeTab?.title || ''}
-          onSave={handleSaveBookmark}
-          onRemove={handleRemoveBookmark}
-          onClose={() => setBookmarkPopoverOpen(false)}
-        />
-
-        {/* Content area */}
-        <div className="flex-1 relative overflow-hidden min-h-0">
-          <FindBar isOpen={findOpen} onClose={() => setFindOpen(false)} activeTabId={activeTabId} />
-          <ReaderMode isOpen={readerModeOpen} onClose={() => setReaderModeOpen(false)} activeTabId={activeTabId} />
+      {/* Focus Mode: hide all chrome */}
+      {focusMode ? (
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 relative">
           <ContentArea
             tabs={tabs}
             activeTabId={activeTabId}
-            chatOpen={chatOpen}
+            chatOpen={false}
             onWebViewUpdate={handleWebViewUpdate}
-            onCloseChat={() => setChatOpen(false)}
+            onCloseChat={() => {}}
             isNewTab={isNewTab}
             isAbout={isAbout}
             isContact={isContact}
             isGuide={isGuide}
             onNavigate={handleNavigate}
+            suspendedTabs={tabSuspended}
+            pinnedApps={pinnedApps}
+            onPinnedAppRemove={handleUnpinFromSidebar}
+            onPinnedAppWidthChange={handlePinnedAppWidthChange}
           />
+          {/* Focus mode exit button */}
+          <button
+            onClick={() => setFocusMode(false)}
+            className="absolute top-3 right-3 z-50 bg-surface/80 hover:bg-surface text-secondary hover:text-primary text-xs px-3 py-1.5 rounded-full backdrop-blur-sm border border-border/50 transition-all opacity-30 hover:opacity-100"
+            title="Exit Focus Mode (Esc)"
+          >
+            Exit Focus Mode
+          </button>
         </div>
+      ) : (
+        <>
+          {/* Sidebar */}
+          <Sidebar
+            tabs={tabs}
+            activeTabId={activeTabId}
+            expanded={sidebar.expanded}
+            activePanel={sidebar.activePanel}
+            onMouseEnter={sidebar.onMouseEnter}
+            onMouseLeave={sidebar.onMouseLeave}
+            onTabSwitch={handleTabSwitch}
+            onTabClose={handleCloseTab}
+            onNewTab={() => handleNewTab()}
+            onTogglePanel={sidebar.togglePanel}
+            onToggleChat={() => setChatOpen(prev => !prev)}
+            onOpenSettings={() => setSettingsOpen(true)}
+            chatOpen={chatOpen}
+            tabGroups={tabGroups}
+            onTabContextMenu={handleTabContextMenu}
+            onToggleGroupCollapse={handleToggleGroupCollapse}
+          />
 
-        <BottomBar isLoading={activeTab?.isLoading || false} url={activeTab?.url || ''} />
-      </div>
+          {/* Sidebar sub-panels */}
+          <BookmarksSidebar isOpen={sidebar.activePanel === 'bookmarks'} onClose={sidebar.closePanel} onNavigate={handleNavigate} />
+          <HistoryPanel isOpen={sidebar.activePanel === 'history'} onClose={sidebar.closePanel} onNavigate={handleNavigate} />
+          <DownloadsPanel isOpen={sidebar.activePanel === 'downloads'} onClose={sidebar.closePanel} />
+
+          {/* Main content */}
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            {/* Title bar drag region — matches sidebar's traffic light spacer */}
+            <div className="h-[38px] flex-shrink-0" style={{ WebkitAppRegion: 'drag' } as any} />
+            <Toolbar
+              url={isInternalPage ? '' : (activeTab?.url || '')}
+              isLoading={activeTab?.isLoading || false}
+              canGoBack={activeTab?.canGoBack || false}
+              canGoForward={activeTab?.canGoForward || false}
+              isBookmarked={isCurrentBookmarked}
+              isSecure={isSecure}
+              onNavigate={handleNavigate}
+              onGoBack={handleGoBack}
+              onGoForward={handleGoForward}
+              onReload={handleReload}
+              onToggleBookmark={handleToggleBookmark}
+              onFindInPage={() => setFindOpen(true)}
+            />
+
+            {/* Bookmarks bar */}
+            <BookmarksBar isOpen={bookmarksBarOpen} onNavigate={handleNavigate} />
+
+            {/* Bookmark popover */}
+            <AddBookmarkPopover
+              isOpen={bookmarkPopoverOpen}
+              url={activeTab?.url || ''}
+              title={activeTab?.title || ''}
+              onSave={handleSaveBookmark}
+              onRemove={handleRemoveBookmark}
+              onClose={() => setBookmarkPopoverOpen(false)}
+            />
+
+            {/* Content area */}
+            <div className="flex-1 relative overflow-hidden min-h-0">
+              <FindBar isOpen={findOpen} onClose={() => setFindOpen(false)} activeTabId={activeTabId} />
+              <ReaderMode isOpen={readerModeOpen} onClose={() => setReaderModeOpen(false)} activeTabId={activeTabId} />
+              <ContentArea
+                tabs={tabs}
+                activeTabId={activeTabId}
+                chatOpen={chatOpen}
+                onWebViewUpdate={handleWebViewUpdate}
+                onCloseChat={() => setChatOpen(false)}
+                isNewTab={isNewTab}
+                isAbout={isAbout}
+                isContact={isContact}
+                isGuide={isGuide}
+                onNavigate={handleNavigate}
+                onTextSelected={setHighlightPopup}
+                suspendedTabs={tabSuspended}
+                pinnedApps={pinnedApps}
+                onPinnedAppRemove={handleUnpinFromSidebar}
+                onPinnedAppWidthChange={handlePinnedAppWidthChange}
+              />
+
+              {/* Highlight-to-Ask popup */}
+              {highlightPopup && (
+                <div
+                  className="fixed z-50 flex gap-1 bg-surface rounded-lg shadow-xl border border-border/50 p-1"
+                  style={{ left: highlightPopup.x - 80, top: highlightPopup.y - 45 }}
+                >
+                  <button
+                    onClick={() => { setChatOpen(true); setHighlightPopup(null) }}
+                    className="px-2.5 py-1 text-xs rounded-md hover:bg-accent/20 text-primary transition-colors"
+                    title="Ask AI about this text"
+                  >
+                    Ask AI
+                  </button>
+                  <button
+                    onClick={() => { setChatOpen(true); setHighlightPopup(null) }}
+                    className="px-2.5 py-1 text-xs rounded-md hover:bg-accent/20 text-primary transition-colors"
+                    title="Translate selected text"
+                  >
+                    Translate
+                  </button>
+                  <button
+                    onClick={() => { setChatOpen(true); setHighlightPopup(null) }}
+                    className="px-2.5 py-1 text-xs rounded-md hover:bg-accent/20 text-primary transition-colors"
+                    title="Explain selected text"
+                  >
+                    Explain
+                  </button>
+                  <button
+                    onClick={() => setHighlightPopup(null)}
+                    className="px-1.5 py-1 text-xs rounded-md hover:bg-red-500/20 text-secondary transition-colors"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <BottomBar isLoading={activeTab?.isLoading || false} url={activeTab?.url || ''} />
+          </div>
+        </>
+      )}
 
       {/* Command palette */}
       <CommandPalette

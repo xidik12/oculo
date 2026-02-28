@@ -9,6 +9,9 @@ import { ChatMessage, ChatToolCall, ChatStreamEvent } from '../../shared/types'
 import { AIProviderId, AIProviderStatus, AIProviderConfig } from '../../shared/ai-types'
 import { OAuthManager } from './oauth-manager'
 import { LessonStore } from './lessons'
+import type { McpClientManager, ConnectedTool } from '../mcp/client'
+import { SessionMemoryStore } from '../data/session-memory'
+import { CardStore } from '../data/cards'
 
 const PORT_FILE = path.join(os.homedir(), '.oculo-port')
 
@@ -29,15 +32,20 @@ function safeTruncate(str: string, maxLen: number): string {
 const SYSTEM_PROMPT = `You are Oculo, an AI browser assistant. You control the browser through tools to complete tasks.
 
 TOOLS:
-- page: See what's on screen. Default: compact (~30-80 tokens). Use detail="a11y" for accessibility tree — better for complex React forms.
+- page: See what's on screen. Default: compact (~30-80 tokens). Use detail="a11y" for accessibility tree — better for complex React forms. Use detail="markdown" for full article content as markdown — best for reading articles/docs.
 - act: Browser actions — click, type, navigate, scroll, press, screenshot, upload, download, autoLogin, extractPDF, monitorNetwork, monitorWebSocket, checkDialogs, printToPDF
 - fill: Fill form fields by visible label text. Pass {fields: {"Label": "value"}}
 - read: Extract text/lists/tables from the page
 - run: Execute multiple steps in sequence
+- shell: Execute a shell command (ls, npm, git, node, etc.) — non-interactive. Returns stdout+stderr.
 - media: Generate images or videos from text prompts. Returns saved file path.
   - Images: Nano Banana 2 (default), Nano Banana Pro (best quality), Nano Banana (fastest), DALL-E 3, Stability AI
   - Videos: Veo 3.1 (async, 4-8 sec, 720p) — polls until ready, saves MP4
   - All use the Gemini API key from Settings. OpenAI/Stability need their own keys.
+- tabs: List all open tabs or describe a specific one. No args → tab list. describe=N → full page info for that tab.
+- preview: Pre-fetch a URL without navigating — returns title, description, snippet. Great for checking links before clicking.
+- translate: Translate text or page content to any language. Omit text to translate the current page.
+- lens: Visual analysis — capture page/element screenshot for AI vision understanding.
 
 MEDIA WORKFLOW (generate → upload → post):
 - Generate image: media({type:"image", prompt:"..."}) → returns file path
@@ -74,6 +82,14 @@ ASK THE USER when you encounter:
 - Irreversible actions (delete, submit payment, publish publicly)
 - Anything ambiguous where you're unsure what they want
 Do NOT blindly click Yes/Yep/OK/Confirm without understanding the question.
+
+LOCAL FILES:
+When the URL starts with file://, you can edit that file directly:
+- Read: act({action:"readFile", value:"/path/to/file.html"})
+- Write: act({action:"writeFile", value:"/path/to/file.html", content:"<html>...</html>"})
+- Or use shell: shell({command:"sed -i '' 's/old/new/g' '/path/to/file.html'"})
+- Reload after edit: act({action:"reload"})
+- Extract the file path from the file:// URL (e.g. file:///Users/me/page.html → /Users/me/page.html)
 
 TIPS:
 - Clickable elements are numbered (#1, #2...). Click by number: act({action:"click", text:"#5"})
@@ -112,13 +128,13 @@ const ANTHROPIC_TOOLS = [
       type: 'object' as const,
       properties: {
         scope: { type: 'string', description: 'CSS selector to scope to a section' },
-        detail: { type: 'string', enum: ['compact', 'a11y'], description: 'compact (default) or a11y (accessibility tree ~200-500 tokens)' }
+        detail: { type: 'string', enum: ['compact', 'a11y', 'markdown'], description: 'compact (default), a11y (accessibility tree ~200-500 tokens), or markdown (article extraction via Readability)' }
       }
     }
   },
   {
     name: 'act',
-    description: 'Perform browser action. type=insert text (rich editors). clickAtPoint=cross-origin iframes.',
+    description: 'Perform browser action. Use ref from a11y snapshot for precise targeting. type=insert text (rich editors). clickAtPoint=cross-origin iframes.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -132,7 +148,7 @@ const ANTHROPIC_TOOLS = [
             'wait', 'waitForElement', 'waitForText', 'waitForNetworkIdle', 'dragAndDrop',
             'evaluate', 'getAttribute', 'upload', 'login', 'autoLogin',
             'screenshot', 'screenshotSoM', 'screenshotElement', 'switchTab', 'closeTab', 'listTabs',
-            'download', 'listDownloads', 'readFile', 'clipboardImage',
+            'download', 'listDownloads', 'readFile', 'writeFile', 'clipboardImage',
             'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate',
             'recordStart', 'recordStop',
             'extractPDF', 'monitorWebSocket',
@@ -140,6 +156,7 @@ const ANTHROPIC_TOOLS = [
             'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork'
           ]
         },
+        ref: { type: 'string', description: 'Element ref from a11y snapshot (e.g. "e5"). Use page({detail:"a11y"}) first.' },
         text: { type: 'string', description: 'Element text or text to type/evaluate' },
         selector: { type: 'string', description: 'CSS selector' },
         url: { type: 'string' },
@@ -148,7 +165,8 @@ const ANTHROPIC_TOOLS = [
         amount: { type: 'number' },
         key: { type: 'string' },
         modifiers: { type: 'array', items: { type: 'string' } },
-        value: { type: 'string', description: 'Value for select, file path(s) for upload, URL for download, file path for readFile' },
+        value: { type: 'string', description: 'Value for select, file path(s) for upload, URL for download, file path for readFile/writeFile' },
+        content: { type: 'string', description: 'File content for writeFile action' },
         nth: { type: 'number' }
       },
       required: ['action']
@@ -225,6 +243,18 @@ const ANTHROPIC_TOOLS = [
     }
   },
   {
+    name: 'shell',
+    description: 'Execute a shell command (ls, npm, git, node, python, etc.) and return stdout+stderr. Non-interactive only.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        command: { type: 'string', description: 'The shell command to execute' },
+        timeout: { type: 'number', description: 'Timeout in ms (default: 30000)' }
+      },
+      required: ['command']
+    }
+  },
+  {
     name: 'learn',
     description: 'Save a lesson for future sessions. Call when the user corrects you or you discover how a website works.',
     input_schema: {
@@ -233,6 +263,53 @@ const ANTHROPIC_TOOLS = [
         lesson: { type: 'string', description: 'What you learned (be specific — include the website name and what to do/not do)' }
       },
       required: ['lesson']
+    }
+  },
+  {
+    name: 'tabs',
+    description: 'List all open tabs or describe a specific tab. No args → list all. describe=N → full page info for tab N.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        describe: { type: 'number', description: 'Tab index to describe (0-indexed)' },
+        detail: { type: 'string', enum: ['compact', 'a11y'], description: 'Detail level' }
+      }
+    }
+  },
+  {
+    name: 'preview',
+    description: 'Pre-fetch and summarize a URL without navigating. Returns title, description, snippet.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        url: { type: 'string', description: 'URL to preview' }
+      },
+      required: ['url']
+    }
+  },
+  {
+    name: 'translate',
+    description: 'Translate text or page content to a target language.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        to: { type: 'string', description: 'Target language' },
+        text: { type: 'string', description: 'Text to translate (omit to translate page)' },
+        scope: { type: 'string', description: 'CSS selector scope' }
+      },
+      required: ['to']
+    }
+  },
+  {
+    name: 'lens',
+    description: 'Visual analysis — capture page/element screenshot for AI vision.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        target: { type: 'string', enum: ['page', 'element'], description: 'What to capture' },
+        selector: { type: 'string', description: 'CSS selector for element' },
+        question: { type: 'string', description: 'What to analyze' }
+      }
     }
   }
 ]
@@ -256,6 +333,8 @@ export class AgentController {
   private shellEnv: Record<string, string> | null = null
   private oauth = new OAuthManager()
   private lessons = new LessonStore()
+  private sessionMemory = new SessionMemoryStore()
+  private cardStore = new CardStore()
   private messageCount = 0
   private activeProvider: AIProviderId = 'claude'
   private activeModel: string = 'claude-sonnet-4-6'
@@ -263,6 +342,7 @@ export class AgentController {
   private currentAbort: AbortController | null = null
   private conversationHistory: Array<{ role: string; content: any }> = []
   private persistFn: ((configs: Record<string, any>) => void) | null = null
+  private mcpClientManager: McpClientManager | null = null
 
   constructor(mainWindow: BrowserWindow) {
     this.mainWindow = mainWindow
@@ -291,10 +371,41 @@ export class AgentController {
     }
   }
 
-  /** Get the dynamic system prompt with learned lessons appended */
-  private getSystemPrompt(): string {
-    return SYSTEM_PROMPT + this.lessons.toPromptSection()
+  /** Wire up MCP client manager for connected app tools */
+  setMcpClientManager(manager: McpClientManager): void {
+    this.mcpClientManager = manager
   }
+
+  /** Get all tools: built-in ANTHROPIC_TOOLS + connected app tools in Anthropic format */
+  private getAllTools(): Array<{ name: string; description: string; input_schema: Record<string, unknown> }> {
+    if (!this.mcpClientManager) return ANTHROPIC_TOOLS
+
+    const connectedTools = this.mcpClientManager.listAllTools()
+    if (connectedTools.length === 0) return ANTHROPIC_TOOLS
+
+    // Convert connected tools to Anthropic tool format
+    const externalTools = connectedTools.map((t: ConnectedTool) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: {
+        type: 'object' as const,
+        ...(t.inputSchema || {})
+      }
+    }))
+
+    return [...ANTHROPIC_TOOLS, ...externalTools]
+  }
+
+  /** Get the dynamic system prompt with learned lessons, session memory, and active cards appended */
+  private getSystemPrompt(): string {
+    return SYSTEM_PROMPT + this.lessons.toPromptSection() + this.sessionMemory.toPromptSection() + this.cardStore.toPromptSection()
+  }
+
+  /** Get session memory store for IPC handlers */
+  getSessionMemory(): SessionMemoryStore { return this.sessionMemory }
+
+  /** Get card store for IPC handlers */
+  getCardStore(): CardStore { return this.cardStore }
 
   // === Shell env for CLI mode ===
 
@@ -401,6 +512,11 @@ export class AgentController {
       const lesson = String(args.lesson || '')
       if (!lesson) return 'Error: lesson text is required'
       return this.lessons.add(lesson)
+    }
+
+    // Route connected app tools (serverId__toolName) through McpClientManager
+    if (name.includes('__') && this.mcpClientManager) {
+      return this.mcpClientManager.callTool(name, args)
     }
 
     const conn = this.getMcpConnection()
@@ -704,7 +820,7 @@ export class AgentController {
           this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
 
           // Cap tool result stored in history — info tools need more, action tools less
-          const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools'
+          const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools' || tool.name === 'shell'
           const maxLen = infoTool ? 1200 : 500
           const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
           toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: cappedResult })
@@ -754,6 +870,7 @@ export class AgentController {
     if (name === 'read') return `→ "${input.what || ''}"`
     if (name === 'run') return `→ ${(input.steps || []).length} steps`
     if (name === 'devtools') return `→ ${input.action || ''}${input.selector ? ` "${input.selector}"` : ''}${input.expression ? ` "${input.expression.substring(0, 40)}"` : ''}`
+    if (name === 'shell') return `→ $ ${(input.command || '').substring(0, 60)}`
     return ''
   }
 
@@ -819,15 +936,7 @@ export class AgentController {
     this.currentAbort = new AbortController()
     const MAX_TOOL_ROUNDS = 25
 
-    // Convert our 5 MCP tools to OpenAI function calling format
-    const openaiTools = ANTHROPIC_TOOLS.map(t => ({
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.input_schema
-      }
-    }))
+    const openaiTools = this.getOpenAITools()
 
     try {
       let fullAssistantText = ''
@@ -836,36 +945,7 @@ export class AgentController {
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.pruneHistory()
-        // Build messages in OpenAI format
-        const messages: any[] = [
-          { role: 'system', content: this.getSystemPrompt() }
-        ]
-
-        for (const m of this.conversationHistory) {
-          if (m.role === 'user' && Array.isArray(m.content)) {
-            // Tool results from previous round
-            for (const tr of m.content) {
-              if (tr.type === 'tool_result') {
-                messages.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: tr.content })
-              }
-            }
-          } else if (m.role === 'assistant' && Array.isArray(m.content)) {
-            // Assistant message with tool calls (Anthropic format → OpenAI format)
-            let textParts = ''
-            const toolCalls: any[] = []
-            for (const block of m.content) {
-              if (block.type === 'text') textParts += block.text
-              else if (block.type === 'tool_use') {
-                toolCalls.push({ id: block.id, type: 'function', function: { name: block.name, arguments: JSON.stringify(block.input || {}) } })
-              }
-            }
-            const msg: any = { role: 'assistant', content: textParts || null }
-            if (toolCalls.length > 0) msg.tool_calls = toolCalls
-            messages.push(msg)
-          } else {
-            messages.push({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) })
-          }
-        }
+        const messages = this.buildOpenAIMessages()
 
         // Call OpenAI streaming API
         const response = await this.callOpenAIRaw(token, authMode, messages, openaiTools)
@@ -910,7 +990,7 @@ export class AgentController {
           this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
 
           // Cap tool result — info tools need more room
-          const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools'
+          const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools' || tool.name === 'shell'
           const maxLen = infoTool ? 1200 : 500
           const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
           toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: cappedResult })
@@ -1060,7 +1140,7 @@ export class AgentController {
       system: [
         { type: 'text', text: this.getSystemPrompt(), cache_control: { type: 'ephemeral' } }
       ],
-      tools: ANTHROPIC_TOOLS,
+      tools: this.getAllTools(),
       messages
     })
 
@@ -1186,71 +1266,131 @@ export class AgentController {
     })
   }
 
-  // === Ollama (local, OpenAI-compatible) ===
+  // === Ollama (local, OpenAI-compatible with tool calling) ===
 
-  private async handleOllamaMessage(userText: string): Promise<void> {
+  /** Convert ANTHROPIC_TOOLS (input_schema) to OpenAI tool format (function.parameters) */
+  private getOpenAITools(): Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
+    return this.getAllTools().map(t => ({
+      type: 'function' as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.input_schema
+      }
+    }))
+  }
+
+  /** Build OpenAI-format messages from conversation history (shared by OpenAI + Ollama) */
+  private buildOpenAIMessages(): any[] {
+    const messages: any[] = [
+      { role: 'system', content: this.getSystemPrompt() }
+    ]
+
+    for (const m of this.conversationHistory) {
+      if (m.role === 'user' && Array.isArray(m.content)) {
+        // Tool results from previous round (Anthropic format → OpenAI format)
+        for (const tr of m.content) {
+          if (tr.type === 'tool_result') {
+            messages.push({ role: 'tool', tool_call_id: tr.tool_use_id, content: tr.content })
+          }
+        }
+      } else if (m.role === 'assistant' && Array.isArray(m.content)) {
+        // Assistant message with tool calls (Anthropic format → OpenAI format)
+        let textParts = ''
+        const toolCalls: any[] = []
+        for (const block of m.content) {
+          if (block.type === 'text') textParts += block.text
+          else if (block.type === 'tool_use') {
+            toolCalls.push({ id: block.id, type: 'function', function: { name: block.name, arguments: JSON.stringify(block.input || {}) } })
+          }
+        }
+        const msg: any = { role: 'assistant', content: textParts || null }
+        if (toolCalls.length > 0) msg.tool_calls = toolCalls
+        messages.push(msg)
+      } else {
+        messages.push({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) })
+      }
+    }
+
+    return messages
+  }
+
+  private async handleOllamaMessage(_userText: string): Promise<void> {
     this.currentAbort = new AbortController()
+    const MAX_TOOL_ROUNDS = 10
+
+    const openaiTools = this.getOpenAITools()
 
     try {
-      const messages = [
-        { role: 'system', content: this.getSystemPrompt() },
-        ...this.conversationHistory.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }))
-      ]
-      const body = JSON.stringify({ model: this.activeModel, messages, stream: true })
+      let fullAssistantText = ''
+      let lastToolSignature = ''
+      let consecutiveDupes = 0
 
-      const resultText = await new Promise<string>((resolve, reject) => {
-        const req = http.request({
-          hostname: '127.0.0.1', port: 11434, path: '/v1/chat/completions', method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-        }, (res) => {
-          if (res.statusCode && res.statusCode >= 400) {
-            let errBody = ''
-            res.on('data', (c) => { errBody += c })
-            res.on('end', () => {
-              if (res.statusCode === 404 || errBody.includes('not found')) {
-                reject(new Error(`Model "${this.activeModel}" not found. Run: ollama pull ${this.activeModel}`))
-              } else {
-                reject(new Error(`Ollama error ${res.statusCode}. Is Ollama running? (ollama serve)`))
-              }
-            })
-            return
-          }
-          let fullText = '', buf = ''
-          res.on('data', (chunk: Buffer) => {
-            buf += chunk.toString()
-            const lines = buf.split('\n'); buf = lines.pop() || ''
-            for (const line of lines) {
-              if (!line.startsWith('data: ')) continue
-              const d = line.slice(6).trim()
-              if (d === '[DONE]') continue
-              try {
-                const p = JSON.parse(d)
-                const delta = p.choices?.[0]?.delta?.content
-                if (delta) { fullText += delta; this.emit({ type: 'text_delta', text: delta }) }
-              } catch { /* skip */ }
-            }
-          })
-          res.on('end', () => resolve(fullText))
-          res.on('error', reject)
-        })
-        req.on('error', (err) => {
-          if ((err as any).code === 'ECONNREFUSED') {
-            reject(new Error('Cannot connect to Ollama. Make sure Ollama is running:\n  1. Install: https://ollama.com\n  2. Run: ollama serve\n  3. Pull a model: ollama pull llama3.1:8b'))
-          } else {
-            reject(err)
-          }
-        })
-        if (this.currentAbort) {
-          this.currentAbort.signal.addEventListener('abort', () => {
-            req.destroy()
-            reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
-          })
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        this.pruneHistory()
+        const messages = this.buildOpenAIMessages()
+
+        console.log(`[Oculo/Ollama] round=${round + 1} history=${this.conversationHistory.length}msgs model=${this.activeModel}`)
+
+        const response = await this.callOllamaRaw(messages, openaiTools)
+
+        let roundText = response.text || ''
+        fullAssistantText += roundText
+
+        // Store in conversation history in Anthropic-compatible format (our internal format)
+        const contentBlocks: any[] = []
+        if (roundText) contentBlocks.push({ type: 'text', text: roundText })
+        for (const tc of response.toolCalls) {
+          contentBlocks.push({ type: 'tool_use', id: tc.id, name: tc.name, input: tc.args })
         }
-        req.write(body); req.end()
-      })
+        this.conversationHistory.push({ role: 'assistant', content: contentBlocks })
 
-      this.conversationHistory.push({ role: 'assistant', content: resultText })
-      this.emit({ type: 'done', message: { id: crypto.randomUUID(), role: 'assistant', content: resultText, timestamp: Date.now() } })
+        // No tool calls — model is done, break out
+        if (response.toolCalls.length === 0) {
+          console.log(`[Oculo/Ollama] No tools, finishing. fullText=${fullAssistantText.length}chars`)
+          break
+        }
+
+        // Detect duplicate tool calls (stuck loop)
+        const currentSig = response.toolCalls.map((t: any) => `${t.name}:${JSON.stringify(t.args)}`).join('|')
+        if (currentSig === lastToolSignature) {
+          consecutiveDupes++
+          if (consecutiveDupes >= 1) {
+            console.log(`[Oculo/Ollama] Detected stuck loop — same tools called ${consecutiveDupes + 1} times in a row. Breaking.`)
+            const stuckMsg = "\n\nI notice I'm repeating the same actions. Let me stop here — what would you like me to do next?"
+            fullAssistantText += stuckMsg
+            this.emit({ type: 'text_delta', text: stuckMsg })
+            break
+          }
+        } else {
+          consecutiveDupes = 0
+        }
+        lastToolSignature = currentSig
+
+        // Execute tool calls
+        const toolResults: Array<{ type: 'tool_result'; tool_use_id: string; content: string }> = []
+
+        for (const tool of response.toolCalls) {
+          this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.args || {}, status: 'running' } })
+
+          const result = await this.callMcpTool(tool.name, tool.args || {})
+
+          this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
+
+          // Cap tool result — info tools need more room
+          const infoTool = tool.name === 'page' || tool.name === 'read' || tool.name === 'devtools' || tool.name === 'shell'
+          const maxLen = infoTool ? 1200 : 500
+          const cappedResult = result.length > maxLen ? safeTruncate(result, maxLen - 20) + '...[truncated]' : result
+          toolResults.push({ type: 'tool_result', tool_use_id: tool.id, content: cappedResult })
+        }
+
+        this.conversationHistory.push({ role: 'user', content: toolResults })
+      }
+
+      this.emit({
+        type: 'done',
+        message: { id: crypto.randomUUID(), role: 'assistant', content: fullAssistantText, timestamp: Date.now() }
+      })
     } catch (err: any) {
       if (err.name !== 'AbortError') {
         this.emit({ type: 'error', error: err.message || 'Ollama request failed' })
@@ -1258,6 +1398,150 @@ export class AgentController {
     } finally {
       this.currentAbort = null
     }
+  }
+
+  /**
+   * Call Ollama's OpenAI-compatible Chat Completions API with streaming and tool support.
+   * Uses HTTP (not HTTPS) since Ollama runs locally on port 11434.
+   * If tools are provided, includes them in the request. The model may or may not use them
+   * depending on whether it supports tool calling — this is backward-compatible.
+   */
+  private callOllamaRaw(
+    messages: any[],
+    tools: any[]
+  ): Promise<{ text: string; toolCalls: Array<{ id: string; name: string; args: any }> }> {
+    const payload: any = { model: this.activeModel, messages, stream: true }
+    // Only include tools if we have them — models that don't support tools will ignore them
+    if (tools.length > 0) payload.tools = tools
+    const body = JSON.stringify(payload)
+
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: 11434,
+        path: '/v1/chat/completions',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': String(Buffer.byteLength(body))
+        }
+      }, (res) => {
+        if (res.statusCode && res.statusCode >= 400) {
+          let errBody = ''
+          res.on('data', (c) => { errBody += c })
+          res.on('end', () => {
+            if (res.statusCode === 404 || errBody.includes('not found')) {
+              reject(new Error(`Model "${this.activeModel}" not found. Run: ollama pull ${this.activeModel}`))
+            } else {
+              reject(new Error(`Ollama error ${res.statusCode}. Is Ollama running? (ollama serve)`))
+            }
+          })
+          return
+        }
+
+        let fullText = ''
+        const toolCallsMap = new Map<number, { id: string; name: string; args: string }>()
+        let buf = ''
+
+        res.on('data', (chunk: Buffer) => {
+          buf += chunk.toString()
+          const lines = buf.split('\n')
+          buf = lines.pop() || ''
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6).trim()
+            if (!data || data === '[DONE]') continue
+
+            try {
+              const ev = JSON.parse(data)
+              const delta = ev.choices?.[0]?.delta
+
+              // Text content
+              if (delta?.content) {
+                fullText += delta.content
+                this.emit({ type: 'text_delta', text: delta.content })
+              }
+
+              // Tool calls (streamed incrementally — same format as OpenAI)
+              if (delta?.tool_calls) {
+                for (const tc of delta.tool_calls) {
+                  const idx = tc.index ?? 0
+                  if (!toolCallsMap.has(idx)) {
+                    toolCallsMap.set(idx, { id: tc.id || `ollama-tc-${idx}-${Date.now()}`, name: tc.function?.name || '', args: '' })
+                  }
+                  const existing = toolCallsMap.get(idx)!
+                  if (tc.id) existing.id = tc.id
+                  if (tc.function?.name) existing.name = tc.function.name
+                  if (tc.function?.arguments) existing.args += tc.function.arguments
+                }
+              }
+            } catch { /* skip malformed SSE lines */ }
+          }
+        })
+
+        res.on('end', () => {
+          const toolCalls = Array.from(toolCallsMap.values()).map(tc => {
+            let args: any = {}
+            try { args = JSON.parse(tc.args || '{}') } catch { /* ignore */ }
+            return { id: tc.id, name: tc.name, args }
+          })
+          resolve({ text: fullText, toolCalls })
+        })
+        res.on('error', reject)
+      })
+
+      req.on('error', (err) => {
+        if ((err as any).code === 'ECONNREFUSED') {
+          reject(new Error('Cannot connect to Ollama. Make sure Ollama is running:\n  1. Install: https://ollama.com\n  2. Run: ollama serve\n  3. Pull a model: ollama pull llama3.1:8b'))
+        } else {
+          reject(err)
+        }
+      })
+
+      if (this.currentAbort) {
+        this.currentAbort.signal.addEventListener('abort', () => {
+          req.destroy()
+          reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }))
+        })
+      }
+
+      req.write(body)
+      req.end()
+    })
+  }
+
+  /**
+   * Detect available Ollama models by querying the local Ollama API.
+   * Returns an array of model names (e.g. ["llama3.1:8b", "qwen2.5:7b", "mistral:latest"]).
+   * Returns an empty array if Ollama is not running or unreachable.
+   */
+  async detectOllamaModels(): Promise<string[]> {
+    return new Promise((resolve) => {
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: 11434,
+        path: '/api/tags',
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
+      }, (res) => {
+        let data = ''
+        res.on('data', (c) => { data += c })
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data)
+            const models: string[] = (parsed.models || []).map((m: any) => m.name || m.model || '').filter(Boolean)
+            resolve(models)
+          } catch {
+            resolve([])
+          }
+        })
+        res.on('error', () => resolve([]))
+      })
+      req.on('error', () => resolve([]))
+      req.setTimeout(5000, () => { req.destroy(); resolve([]) })
+      req.end()
+    })
   }
 
   // === Direct API mode (non-Claude providers) ===

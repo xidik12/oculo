@@ -8,6 +8,7 @@ export interface Tab {
   isActive?: boolean
   canGoBack: boolean
   canGoForward: boolean
+  containerId?: string
 }
 
 // Page description (what the 'page' MCP tool returns)
@@ -206,8 +207,16 @@ export interface AppSettings {
   auditRetentionDays: number
   redactionEnabled: boolean
   customRedactionPatterns: string[]
+  /** Ad/tracker/malware blocking (Brave Shields-style) */
+  adBlockEnabled: boolean
   /** Persisted AI provider configs (API keys, enabled state) */
   aiProviders?: Record<string, { apiKey?: string; enabled?: boolean; modelId?: string }>
+  /** Connected MCP client servers (external apps like Gmail, Calendar, etc.) */
+  mcpClients?: McpClientConfig[]
+  /** Performance: auto-suspend tabs after N minutes of inactivity */
+  performanceMode?: boolean
+  tabSuspendAfterMinutes?: number
+  networkThrottling?: 'none' | 'slow-3g' | 'fast-3g' | 'regular-4g'
 }
 
 // IPC message types
@@ -242,6 +251,27 @@ export interface TokenUsage {
   outputTokens: number
 }
 
+// WebMCP tool descriptor (from page's navigator.modelContext)
+export interface WebMCPToolDescriptor {
+  name: string
+  description: string
+  inputSchema?: Record<string, unknown>
+  readOnlyHint?: boolean
+}
+
+// MCP Client configuration (for connected external MCP servers)
+export interface McpClientConfig {
+  id: string
+  name: string
+  transport: 'stdio' | 'sse'
+  command?: string           // for stdio transport
+  args?: string[]            // for stdio transport
+  url?: string               // for SSE transport
+  env?: Record<string, string>
+  enabled: boolean
+  icon?: string              // emoji or icon name
+}
+
 export type ChatStreamEvent =
   | { type: 'text_delta'; text: string }
   | { type: 'tool_use_start'; toolCall: ChatToolCall }
@@ -249,3 +279,64 @@ export type ChatStreamEvent =
   | { type: 'usage'; usage: TokenUsage }
   | { type: 'done'; message: ChatMessage }
   | { type: 'error'; error: string }
+
+// === Feature 2: Session Memory ===
+export interface SessionMemoryEntry {
+  id: string
+  summary: string
+  urls: string[]
+  timestamp: number
+  tags?: string[]
+}
+
+// === Feature 6: Containers ===
+export interface Container {
+  id: string
+  name: string
+  color: string
+  icon: string
+  partition: string
+}
+
+// === Feature 7: Cards / Custom AI Skills ===
+export interface Card {
+  id: string
+  name: string
+  icon: string
+  systemInstruction: string
+  triggerDomains?: string[]
+  isActive: boolean
+  createdAt: number
+}
+
+// === Feature 8: Workspaces ===
+export interface Workspace {
+  id: string
+  name: string
+  color: string
+  tabIds: string[]
+  tabUrls: string[]
+  aiHistory: Array<{ role: string; content: any }>
+  createdAt: number
+  lastActiveAt: number
+}
+
+// === Feature 10: Macros ===
+export interface Macro {
+  id: string
+  name: string
+  shortcut?: string
+  steps: PipelineStep[]
+  description?: string
+  createdAt: number
+}
+
+// === Feature 15: Pinned Sidebar Apps ===
+export interface PinnedApp {
+  id: string
+  url: string
+  title: string
+  favicon?: string
+  width: number
+  position: number
+}

@@ -1,5 +1,6 @@
-import { BrowserWindow, ipcMain, shell, app, nativeImage, clipboard, webContents } from 'electron'
+import { BrowserWindow, ipcMain, shell, app, nativeImage, clipboard, webContents, dialog } from 'electron'
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { IPC } from '../shared/ipc-channels'
 import { SecurityManager } from './security/vault'
@@ -11,6 +12,14 @@ import { HistoryStore } from './data/history'
 import { DownloadManager } from './data/downloads'
 import { ZoomStore } from './data/zoom'
 import { RunCache } from './data/run-cache'
+import { PtyManager } from './terminal/pty-manager'
+import { McpClientManager } from './mcp/client'
+import { SessionMemoryStore } from './data/session-memory'
+import { ContainerStore } from './data/containers'
+import { CardStore } from './data/cards'
+import { WorkspaceStore } from './data/workspaces'
+import { MacroStore } from './data/macros'
+import { PinnedAppStore } from './data/pinned-apps'
 
 export function setupIPC(
   mainWindow: BrowserWindow,
@@ -22,7 +31,15 @@ export function setupIPC(
   historyStore?: HistoryStore,
   downloadManager?: DownloadManager,
   zoomStore?: ZoomStore,
-  runCache?: RunCache
+  runCache?: RunCache,
+  ptyManager?: PtyManager,
+  mcpClientManager?: McpClientManager,
+  sessionMemoryStore?: SessionMemoryStore,
+  containerStore?: ContainerStore,
+  cardStore?: CardStore,
+  workspaceStore?: WorkspaceStore,
+  macroStore?: MacroStore,
+  pinnedAppStore?: PinnedAppStore
 ): void {
   // Tab management - forwarded to renderer
   ipcMain.handle(IPC.TAB_CREATE, async (_, url?: string) => {
@@ -249,6 +266,28 @@ export function setupIPC(
     }
   })
 
+  // === Open file with system default app ===
+  ipcMain.handle(IPC.OPEN_FILE, async (_, filePath: string) => {
+    if (!filePath || typeof filePath !== 'string') return 'Invalid file path'
+    const resolved = path.resolve(filePath.replace(/^~\//, os.homedir() + '/'))
+    if (!fs.existsSync(resolved)) return 'File not found'
+    return shell.openPath(resolved)
+  })
+
+  // === File dialog (pick files) ===
+  ipcMain.handle(IPC.FILE_DIALOG_OPEN, async () => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'] },
+        { name: 'Documents', extensions: ['pdf', 'txt', 'md', 'json', 'csv', 'xml', 'html'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    })
+    if (result.canceled) return []
+    return result.filePaths
+  })
+
   // === Screenshot Save (Phase 1) ===
   ipcMain.handle(IPC.SCREENSHOT_SAVE, async (_, base64Png: string) => {
     const dir = path.join(app.getPath('pictures'), 'Oculo')
@@ -319,16 +358,24 @@ export function setupIPC(
   })
 
   // === Sandboxed File Read (Phase 4) ===
-  ipcMain.handle(IPC.FILE_READ_SAFE, async (_, filePath: string) => {
+  // Allows reading from temp/downloads/desktop, plus the directory tree of any file:// page URL
+  ipcMain.handle(IPC.FILE_READ_SAFE, async (_, filePath: string, pageUrl?: string) => {
     const allowedDirs = [
       app.getPath('temp'),
       app.getPath('downloads'),
       app.getPath('desktop'),
     ]
+    // If the current page is a file:// URL, allow reading in its directory tree
+    if (pageUrl && pageUrl.startsWith('file://')) {
+      try {
+        const pageFilePath = decodeURIComponent(new URL(pageUrl).pathname)
+        allowedDirs.push(path.dirname(pageFilePath))
+      } catch { /* invalid URL, skip */ }
+    }
     const resolved = path.resolve(filePath)
     const allowed = allowedDirs.some(dir => resolved.startsWith(dir))
     if (!allowed) {
-      return `Error: Cannot read file outside allowed directories (temp, downloads, desktop): ${filePath}`
+      return `Error: Cannot read file outside allowed directories (temp, downloads, desktop, or current file:// dir): ${filePath}`
     }
     if (!fs.existsSync(resolved)) {
       return `Error: File not found: ${filePath}`
@@ -341,6 +388,33 @@ export function setupIPC(
       return fs.readFileSync(resolved, 'utf-8')
     } catch (err) {
       return `Error: Failed to read file — ${(err as Error).message}`
+    }
+  })
+
+  // === Sandboxed File Write (local file editing) ===
+  // Allows writing to the directory tree of a file:// page URL, plus temp/downloads/desktop
+  ipcMain.handle(IPC.FILE_WRITE_SAFE, async (_, filePath: string, content: string, pageUrl?: string) => {
+    const allowedDirs = [
+      app.getPath('temp'),
+      app.getPath('downloads'),
+      app.getPath('desktop'),
+    ]
+    if (pageUrl && pageUrl.startsWith('file://')) {
+      try {
+        const pageFilePath = decodeURIComponent(new URL(pageUrl).pathname)
+        allowedDirs.push(path.dirname(pageFilePath))
+      } catch { /* invalid URL, skip */ }
+    }
+    const resolved = path.resolve(filePath)
+    const allowed = allowedDirs.some(dir => resolved.startsWith(dir))
+    if (!allowed) {
+      return `Error: Cannot write file outside allowed directories (temp, downloads, desktop, or current file:// dir): ${filePath}`
+    }
+    try {
+      fs.writeFileSync(resolved, content, 'utf-8')
+      return `Written ${content.length} bytes to ${filePath}`
+    } catch (err) {
+      return `Error: Failed to write file — ${(err as Error).message}`
     }
   })
 
@@ -358,6 +432,9 @@ export function setupIPC(
         // Process nodes into a compact format
         const lines: string[] = []
         let refIndex = 0
+
+        // Ref map: ref ID → {name, role, backendDOMNodeId} for element resolution
+        const refMap: Record<string, { name: string; role: string; backendDOMNodeId?: number }> = {}
 
         // Map nodeId -> node for parent lookup
         const nodeMap = new Map<string, any>()
@@ -395,7 +472,14 @@ export function setupIPC(
           let line = ''
           if (interactive) {
             refIndex++
-            line = `  [${refIndex}] ${role}`
+            const refId = `e${refIndex}`
+            line = `  [ref=${refId}] ${role}`
+            // Store in refMap for element resolution
+            refMap[refId] = {
+              name: name.substring(0, 80),
+              role,
+              backendDOMNodeId: node.backendDOMNodeId
+            }
           } else {
             line = `  ${role}`
           }
@@ -426,7 +510,9 @@ export function setupIPC(
         const title = wc.getTitle()
         const header = `URL: ${url}\nTitle: ${title}\n\nAccessibility tree (${refIndex} interactive elements):`
 
-        return header + '\n' + lines.join('\n')
+        // Append refMap as structured block for renderer to parse and strip
+        const snapshot = header + '\n' + lines.join('\n')
+        return snapshot + '\n---REFMAP---\n' + JSON.stringify(refMap)
       } finally {
         try { wc.debugger.detach() } catch { /* already detached */ }
       }
@@ -578,4 +664,188 @@ export function setupIPC(
         relevant.map((l: any) => '  - ' + l.text).join('\n')
     } catch { return '' }
   })
+
+  // === MCP Client (Connected Apps) ===
+  ipcMain.handle(IPC.MCP_CLIENT_LIST, async () => {
+    const settings = security.getSettings() as any
+    return settings?.mcpClients || []
+  })
+
+  ipcMain.handle(IPC.MCP_CLIENT_ADD, async (_, config: any) => {
+    const settings = security.getSettings() as any
+    const clients = settings?.mcpClients || []
+    clients.push(config)
+    security.saveSettings({ mcpClients: clients } as any)
+    if (config.enabled && mcpClientManager) {
+      await mcpClientManager.connect(config)
+    }
+    return true
+  })
+
+  ipcMain.handle(IPC.MCP_CLIENT_REMOVE, async (_, serverId: string) => {
+    if (mcpClientManager) await mcpClientManager.disconnect(serverId)
+    const settings = security.getSettings() as any
+    const clients = (settings?.mcpClients || []).filter((c: any) => c.id !== serverId)
+    security.saveSettings({ mcpClients: clients } as any)
+    return true
+  })
+
+  ipcMain.handle(IPC.MCP_CLIENT_TOGGLE, async (_, serverId: string, enabled: boolean) => {
+    const settings = security.getSettings() as any
+    const clients = settings?.mcpClients || []
+    const cfg = clients.find((c: any) => c.id === serverId)
+    if (!cfg) return false
+    cfg.enabled = enabled
+    security.saveSettings({ mcpClients: clients } as any)
+    if (mcpClientManager) {
+      if (enabled) await mcpClientManager.connect(cfg)
+      else await mcpClientManager.disconnect(serverId)
+    }
+    return true
+  })
+
+  ipcMain.handle(IPC.MCP_CLIENT_STATUS, async () => {
+    return mcpClientManager?.getStatus() || []
+  })
+
+  ipcMain.handle(IPC.MCP_CLIENT_TOOLS, async () => {
+    return mcpClientManager?.listAllTools() || []
+  })
+
+  ipcMain.handle(IPC.MCP_CLIENT_CALL, async (_, namespacedName: string, args: any) => {
+    if (!mcpClientManager) return 'Error: MCP client not initialized'
+    return mcpClientManager.callTool(namespacedName, args || {})
+  })
+
+  // === Session Memory ===
+  ipcMain.handle('memory:list', async () => {
+    return sessionMemoryStore?.list() || []
+  })
+
+  ipcMain.handle('memory:add', async (_, summary: string, urls: string[], tags?: string[]) => {
+    return sessionMemoryStore?.add(summary, urls, tags) || null
+  })
+
+  ipcMain.handle('memory:clear', async () => {
+    sessionMemoryStore?.clear()
+    return true
+  })
+
+  // === Containers ===
+  ipcMain.handle('container:list', async () => {
+    return containerStore?.list() || []
+  })
+
+  ipcMain.handle('container:create', async (_, name: string, color: string, icon: string) => {
+    return containerStore?.create(name, color, icon) || null
+  })
+
+  ipcMain.handle('container:update', async (_, id: string, updates: any) => {
+    return containerStore?.update(id, updates) || null
+  })
+
+  ipcMain.handle('container:delete', async (_, id: string) => {
+    return containerStore?.delete(id) || false
+  })
+
+  // === Cards / AI Skills ===
+  ipcMain.handle('card:list', async () => {
+    return cardStore?.list() || []
+  })
+
+  ipcMain.handle('card:create', async (_, name: string, icon: string, systemInstruction: string, triggerDomains?: string[]) => {
+    return cardStore?.create(name, icon, systemInstruction, triggerDomains) || null
+  })
+
+  ipcMain.handle('card:update', async (_, id: string, updates: any) => {
+    return cardStore?.update(id, updates) || null
+  })
+
+  ipcMain.handle('card:delete', async (_, id: string) => {
+    return cardStore?.delete(id) || false
+  })
+
+  ipcMain.handle('card:activate', async (_, id: string) => {
+    return cardStore?.activate(id) || null
+  })
+
+  // === Workspaces ===
+  ipcMain.handle('workspace:list', async () => {
+    return workspaceStore?.list() || []
+  })
+
+  ipcMain.handle('workspace:create', async (_, name: string, color: string) => {
+    return workspaceStore?.create(name, color) || null
+  })
+
+  ipcMain.handle('workspace:switch', async (_, id: string) => {
+    return workspaceStore?.get(id) || null
+  })
+
+  ipcMain.handle('workspace:delete', async (_, id: string) => {
+    return workspaceStore?.delete(id) || false
+  })
+
+  ipcMain.handle('workspace:save', async (_, id: string, tabIds: string[], tabUrls: string[], aiHistory: any[]) => {
+    workspaceStore?.saveState(id, tabIds, tabUrls, aiHistory)
+    return true
+  })
+
+  // === Macros ===
+  ipcMain.handle('macro:list', async () => {
+    return macroStore?.list() || []
+  })
+
+  ipcMain.handle('macro:create', async (_, name: string, steps: any[], shortcut?: string, description?: string) => {
+    return macroStore?.create(name, steps, shortcut, description) || null
+  })
+
+  ipcMain.handle('macro:update', async (_, id: string, updates: any) => {
+    return macroStore?.update(id, updates) || null
+  })
+
+  ipcMain.handle('macro:delete', async (_, id: string) => {
+    return macroStore?.delete(id) || false
+  })
+
+  // === Pinned Sidebar Apps ===
+  ipcMain.handle('pinned-app:list', async () => {
+    return pinnedAppStore?.list() || []
+  })
+
+  ipcMain.handle('pinned-app:add', async (_, url: string, title: string, favicon?: string, width?: number) => {
+    return pinnedAppStore?.add(url, title, favicon, width) || null
+  })
+
+  ipcMain.handle('pinned-app:remove', async (_, id: string) => {
+    return pinnedAppStore?.remove(id) || false
+  })
+
+  ipcMain.handle('pinned-app:update', async (_, id: string, updates: any) => {
+    return pinnedAppStore?.update(id, updates) || null
+  })
+
+  ipcMain.handle('pinned-app:save', async (_, apps: any[]) => {
+    pinnedAppStore?.saveAll(apps)
+    return true
+  })
+
+  // === PTY Terminal ===
+  if (ptyManager) {
+    ipcMain.on(IPC.PTY_SPAWN, (_event, cols: number, rows: number) => {
+      ptyManager.spawn(cols, rows)
+    })
+
+    ipcMain.on(IPC.PTY_DATA, (_event, data: string) => {
+      ptyManager.write(data)
+    })
+
+    ipcMain.on(IPC.PTY_RESIZE, (_event, cols: number, rows: number) => {
+      ptyManager.resize(cols, rows)
+    })
+
+    ipcMain.on(IPC.PTY_KILL, () => {
+      ptyManager.kill()
+    })
+  }
 }

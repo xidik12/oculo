@@ -83,6 +83,21 @@ export function createMenu(mainWindow: BrowserWindow): void {
       ]
     },
     {
+      label: 'History',
+      submenu: [
+        {
+          label: 'Back',
+          accelerator: 'CmdOrCtrl+[',
+          click: (): void => { mainWindow.webContents.send('nav-back') }
+        },
+        {
+          label: 'Forward',
+          accelerator: 'CmdOrCtrl+]',
+          click: (): void => { mainWindow.webContents.send('nav-forward') }
+        }
+      ]
+    },
+    {
       label: 'View',
       submenu: [
         { role: 'reload' },
@@ -110,6 +125,15 @@ export function createMenu(mainWindow: BrowserWindow): void {
           label: 'Reader Mode',
           accelerator: 'CmdOrCtrl+Shift+R',
           click: (): void => { mainWindow.webContents.send('reader-mode') }
+        },
+        {
+          label: 'Focus Mode',
+          accelerator: 'CmdOrCtrl+Shift+F',
+          click: (): void => { mainWindow.webContents.send('focus-mode') }
+        },
+        {
+          label: 'Translate Page',
+          click: (): void => { mainWindow.webContents.send('translate-page') }
         },
         {
           label: 'Split View',

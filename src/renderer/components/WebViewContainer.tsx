@@ -1,9 +1,15 @@
 import React, { useRef, useEffect, useCallback } from 'react'
 import { Tab } from '../../shared/types'
 
-interface Props { tab: Tab; isActive: boolean; onUpdate: (updates: Partial<Tab>) => void }
+interface Props {
+  tab: Tab
+  isActive: boolean
+  onUpdate: (updates: Partial<Tab>) => void
+  onTextSelected?: (data: { text: string; x: number; y: number }) => void
+  suspended?: boolean
+}
 
-export default function WebViewContainer({ tab, isActive, onUpdate }: Props) {
+export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelected, suspended }: Props) {
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
   const lastLoadedUrl = useRef('')
   const domReady = useRef(false)
@@ -20,7 +26,7 @@ export default function WebViewContainer({ tab, isActive, onUpdate }: Props) {
       lastLoadedUrl.current = e.url
       onUpdate({ url: e.url, isLoading: false, canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() })
     }
-    const onStartLoad = () => onUpdate({ isLoading: true })
+    const onStartLoad = () => onUpdate({ isLoading: true, canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() })
     const onStopLoad = () => onUpdate({ isLoading: false, canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() })
     const onTitle = (e: any) => onUpdate({ title: e.title })
     const onFail = (e: any) => { if (e.errorCode !== -3) onUpdate({ isLoading: false, title: 'Failed to load' }) }
@@ -80,15 +86,24 @@ export default function WebViewContainer({ tab, isActive, onUpdate }: Props) {
     wv.addEventListener('dom-ready', onDomReady)
     wv.addEventListener('did-navigate', onDidNavigate)
 
+    // Listen for text selection from webview preload (Highlight-to-Ask)
+    const onIpcMessage = (e: any) => {
+      if (e.channel === 'text:selected' && onTextSelected && isActive) {
+        onTextSelected(e.args?.[0] || e.args)
+      }
+    }
+    wv.addEventListener('ipc-message', onIpcMessage)
+
     const api = (window as any).oculo
     if (api?.registerWebview) api.registerWebview(tab.id, wv)
 
     return () => {
       wv.removeEventListener('dom-ready', onDomReady)
       wv.removeEventListener('did-navigate', onDidNavigate)
+      wv.removeEventListener('ipc-message', onIpcMessage)
       api?.unregisterWebview(tab.id)
     }
-  }, [tab.id, setupWebview, isActive])
+  }, [tab.id, setupWebview, isActive, onTextSelected])
 
   // Notify main process when this tab becomes active (with retry for pending dom-ready)
   useEffect(() => {
@@ -126,10 +141,23 @@ export default function WebViewContainer({ tab, isActive, onUpdate }: Props) {
     }
   }, [tab.url])
 
+  // Suspended tabs show placeholder instead of webview
+  if (suspended && !isActive) {
+    return (
+      <div className={`absolute inset-0 flex flex-col items-center justify-center bg-background hidden`}>
+        <p className="text-secondary text-sm">Tab suspended to save resources</p>
+        <p className="text-tertiary text-xs mt-1">{tab.title}</p>
+      </div>
+    )
+  }
+
+  // Dynamic partition: container tabs get isolated sessions
+  const partition = tab.containerId ? `persist:container-${tab.containerId}` : 'persist:oculo'
+
   return (
     <div className={`absolute inset-0 flex flex-col ${isActive ? '' : 'hidden'}`}>
       <webview ref={webviewRef as any} src={initialUrl.current}
-        partition="persist:oculo"
+        partition={partition}
         preload={`file://${(window as any).oculo?.webviewPreloadPath}`}
         style={{ width: '100%', height: '100%' }}
         {...{ allowpopups: 'true' } as any} />

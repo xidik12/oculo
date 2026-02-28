@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback, KeyboardEvent } from 'react'
-import { ChatMessage, ChatToolCall, ChatStreamEvent, TokenUsage } from '../../shared/types'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import '@xterm/xterm/css/xterm.css'
+import { ChatMessage, ChatToolCall, ChatStreamEvent, TokenUsage, Card } from '../../shared/types'
 import { AI_PROVIDERS, AIProviderId } from '../../shared/ai-types'
 
 interface ChatPanelProps {
@@ -20,6 +24,12 @@ function api() {
     aiGetActive(): Promise<{ providerId: string; modelId: string }>
     authLogin(providerId: string): Promise<{ success: boolean; error?: string }>
     authStatus(): Promise<any>
+    ptySpawn(cols: number, rows: number): void
+    ptyWrite(data: string): void
+    ptyResize(cols: number, rows: number): void
+    ptyKill(): void
+    onPtyData(callback: (data: string) => void): () => void
+    onPtyExit(callback: (exitCode: number, signal?: number) => void): () => void
   } | undefined
 }
 
@@ -156,6 +166,92 @@ function ProviderSelector({ activeProvider, activeModel, onSelect }: {
   )
 }
 
+// ── Card Selector ───────────────────────────────────────────────────────────
+
+function CardSelector() {
+  const [open, setOpen] = useState(false)
+  const [cards, setCards] = useState<Card[]>([])
+
+  const loadCards = useCallback(async () => {
+    const list = await (window as any).oculo?.cardList?.()
+    if (list) setCards(list)
+  }, [])
+
+  useEffect(() => {
+    if (open) loadCards()
+  }, [open, loadCards])
+
+  // Also load on mount to show active count
+  useEffect(() => { loadCards() }, [loadCards])
+
+  const handleToggle = async (id: string) => {
+    await (window as any).oculo?.cardActivate?.(id)
+    await loadCards()
+  }
+
+  const activeCount = cards.filter(c => c.isActive).length
+
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 px-1.5 py-1 rounded-md hover:bg-white/5 transition-colors text-xs"
+        title="AI Cards">
+        {/* Sparkle / puzzle-piece icon */}
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={activeCount > 0 ? 'text-accent' : 'text-gray-500'}>
+          <path d="M12 2l2.09 6.26L20 10l-5.91 1.74L12 18l-2.09-6.26L4 10l5.91-1.74L12 2z" />
+        </svg>
+        {activeCount > 0 && (
+          <span className="text-[9px] font-bold text-accent min-w-[14px] h-[14px] flex items-center justify-center rounded-full bg-accent/15">{activeCount}</span>
+        )}
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute top-full left-0 mt-1 w-[260px] bg-surface-dark-1 border border-surface-dark-3 rounded-lg shadow-xl z-50 py-1 max-h-[320px] overflow-y-auto">
+            <div className="px-3 py-1.5 border-b border-surface-dark-3">
+              <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">AI Cards</span>
+            </div>
+
+            {cards.length === 0 && (
+              <div className="px-3 py-4 text-center">
+                <p className="text-xs text-gray-500">No cards yet</p>
+                <p className="text-[10px] text-gray-600 mt-1">Create cards in Settings &rarr; AI</p>
+              </div>
+            )}
+
+            {cards.map(card => (
+              <button key={card.id}
+                onClick={() => handleToggle(card.id)}
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-white/5 transition-colors group">
+                {/* Card icon */}
+                <span className="text-base flex-shrink-0 w-5 text-center">{card.icon || '🃏'}</span>
+                {/* Card name */}
+                <span className={`flex-1 text-xs truncate ${card.isActive ? 'text-gray-200 font-medium' : 'text-gray-400'}`}>
+                  {card.name}
+                </span>
+                {/* Active toggle indicator */}
+                <span className={`flex-shrink-0 w-7 h-4 rounded-full relative transition-colors ${card.isActive ? 'bg-accent/30' : 'bg-surface-dark-3'}`}>
+                  <span className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${card.isActive ? 'left-3.5 bg-accent' : 'left-0.5 bg-gray-600'}`} />
+                </span>
+              </button>
+            ))}
+
+            {cards.length > 0 && (
+              <div className="px-3 py-1.5 border-t border-surface-dark-3">
+                <p className="text-[10px] text-gray-600">
+                  {activeCount} of {cards.length} active
+                  {cards.some(c => c.triggerDomains?.length) && ' · some auto-trigger by domain'}
+                </p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Shared state hook ───────────────────────────────────────────────────────
 
 function useChatState() {
@@ -168,6 +264,7 @@ function useChatState() {
   const [activeProvider, setActiveProvider] = useState('claude')
   const [activeModel, setActiveModel] = useState('claude-sonnet-4-6')
   const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null)
+  const [attachedFiles, setAttachedFiles] = useState<string[]>([])
   const toolCallsRef = useRef<ChatToolCall[]>([])
   const pendingUsageRef = useRef<TokenUsage | null>(null)
 
@@ -234,18 +331,68 @@ function useChatState() {
     handleClear()
   }, [])
 
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     const text = inputValue.trim()
-    if (!text || isStreaming) return
-    const userMessage: ChatMessage = { id: `msg-${Date.now()}-user`, role: 'user', content: text, timestamp: Date.now() }
+    if ((!text && attachedFiles.length === 0) || isStreaming) return
+
+    // Build message with file attachments
+    let messageText = text
+    const fileNames = attachedFiles.map(f => f.split('/').pop() || f)
+    const oculo = (window as any).oculo
+
+    if (attachedFiles.length > 0 && oculo) {
+      const fileParts: string[] = []
+      for (const filePath of attachedFiles) {
+        const ext = filePath.split('.').pop()?.toLowerCase() || ''
+        const name = filePath.split('/').pop() || filePath
+        const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp']
+        if (imageExts.includes(ext)) {
+          fileParts.push(`[Attached image: ${name}]\nFile path: ${filePath}`)
+        } else {
+          // Try to read text content
+          try {
+            const content = await oculo.fileReadSafe(filePath)
+            if (content && !content.startsWith('Error:')) {
+              fileParts.push(`[Attached file: ${name}]\n${content}`)
+            } else {
+              fileParts.push(`[Attached file: ${name}]\nFile path: ${filePath}`)
+            }
+          } catch {
+            fileParts.push(`[Attached file: ${name}]\nFile path: ${filePath}`)
+          }
+        }
+      }
+      messageText = fileParts.join('\n\n') + (text ? '\n\n' + text : '')
+    }
+
+    // Show just the text + file names in the chat bubble (not full content)
+    const displayContent = attachedFiles.length > 0
+      ? (fileNames.map(f => `📎 ${f}`).join('\n') + (text ? '\n' + text : ''))
+      : text
+
+    const userMessage: ChatMessage = { id: `msg-${Date.now()}-user`, role: 'user', content: displayContent, timestamp: Date.now() }
     setMessages(prev => [...prev, userMessage])
     setInputValue('')
+    setAttachedFiles([])
     setIsStreaming(true)
     setError(null)
     setStreamingText('')
     setStreamingToolCalls([])
-    api()?.sendChatMessage(text)
-  }, [inputValue, isStreaming])
+    api()?.sendChatMessage(messageText)
+  }, [inputValue, isStreaming, attachedFiles])
+
+  const handleAttach = useCallback(async () => {
+    const oculo = (window as any).oculo
+    if (!oculo?.fileDialogOpen) return
+    const filePaths = await oculo.fileDialogOpen()
+    if (filePaths && filePaths.length > 0) {
+      setAttachedFiles(prev => [...prev, ...filePaths])
+    }
+  }, [])
+
+  const handleRemoveFile = useCallback((index: number) => {
+    setAttachedFiles(prev => prev.filter((_, i) => i !== index))
+  }, [])
 
   const handleClear = useCallback(() => {
     api()?.clearChat()
@@ -257,6 +404,7 @@ function useChatState() {
     setError(null)
     setLastUsage(null)
     pendingUsageRef.current = null
+    setAttachedFiles([])
   }, [])
 
   const handleStop = useCallback(() => {
@@ -282,25 +430,49 @@ function useChatState() {
   return {
     messages, streamingText, streamingToolCalls, isStreaming, error,
     inputValue, setInputValue, activeProvider, activeModel, lastUsage,
+    attachedFiles, handleAttach, handleRemoveFile,
     handleProviderSelect, handleSend, handleClear, handleStop
   }
 }
 
 // ── Chat Input ──────────────────────────────────────────────────────────────
 
-function ChatInput({ value, onChange, onKeyDown, onSend, onStop, isStreaming, inputRef, placeholder }: {
+function ChatInput({ value, onChange, onKeyDown, onSend, onStop, isStreaming, inputRef, placeholder, attachedFiles, onAttach, onRemoveFile }: {
   value: string; onChange: (val: string) => void; onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void
   onSend: () => void; onStop: () => void; isStreaming: boolean; inputRef: React.RefObject<HTMLTextAreaElement | null>
-  placeholder?: string
+  placeholder?: string; attachedFiles: string[]; onAttach: () => void; onRemoveFile: (index: number) => void
 }) {
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     onChange(e.target.value)
     const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'
   }
 
+  const getFileName = (filePath: string) => filePath.split('/').pop() || filePath
+
   return (
     <div className="flex-shrink-0 border-t border-surface-dark-3 p-2">
+      {attachedFiles.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-1 mb-2">
+          {attachedFiles.map((f, i) => (
+            <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent/10 border border-accent/20 text-accent text-[11px] font-mono">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" />
+              </svg>
+              {getFileName(f)}
+              <button onClick={() => onRemoveFile(i)} className="ml-0.5 text-gray-500 hover:text-red-400 transition-colors" title="Remove">
+                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 2l8 8M10 2l-8 8" /></svg>
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="flex items-end gap-2">
+        <button onClick={onAttach} disabled={isStreaming}
+          className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-md hover:bg-white/5 text-gray-500 hover:text-gray-300 disabled:opacity-30 transition-colors" title="Attach file">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+          </svg>
+        </button>
         <textarea ref={inputRef as any} value={value} onChange={handleChange} onKeyDown={onKeyDown}
           placeholder={placeholder || (isStreaming ? 'Wait for response...' : 'Message... (Enter to send)')}
           disabled={isStreaming} rows={1}
@@ -312,7 +484,7 @@ function ChatInput({ value, onChange, onKeyDown, onSend, onStop, isStreaming, in
             <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><rect width="12" height="12" rx="2" /></svg>
           </button>
         ) : (
-          <button onClick={onSend} disabled={!value.trim()}
+          <button onClick={onSend} disabled={!value.trim() && attachedFiles.length === 0}
             className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-md bg-accent/80 hover:bg-accent disabled:opacity-30 disabled:hover:bg-accent/80 text-white transition-colors" title="Send">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
@@ -320,23 +492,42 @@ function ChatInput({ value, onChange, onKeyDown, onSend, onStop, isStreaming, in
           </button>
         )}
       </div>
-      <p className="text-[10px] text-gray-600 mt-1.5 px-1">Shift+Enter for new line</p>
+      <p className="text-[10px] text-gray-600 mt-1.5 px-1">Shift+Enter for new line · Paperclip to attach files</p>
     </div>
   )
 }
 
 // ── Chat View (bubbles) ─────────────────────────────────────────────────────
 
+function handleLinkClick(href: string) {
+  const oculo = (window as any).oculo
+  if (!oculo) return
+  const isFilePath = href.startsWith('/') || href.startsWith('~/')
+  if (isFilePath) {
+    oculo.openFile(href)
+  } else if (href.startsWith('http://') || href.startsWith('https://')) {
+    oculo.openExternal(href)
+  }
+}
+
 function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = []
-  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g
+  // Extended regex: markdown formatting + markdown links + bare file paths (absolute paths with common extensions)
+  const regex = /(\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)|((?:\/[\w.@\-]+)+\/[\w.@\-]+\.(?:png|jpg|jpeg|gif|webp|svg|bmp|pdf|mp4|webm|mov|txt|html|json|csv|md|xml|zip|tar|gz)))/gi
   let lastIndex = 0; let match: RegExpExecArray | null; let partIdx = 0
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) nodes.push(<span key={`${keyPrefix}-t${partIdx++}`}>{text.slice(lastIndex, match.index)}</span>)
     if (match[2]) nodes.push(<strong key={`${keyPrefix}-b${partIdx++}`} className="font-semibold text-gray-100">{match[2]}</strong>)
     else if (match[3]) nodes.push(<em key={`${keyPrefix}-i${partIdx++}`} className="italic text-gray-200">{match[3]}</em>)
     else if (match[4]) nodes.push(<code key={`${keyPrefix}-c${partIdx++}`} className="px-1 py-0.5 rounded bg-surface-dark-2 text-oculo-300 font-mono text-[0.85em]">{match[4]}</code>)
-    else if (match[5] && match[6]) nodes.push(<a key={`${keyPrefix}-a${partIdx++}`} className="text-accent hover:underline cursor-pointer" title={match[6]}>{match[5]}</a>)
+    else if (match[5] && match[6]) {
+      const href = match[6]
+      nodes.push(<a key={`${keyPrefix}-a${partIdx++}`} className="text-accent hover:underline cursor-pointer" title={href} onClick={() => handleLinkClick(href)}>{match[5]}</a>)
+    }
+    else if (match[7]) {
+      const filePath = match[7]
+      nodes.push(<a key={`${keyPrefix}-f${partIdx++}`} className="text-accent hover:underline cursor-pointer font-mono text-[0.9em]" title={`Open ${filePath}`} onClick={() => handleLinkClick(filePath)}>{filePath}</a>)
+    }
     lastIndex = match.index + match[0].length
   }
   if (lastIndex < text.length) nodes.push(<span key={`${keyPrefix}-t${partIdx}`}>{text.slice(lastIndex)}</span>)
@@ -667,7 +858,7 @@ function TokenUsageDisplay({ usage }: { usage: TokenUsage }) {
 }
 
 function ChatView({ state, onAuthComplete }: { state: ReturnType<typeof useChatState>; onAuthComplete?: () => void }) {
-  const { messages, streamingText, streamingToolCalls, isStreaming, error, inputValue, setInputValue, handleSend, handleStop, lastUsage } = state
+  const { messages, streamingText, streamingToolCalls, isStreaming, error, inputValue, setInputValue, handleSend, handleStop, lastUsage, attachedFiles, handleAttach, handleRemoveFile } = state
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [needsAuth, setNeedsAuth] = useState(false)
@@ -749,158 +940,134 @@ function ChatView({ state, onAuthComplete }: { state: ReturnType<typeof useChatS
         <div ref={messagesEndRef} />
       </div>
       {lastUsage && !isStreaming && <TokenUsageDisplay usage={lastUsage} />}
-      <ChatInput value={inputValue} onChange={setInputValue} onKeyDown={handleKeyDown} onSend={handleSend} onStop={handleStop} isStreaming={isStreaming} inputRef={inputRef} />
+      <ChatInput value={inputValue} onChange={setInputValue} onKeyDown={handleKeyDown} onSend={handleSend} onStop={handleStop} isStreaming={isStreaming} inputRef={inputRef}
+        attachedFiles={attachedFiles} onAttach={handleAttach} onRemoveFile={handleRemoveFile} />
     </div>
   )
 }
 
-// ── Terminal View ───────────────────────────────────────────────────────────
+// ── Terminal View (real xterm.js + node-pty) ────────────────────────────────
 
-function TerminalView({ state }: { state: ReturnType<typeof useChatState> }) {
-  const { messages, streamingText, streamingToolCalls, isStreaming, error, inputValue, setInputValue, handleSend, handleStop, lastUsage } = state
-  const termEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+function TerminalView({ isVisible }: { isVisible: boolean }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const termRef = useRef<Terminal | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
+  const [exited, setExited] = useState(false)
 
-  const scrollToBottom = useCallback(() => { termEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [])
-  useEffect(() => { scrollToBottom() }, [messages, streamingText, streamingToolCalls, error, scrollToBottom])
+  useEffect(() => {
+    const oculo = api()
+    if (!oculo || !containerRef.current) return
 
-  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-  }, [handleSend])
+    const term = new Terminal({
+      theme: {
+        background: '#0d1117',
+        foreground: '#c9d1d9',
+        cursor: '#58a6ff',
+        cursorAccent: '#0d1117',
+        selectionBackground: '#264f78',
+        black: '#484f58',
+        red: '#ff7b72',
+        green: '#3fb950',
+        yellow: '#d29922',
+        blue: '#58a6ff',
+        magenta: '#bc8cff',
+        cyan: '#39c5cf',
+        white: '#b1bac4',
+        brightBlack: '#6e7681',
+        brightRed: '#ffa198',
+        brightGreen: '#56d364',
+        brightYellow: '#e3b341',
+        brightBlue: '#79c0ff',
+        brightMagenta: '#d2a8ff',
+        brightCyan: '#56d4dd',
+        brightWhite: '#f0f6fc',
+      },
+      fontSize: 13,
+      fontFamily: '"SF Mono", "Cascadia Code", "Fira Code", Menlo, Monaco, "Courier New", monospace',
+      scrollback: 10000,
+      cursorBlink: true,
+      cursorStyle: 'bar',
+      allowProposedApi: true,
+    })
 
-  return (
-    <div className="flex-1 flex flex-col min-h-0">
-      <div className="flex-1 overflow-y-auto font-mono text-[13px] leading-[1.6] bg-[#0d1117] px-4 py-3 select-text"
-        style={{ scrollbarWidth: 'thin', scrollbarColor: '#373a40 transparent', userSelect: 'text', WebkitUserSelect: 'text' }}>
+    const fitAddon = new FitAddon()
+    term.loadAddon(fitAddon)
+    term.loadAddon(new WebLinksAddon())
 
-        {messages.length === 0 && !isStreaming && !error && (
-          <div className="text-gray-600 py-4">
-            <div className="text-accent mb-1">~ Oculo AI Terminal</div>
-            <div className="text-gray-500">Type a message below. Output streams here like a CLI.</div>
-          </div>
-        )}
+    term.open(containerRef.current)
 
-        {messages.map(msg => (
-          <div key={msg.id} className="mb-3">
-            {msg.role === 'user' ? (
-              <div>
-                <span className="text-emerald-400 select-none">&#10095; </span>
-                <span className="text-gray-100">{msg.content}</span>
-              </div>
-            ) : (
-              <>
-                {msg.content && (
-                  <div className="text-gray-300 whitespace-pre-wrap pl-2 border-l-2 border-surface-dark-3 ml-1">
-                    {msg.content}
-                  </div>
-                )}
-                {msg.toolCalls && msg.toolCalls.length > 0 && <TerminalToolCallGroup toolCalls={msg.toolCalls} />}
-              </>
-            )}
-          </div>
-        ))}
+    // Fit after a frame so the container has layout dimensions
+    requestAnimationFrame(() => {
+      fitAddon.fit()
+      oculo.ptySpawn(term.cols, term.rows)
+    })
 
-        {isStreaming && (
-          <div className="mb-3">
-            {streamingText && (
-              <div className="text-gray-300 whitespace-pre-wrap pl-2 border-l-2 border-accent/30 ml-1">
-                {streamingText}
-                <span className="inline-block w-2 h-4 bg-accent/70 ml-0.5 animate-pulse" />
-              </div>
-            )}
-            {streamingToolCalls.length > 0 && <TerminalToolCallGroup toolCalls={streamingToolCalls} />}
-            {!streamingText && streamingToolCalls.length === 0 && (
-              <div className="flex items-center gap-2 text-gray-500">
-                <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-                <span>thinking...</span>
-              </div>
-            )}
-          </div>
-        )}
+    // Keystrokes → PTY
+    const dataDisposable = term.onData((data) => oculo.ptyWrite(data))
 
-        {error && (
-          <div className="mb-3">
-            <span className="text-red-400 select-none">error: </span>
-            <span className="text-red-300 whitespace-pre-wrap">{error}</span>
-          </div>
-        )}
+    // PTY output → screen
+    const cleanupData = oculo.onPtyData((data) => term.write(data))
 
-        <div ref={termEndRef} />
-      </div>
+    // PTY exit
+    const cleanupExit = oculo.onPtyExit((exitCode) => {
+      term.write(`\r\n\x1b[90m[Process exited with code ${exitCode}. Press any key to restart.]\x1b[0m\r\n`)
+      setExited(true)
+    })
 
-      {lastUsage && !isStreaming && (
-        <div className="text-[11px] text-gray-600 font-mono px-4 py-1">
-          tokens: {formatTokens(lastUsage.inputTokens + lastUsage.outputTokens)} ({formatTokens(lastUsage.inputTokens)} in / {formatTokens(lastUsage.outputTokens)} out)
-        </div>
-      )}
-      <ChatInput value={inputValue} onChange={setInputValue} onKeyDown={handleKeyDown} onSend={handleSend} onStop={handleStop}
-        isStreaming={isStreaming} inputRef={inputRef} placeholder={isStreaming ? 'Streaming...' : '> Enter command...'} />
-    </div>
-  )
-}
+    // Resize observer
+    const observer = new ResizeObserver(() => {
+      try {
+        fitAddon.fit()
+        oculo.ptyResize(term.cols, term.rows)
+      } catch { /* ignore */ }
+    })
+    if (containerRef.current) observer.observe(containerRef.current)
 
-function TerminalToolCall({ toolCall }: { toolCall: ChatToolCall }) {
-  const [expanded, setExpanded] = useState(false)
-  const hasResult = toolCall.result != null && toolCall.result.length > 0
+    termRef.current = term
+    fitRef.current = fitAddon
 
-  const statusChar = toolCall.status === 'running' ? '...'
-    : toolCall.status === 'done' ? 'ok'
-    : toolCall.status === 'error' ? 'err'
-    : '?'
+    return () => {
+      observer.disconnect()
+      dataDisposable.dispose()
+      cleanupData()
+      cleanupExit()
+      oculo.ptyKill()
+      term.dispose()
+      termRef.current = null
+      fitRef.current = null
+    }
+  }, [])
 
-  const statusColor = toolCall.status === 'running' ? 'text-yellow-400'
-    : toolCall.status === 'done' ? 'text-emerald-400'
-    : toolCall.status === 'error' ? 'text-red-400'
-    : 'text-gray-500'
+  // Re-fit and focus when tab becomes visible
+  useEffect(() => {
+    if (isVisible && termRef.current && fitRef.current) {
+      requestAnimationFrame(() => {
+        fitRef.current?.fit()
+        termRef.current?.focus()
+        const oculo = api()
+        if (oculo && termRef.current) {
+          oculo.ptyResize(termRef.current.cols, termRef.current.rows)
+        }
+      })
+    }
+  }, [isVisible])
 
-  return (
-    <div className="my-1 ml-2">
-      <button onClick={() => hasResult && setExpanded(!expanded)}
-        className={`flex items-center gap-1 text-[12px] transition-colors ${hasResult ? 'hover:text-gray-200 cursor-pointer' : 'cursor-default'}`}>
-        {toolCall.status === 'running' && (
-          <span className="inline-block w-2.5 h-2.5 border border-yellow-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
-        )}
-        <span className="text-oculo-400">{toolCall.name}</span>
-        <span className={statusColor}>[{statusChar}]</span>
-        {hasResult && <span className="text-gray-600 ml-1">{expanded ? '\u25BC' : '\u25B6'}</span>}
-      </button>
-      {expanded && hasResult && (
-        <pre className={`mt-0.5 ml-3 px-2 py-1 rounded text-[11px] whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto ${
-          toolCall.isError ? 'bg-red-900/15 text-red-300' : 'bg-[#161b22] text-gray-400'
-        }`}>{toolCall.result}</pre>
-      )}
-    </div>
-  )
-}
-
-function TerminalToolCallGroup({ toolCalls }: { toolCalls: ChatToolCall[] }) {
-  const [expanded, setExpanded] = useState(false)
-  const runningCall = toolCalls.find(tc => tc.status === 'running')
-  const doneCalls = toolCalls.filter(tc => tc.status === 'done' || tc.status === 'error')
+  // Restart on keypress after exit
+  useEffect(() => {
+    if (!exited || !termRef.current) return
+    const disposable = termRef.current.onData(() => {
+      setExited(false)
+      const oculo = api()
+      if (oculo && termRef.current) {
+        termRef.current.clear()
+        oculo.ptySpawn(termRef.current.cols, termRef.current.rows)
+      }
+    })
+    return () => disposable.dispose()
+  }, [exited])
 
   return (
-    <div className="my-1 ml-2">
-      {doneCalls.length > 0 && (
-        <button onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 text-[12px] hover:text-gray-200 cursor-pointer transition-colors">
-          <span className="text-accent/60">&#9889;</span>
-          <span className="text-gray-500">
-            {doneCalls.length} tool call{doneCalls.length !== 1 ? 's' : ''}
-          </span>
-          <span className="text-gray-600 ml-1 text-[9px]">{expanded ? '\u25BC' : '\u25B6'}</span>
-        </button>
-      )}
-      {runningCall && (
-        <div className="flex items-center gap-1 text-[12px] mt-0.5">
-          <span className="inline-block w-2.5 h-2.5 border border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
-          <span className="text-oculo-400">{runningCall.name}</span>
-          <span className="text-gray-500 truncate">
-            {runningCall.input?.action || runningCall.input?.what || ''}
-          </span>
-        </div>
-      )}
-      {expanded && toolCalls.map(tc => <TerminalToolCall key={tc.id} toolCall={tc} />)}
-    </div>
+    <div ref={containerRef} className="flex-1 min-h-0" style={{ padding: '4px 0 0 4px' }} />
   )
 }
 
@@ -939,6 +1106,8 @@ export default function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
           </span>
         )}
 
+        <CardSelector />
+
         <div className="flex-1" />
 
         {/* View toggle */}
@@ -973,12 +1142,15 @@ export default function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
         </button>
       </div>
 
-      {/* Body */}
-      {viewMode === 'chat'
-        ? <ChatView state={state} onAuthComplete={() => {
-            api()?.getChatStatus().then(s => { if (s?.authMode) setAuthMode(s.authMode) })
-          }} />
-        : <TerminalView state={state} />}
+      {/* Body — both views mounted, toggle visibility with CSS to preserve state */}
+      <div className={viewMode === 'chat' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
+        <ChatView state={state} onAuthComplete={() => {
+          api()?.getChatStatus().then(s => { if (s?.authMode) setAuthMode(s.authMode) })
+        }} />
+      </div>
+      <div className={viewMode === 'terminal' ? 'flex-1 flex flex-col min-h-0' : 'hidden'}>
+        <TerminalView isVisible={viewMode === 'terminal'} />
+      </div>
     </div>
   )
 }

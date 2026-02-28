@@ -1,10 +1,10 @@
 export const APP_NAME = 'Oculo'
-export const APP_VERSION = '0.1.0'
+export const APP_VERSION = '0.2.0'
 export const DEFAULT_VIEWPORT = { width: 1280, height: 720 }
 export const DEFAULT_HOME_PAGE = 'https://www.google.com'
 export const DEFAULT_SEARCH_ENGINE = 'https://www.google.com/search?q='
 export const MCP_SERVER_NAME = 'oculo'
-export const MCP_SERVER_VERSION = '0.1.0'
+export const MCP_SERVER_VERSION = '0.2.0'
 
 export const DEFAULT_SETTINGS: import('./types').AppSettings = {
   theme: 'system',
@@ -14,7 +14,11 @@ export const DEFAULT_SETTINGS: import('./types').AppSettings = {
   whisperModel: 'small',
   auditRetentionDays: 30,
   redactionEnabled: true,
-  customRedactionPatterns: []
+  customRedactionPatterns: [],
+  adBlockEnabled: true,
+  performanceMode: false,
+  tabSuspendAfterMinutes: 15,
+  networkThrottling: 'none' as const
 }
 
 // Permission categorization
@@ -29,6 +33,13 @@ export const PERMISSION_MAP: Record<string, import('./types').PermissionLevel> =
   'forward': 'auto',
   'reload': 'auto',
   'hover': 'auto',
+
+  // WebMCP
+  'webmcp_list': 'auto',
+  'webmcp_call': 'notify',
+
+  // MCP Client (connected apps)
+  'mcp_client_call': 'notify',
 
   // Notify - execute but notify user
   'click': 'notify',
@@ -48,6 +59,13 @@ export const PERMISSION_MAP: Record<string, import('./types').PermissionLevel> =
   'send_email': 'confirm',
   'download': 'confirm',
   'oauth': 'confirm',
+  'shell': 'notify',
+
+  // New MCP tools (auto)
+  'tabs': 'auto',
+  'preview': 'auto',
+  'translate': 'auto',
+  'lens': 'auto',
 
   // Blocked - never allowed
   'read_vault': 'blocked',

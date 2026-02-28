@@ -17,6 +17,7 @@ import { setupIPC } from './ipc'
 import { createMenu } from './menu'
 import { McpServerManager } from './mcp/server'
 import { SecurityManager } from './security/vault'
+import { AdBlocker } from './security/ad-block'
 import { AuditLog } from './security/audit'
 import { Redactor } from './security/redactor'
 import { AgentController } from './ai/agent'
@@ -25,6 +26,14 @@ import { HistoryStore } from './data/history'
 import { DownloadManager } from './data/downloads'
 import { ZoomStore } from './data/zoom'
 import { RunCache } from './data/run-cache'
+import { PtyManager } from './terminal/pty-manager'
+import { McpClientManager } from './mcp/client'
+import { SessionMemoryStore } from './data/session-memory'
+import { ContainerStore } from './data/containers'
+import { CardStore } from './data/cards'
+import { WorkspaceStore } from './data/workspaces'
+import { MacroStore } from './data/macros'
+import { PinnedAppStore } from './data/pinned-apps'
 
 /** Clean up temp files older than 1 hour (only transient dirs, NOT ~/Pictures/Oculo) */
 function cleanupTempFiles(): void {
@@ -62,6 +71,14 @@ let historyStore: HistoryStore | null = null
 let downloadManager: DownloadManager | null = null
 let zoomStore: ZoomStore | null = null
 let runCache: RunCache | null = null
+let ptyManager: PtyManager | null = null
+let mcpClientManager: McpClientManager | null = null
+let sessionMemoryStore: SessionMemoryStore | null = null
+let containerStore: ContainerStore | null = null
+let cardStore: CardStore | null = null
+let workspaceStore: WorkspaceStore | null = null
+let macroStore: MacroStore | null = null
+let pinnedAppStore: PinnedAppStore | null = null
 
 function createWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
@@ -196,6 +213,27 @@ app.whenReady().then(async () => {
     }
   })
 
+  // --- Ad/Tracker/Malware Blocking (Brave Shields-style) ---
+  const adBlocker = new AdBlocker()
+
+  // Apply saved setting
+  const initSettings = securityManager ? securityManager.getSettings() : {} as any
+  if (initSettings.adBlockEnabled === false) {
+    adBlocker.setEnabled(false)
+  }
+
+  // Block ad/tracking/malware requests at network level — before content loads
+  webviewSession.webRequest.onBeforeRequest(
+    { urls: ['https://*/*', 'http://*/*'] },
+    (details, callback) => {
+      if (adBlocker.shouldBlock(details.url, details.resourceType, details.webContents?.getURL() || '')) {
+        callback({ cancel: true })
+      } else {
+        callback({})
+      }
+    }
+  )
+
   // Spoof Sec-CH-UA headers globally so all sites see Chrome (not Electron)
   webviewSession.webRequest.onBeforeSendHeaders(
     { urls: ['https://*/*', 'http://*/*'] },
@@ -205,6 +243,8 @@ app.whenReady().then(async () => {
       headers['Sec-CH-UA-Mobile'] = '?0'
       headers['Sec-CH-UA-Platform'] = '"macOS"'
       headers['Sec-CH-UA-Full-Version-List'] = '"Not A(Brand";v="8.0.0.0", "Chromium";v="132.0.6834.210", "Google Chrome";v="132.0.6834.210"'
+      // Consistent Accept-Language (match spoofed navigator.languages)
+      headers['Accept-Language'] = 'en-US,en;q=0.9'
       callback({ requestHeaders: headers })
     }
   )
@@ -222,141 +262,17 @@ app.whenReady().then(async () => {
       .replace(/\s*oculo\/[\d.]+/i, '')
     wc.setUserAgent(cleanWvUA)
 
-    // Comprehensive anti-bot fingerprint patching
-    // Run on EVERY navigation (did-start-navigation fires before page scripts)
-    const antiBotScript = `
-      (function() {
-        if (window.__oculoPatched) return;
-        window.__oculoPatched = true;
-
-        // 1. navigator.webdriver — must be undefined
-        try { Object.defineProperty(navigator, 'webdriver', { get: () => undefined, configurable: true }) } catch {}
-
-        // 2. navigator.languages — real Chrome value
-        try { Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'], configurable: true }) } catch {}
-
-        // 3. navigator.plugins — fake a realistic plugin array
-        try {
-          const fakePlugins = {
-            length: 5,
-            0: { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
-            1: { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
-            2: { name: 'Native Client', filename: 'internal-nacl-plugin', description: '', length: 2 },
-            3: { name: 'Chromium PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format', length: 1 },
-            4: { name: 'Chromium PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '', length: 1 },
-            item: function(i) { return this[i] || null; },
-            namedItem: function(name) { for (let i = 0; i < this.length; i++) { if (this[i].name === name) return this[i]; } return null; },
-            refresh: function() {},
-            [Symbol.iterator]: function*() { for (let i = 0; i < 5; i++) yield this[i]; }
-          };
-          Object.defineProperty(navigator, 'plugins', { get: () => fakePlugins, configurable: true });
-        } catch {}
-
-        // 4. navigator.mimeTypes — fake realistic mime types
-        try {
-          const fakeMimeTypes = {
-            length: 4,
-            0: { type: 'application/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
-            1: { type: 'text/pdf', suffixes: 'pdf', description: 'Portable Document Format' },
-            2: { type: 'application/x-nacl', suffixes: '', description: 'Native Client Executable' },
-            3: { type: 'application/x-pnacl', suffixes: '', description: 'Portable Native Client Executable' },
-            item: function(i) { return this[i] || null; },
-            namedItem: function(name) { for (let i = 0; i < this.length; i++) { if (this[i].type === name) return this[i]; } return null; },
-            [Symbol.iterator]: function*() { for (let i = 0; i < 4; i++) yield this[i]; }
-          };
-          Object.defineProperty(navigator, 'mimeTypes', { get: () => fakeMimeTypes, configurable: true });
-        } catch {}
-
-        // 5. window.chrome — comprehensive fake
-        try {
-          if (!window.chrome || !window.chrome.runtime || !window.chrome.runtime.connect) {
-            const fakeChrome = {
-              app: { isInstalled: false, InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' }, RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }, getDetails: function() { return null; }, getIsInstalled: function() { return false; } },
-              runtime: { OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' }, OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' }, PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' }, PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' }, PlatformOs: { ANDROID: 'android', CROS: 'cros', FUCHSIA: 'fuchsia', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' }, RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' }, connect: function() { return { onDisconnect: { addListener: function() {} }, onMessage: { addListener: function() {} }, postMessage: function() {} }; }, sendMessage: function() {} },
-              csi: function() { return {}; },
-              loadTimes: function() { return { requestTime: Date.now() / 1000, startLoadTime: Date.now() / 1000, commitLoadTime: Date.now() / 1000, finishDocumentLoadTime: Date.now() / 1000, finishLoadTime: Date.now() / 1000, firstPaintTime: Date.now() / 1000, firstPaintAfterLoadTime: 0, navigationType: 'Other', wasFetchedViaSpdy: false, wasNpnNegotiated: true, npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false, connectionInfo: 'h2' }; }
-            };
-            Object.defineProperty(window, 'chrome', { get: () => fakeChrome, configurable: true });
-          }
-        } catch {}
-
-        // 6. Notification.permission — must not throw
-        try {
-          if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-            // Already fine
-          }
-        } catch {}
-
-        // 7. navigator.permissions.query — make it resolve like real Chrome
-        try {
-          const origQuery = navigator.permissions.query.bind(navigator.permissions);
-          navigator.permissions.query = function(desc) {
-            if (desc.name === 'notifications') {
-              return Promise.resolve({ state: Notification.permission || 'prompt', onchange: null });
-            }
-            return origQuery(desc);
-          };
-        } catch {}
-
-        // 8. navigator.connection — fake NetworkInformation
-        try {
-          if (!navigator.connection) {
-            Object.defineProperty(navigator, 'connection', {
-              get: () => ({ effectiveType: '4g', rtt: 50, downlink: 10, saveData: false, onchange: null }),
-              configurable: true
-            });
-          }
-        } catch {}
-
-        // 9. navigator.hardwareConcurrency — reasonable value
-        try {
-          if (!navigator.hardwareConcurrency || navigator.hardwareConcurrency < 2) {
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8, configurable: true });
-          }
-        } catch {}
-
-        // 10. navigator.deviceMemory — reasonable value
-        try {
-          if (!navigator.deviceMemory) {
-            Object.defineProperty(navigator, 'deviceMemory', { get: () => 8, configurable: true });
-          }
-        } catch {}
-
-        // 11. WebGL vendor/renderer — make it look normal (not SwiftShader)
-        try {
-          const getParameterOrig = WebGLRenderingContext.prototype.getParameter;
-          WebGLRenderingContext.prototype.getParameter = function(p) {
-            if (p === 37445) return 'Google Inc. (Apple)';  // UNMASKED_VENDOR_WEBGL
-            if (p === 37446) return 'ANGLE (Apple, Apple M1, OpenGL 4.1)';  // UNMASKED_RENDERER_WEBGL
-            return getParameterOrig.call(this, p);
-          };
-          if (typeof WebGL2RenderingContext !== 'undefined') {
-            const getParameter2Orig = WebGL2RenderingContext.prototype.getParameter;
-            WebGL2RenderingContext.prototype.getParameter = function(p) {
-              if (p === 37445) return 'Google Inc. (Apple)';
-              if (p === 37446) return 'ANGLE (Apple, Apple M1, OpenGL 4.1)';
-              return getParameter2Orig.call(this, p);
-            };
-          }
-        } catch {}
-      })();
-    `
+    // All anti-bot fingerprint patches are in webview-preload.ts (runs before page scripts).
+    // The executeJavaScript approach was too late — ThreatMetrix/PerimeterX run on first script.
 
     // Intercept window.open / target="_blank" → open as new tab, not new window
+    // Block popups to known ad/malware domains; allow legitimate ones (OAuth, payment, SSO)
     wc.setWindowOpenHandler((details) => {
+      if (adBlocker.isAdDomain(details.url)) {
+        return { action: 'deny' }
+      }
       mainWindow?.webContents.send('tab:create', details.url)
       return { action: 'deny' }
-    })
-
-    wc.on('did-start-navigation', (_event, _url, isInPlace) => {
-      if (isInPlace) return
-      // Reset patch flag so it re-runs on new pages
-      wc.executeJavaScript('window.__oculoPatched = false').catch(() => {})
-      wc.executeJavaScript(antiBotScript).catch(() => {})
-    })
-    wc.on('dom-ready', () => {
-      // Re-run on dom-ready as backup (some sites check late)
-      wc.executeJavaScript(antiBotScript).catch(() => {})
     })
   })
 
@@ -594,6 +510,12 @@ app.whenReady().then(async () => {
   historyStore = new HistoryStore()
   zoomStore = new ZoomStore()
   runCache = new RunCache()
+  sessionMemoryStore = new SessionMemoryStore()
+  containerStore = new ContainerStore()
+  cardStore = new CardStore()
+  workspaceStore = new WorkspaceStore()
+  macroStore = new MacroStore()
+  pinnedAppStore = new PinnedAppStore()
 
   // Create window
   const window = createWindow()
@@ -640,8 +562,30 @@ app.whenReady().then(async () => {
     console.log('[Oculo] Pushed configs to MCP server')
   }
 
+  // Initialize PTY manager (for terminal tab + AI shell tool)
+  ptyManager = new PtyManager(window)
+  mcpServer.setPtyManager(ptyManager)
+
+  // Initialize MCP Client Manager (Connected Apps)
+  mcpClientManager = new McpClientManager()
+  // Load saved client configs and connect enabled servers
+  try {
+    const savedClients = (allSettings as any)?.mcpClients || []
+    if (savedClients.length > 0) {
+      console.log(`[Oculo] Loading ${savedClients.length} MCP client config(s)`)
+      mcpClientManager.loadConfigs(savedClients).catch(err =>
+        console.error('[Oculo] MCP client load error:', err)
+      )
+    }
+  } catch (err) {
+    console.error('[Oculo] MCP client init error:', err)
+  }
+
+  // Wire MCP client manager to AI agent for connected app tool routing
+  agentController.setMcpClientManager(mcpClientManager)
+
   // Setup IPC handlers (after agent init so chat handlers are wired)
-  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache)
+  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache, ptyManager, mcpClientManager, sessionMemoryStore, containerStore, cardStore, workspaceStore, macroStore, pinnedAppStore)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -651,6 +595,8 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   // Abort agent before cleaning up — safe even if window is already destroyed
   agentController?.abort()
+  ptyManager?.kill()
+  mcpClientManager?.disconnectAll().catch(() => {})
   mcpServer?.stop()
   auditLog?.close()
   if (process.platform !== 'darwin') {

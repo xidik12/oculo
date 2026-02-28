@@ -53,8 +53,23 @@ const IPC = {
   FILE_UPLOAD: 'file:upload',
   DOWNLOAD_TRIGGER: 'download:trigger',
   FILE_READ_SAFE: 'file:read-safe',
+  FILE_WRITE_SAFE: 'file:write-safe',
   CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image',
   A11Y_SNAPSHOT: 'a11y:snapshot',
+  OPEN_FILE: 'file:open',
+  FILE_DIALOG_OPEN: 'file:dialog-open',
+  MCP_CLIENT_LIST: 'mcp-client:list',
+  MCP_CLIENT_ADD: 'mcp-client:add',
+  MCP_CLIENT_REMOVE: 'mcp-client:remove',
+  MCP_CLIENT_TOGGLE: 'mcp-client:toggle',
+  MCP_CLIENT_STATUS: 'mcp-client:status',
+  MCP_CLIENT_TOOLS: 'mcp-client:tools',
+  MCP_CLIENT_CALL: 'mcp-client:call',
+  PTY_SPAWN: 'pty:spawn',
+  PTY_DATA: 'pty:data',
+  PTY_RESIZE: 'pty:resize',
+  PTY_EXIT: 'pty:exit',
+  PTY_KILL: 'pty:kill',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -315,6 +330,16 @@ const api = {
     ipcRenderer.on('reopen-closed-tab', handler)
     return () => { ipcRenderer.removeListener('reopen-closed-tab', handler) }
   },
+  onNavBack: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('nav-back', handler)
+    return () => { ipcRenderer.removeListener('nav-back', handler) }
+  },
+  onNavForward: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('nav-forward', handler)
+    return () => { ipcRenderer.removeListener('nav-forward', handler) }
+  },
 
   // === MCP Navigation (AI-triggered) ===
   onMcpNavigate: (callback: (url: string) => void) => {
@@ -402,12 +427,24 @@ const api = {
     ipcRenderer.invoke(IPC.DOWNLOAD_TRIGGER, url),
 
   // === Sandboxed file read (Phase 4) ===
-  fileReadSafe: (filePath: string): Promise<string> =>
-    ipcRenderer.invoke(IPC.FILE_READ_SAFE, filePath),
+  fileReadSafe: (filePath: string, pageUrl?: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.FILE_READ_SAFE, filePath, pageUrl),
+
+  // === Sandboxed file write (local file editing) ===
+  fileWriteSafe: (filePath: string, content: string, pageUrl?: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.FILE_WRITE_SAFE, filePath, content, pageUrl),
 
   // === Clipboard image (Phase 5) ===
   clipboardWriteImage: (base64Png: string): Promise<boolean> =>
     ipcRenderer.invoke(IPC.CLIPBOARD_WRITE_IMAGE, base64Png),
+
+  // === Open file with system default app ===
+  openFile: (filePath: string): Promise<string> =>
+    ipcRenderer.invoke(IPC.OPEN_FILE, filePath),
+
+  // === File dialog (pick files for chat attachments) ===
+  fileDialogOpen: (): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.FILE_DIALOG_OPEN),
 
   // === Get webContentsId for active webview (Phase 2 helper) ===
   getWebContentsId: (tabId: string): number | null => {
@@ -450,6 +487,106 @@ const api = {
   // === Print to PDF ===
   printToPDF: (webContentsId: number): Promise<string> =>
     ipcRenderer.invoke('print:to-pdf', webContentsId),
+
+  // === PTY Terminal ===
+  ptySpawn: (cols: number, rows: number): void =>
+    ipcRenderer.send(IPC.PTY_SPAWN, cols, rows),
+  ptyWrite: (data: string): void =>
+    ipcRenderer.send(IPC.PTY_DATA, data),
+  ptyResize: (cols: number, rows: number): void =>
+    ipcRenderer.send(IPC.PTY_RESIZE, cols, rows),
+  ptyKill: (): void =>
+    ipcRenderer.send(IPC.PTY_KILL),
+  onPtyData: (callback: (data: string) => void): (() => void) => {
+    const handler = (_: any, data: string) => callback(data)
+    ipcRenderer.on(IPC.PTY_DATA, handler)
+    return () => ipcRenderer.removeListener(IPC.PTY_DATA, handler)
+  },
+  onPtyExit: (callback: (exitCode: number, signal?: number) => void): (() => void) => {
+    const handler = (_: any, exitCode: number, signal?: number) => callback(exitCode, signal)
+    ipcRenderer.on(IPC.PTY_EXIT, handler)
+    return () => ipcRenderer.removeListener(IPC.PTY_EXIT, handler)
+  },
+
+  // === MCP Client (Connected Apps) ===
+  mcpClientList: (): Promise<any[]> =>
+    ipcRenderer.invoke(IPC.MCP_CLIENT_LIST),
+  mcpClientAdd: (config: any): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.MCP_CLIENT_ADD, config),
+  mcpClientRemove: (serverId: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.MCP_CLIENT_REMOVE, serverId),
+  mcpClientToggle: (serverId: string, enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.MCP_CLIENT_TOGGLE, serverId, enabled),
+  mcpClientStatus: (): Promise<any[]> =>
+    ipcRenderer.invoke(IPC.MCP_CLIENT_STATUS),
+  mcpClientTools: (): Promise<any[]> =>
+    ipcRenderer.invoke(IPC.MCP_CLIENT_TOOLS),
+  mcpClientCall: (name: string, args: any): Promise<string> =>
+    ipcRenderer.invoke(IPC.MCP_CLIENT_CALL, name, args),
+
+  // === Session Memory ===
+  memoryList: (): Promise<any[]> => ipcRenderer.invoke('memory:list'),
+  memoryAdd: (summary: string, urls: string[], tags?: string[]): Promise<any> =>
+    ipcRenderer.invoke('memory:add', summary, urls, tags),
+  memoryClear: (): Promise<boolean> => ipcRenderer.invoke('memory:clear'),
+
+  // === Containers ===
+  containerList: (): Promise<any[]> => ipcRenderer.invoke('container:list'),
+  containerCreate: (name: string, color: string, icon: string): Promise<any> =>
+    ipcRenderer.invoke('container:create', name, color, icon),
+  containerUpdate: (id: string, updates: any): Promise<any> =>
+    ipcRenderer.invoke('container:update', id, updates),
+  containerDelete: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('container:delete', id),
+
+  // === Cards / AI Skills ===
+  cardList: (): Promise<any[]> => ipcRenderer.invoke('card:list'),
+  cardCreate: (name: string, icon: string, systemInstruction: string, triggerDomains?: string[]): Promise<any> =>
+    ipcRenderer.invoke('card:create', name, icon, systemInstruction, triggerDomains),
+  cardUpdate: (id: string, updates: any): Promise<any> =>
+    ipcRenderer.invoke('card:update', id, updates),
+  cardDelete: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('card:delete', id),
+  cardActivate: (id: string): Promise<any> =>
+    ipcRenderer.invoke('card:activate', id),
+
+  // === Workspaces ===
+  workspaceList: (): Promise<any[]> => ipcRenderer.invoke('workspace:list'),
+  workspaceCreate: (name: string, color: string): Promise<any> =>
+    ipcRenderer.invoke('workspace:create', name, color),
+  workspaceSwitch: (id: string): Promise<any> =>
+    ipcRenderer.invoke('workspace:switch', id),
+  workspaceDelete: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('workspace:delete', id),
+  workspaceSave: (id: string, tabIds: string[], tabUrls: string[], aiHistory: any[]): Promise<boolean> =>
+    ipcRenderer.invoke('workspace:save', id, tabIds, tabUrls, aiHistory),
+
+  // === Macros ===
+  macroList: (): Promise<any[]> => ipcRenderer.invoke('macro:list'),
+  macroCreate: (name: string, steps: any[], shortcut?: string, description?: string): Promise<any> =>
+    ipcRenderer.invoke('macro:create', name, steps, shortcut, description),
+  macroUpdate: (id: string, updates: any): Promise<any> =>
+    ipcRenderer.invoke('macro:update', id, updates),
+  macroDelete: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('macro:delete', id),
+
+  // === Pinned Sidebar Apps ===
+  pinnedAppList: (): Promise<any[]> => ipcRenderer.invoke('pinned-app:list'),
+  pinnedAppAdd: (url: string, title: string, favicon?: string, width?: number): Promise<any> =>
+    ipcRenderer.invoke('pinned-app:add', url, title, favicon, width),
+  pinnedAppRemove: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('pinned-app:remove', id),
+  pinnedAppUpdate: (id: string, updates: any): Promise<any> =>
+    ipcRenderer.invoke('pinned-app:update', id, updates),
+  pinnedAppSave: (apps: any[]): Promise<boolean> =>
+    ipcRenderer.invoke('pinned-app:save', apps),
+
+  // === Focus Mode ===
+  onFocusMode: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('focus-mode', handler)
+    return () => { ipcRenderer.removeListener('focus-mode', handler) }
+  },
 
   // === Webview preload script path (for <webview preload="..."> attribute) ===
   webviewPreloadPath: path.join(__dirname, 'webview-preload.js'),
