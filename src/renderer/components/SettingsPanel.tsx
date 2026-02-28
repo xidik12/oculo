@@ -525,10 +525,10 @@ function MediaSettings({ apiKeys, setApiKeys, onSaveKey, onRemoveKey, statuses }
 // ── Connected Apps (MCP Client) ──────────────────────────────────────────────
 
 const PRE_CONFIGURED_APPS = [
-  { id: 'gmail', name: 'Gmail', icon: '📧', transport: 'stdio' as const, command: 'npx -y @anthropic/gmail-mcp-server', description: 'Read, search, and send emails via Gmail API' },
-  { id: 'calendar', name: 'Google Calendar', icon: '📅', transport: 'stdio' as const, command: 'npx -y @anthropic/google-calendar-mcp-server', description: 'Create, update, and list calendar events' },
-  { id: 'notion', name: 'Notion', icon: '📝', transport: 'stdio' as const, command: 'npx -y @anthropic/notion-mcp-server', description: 'Read and edit Notion pages and databases' },
-  { id: 'slack', name: 'Slack', icon: '💬', transport: 'stdio' as const, command: 'npx -y @anthropic/slack-mcp-server', description: 'Send messages and interact with Slack channels' },
+  { id: 'slack', name: 'Slack', icon: '💬', transport: 'stdio' as const, command: 'npx -y @modelcontextprotocol/server-slack', description: 'Send messages and interact with Slack channels', envHint: 'SLACK_BOT_TOKEN' },
+  { id: 'github', name: 'GitHub', icon: '🐙', transport: 'stdio' as const, command: 'npx -y @modelcontextprotocol/server-github', description: 'Manage repos, issues, PRs, and code search', envHint: 'GITHUB_PERSONAL_ACCESS_TOKEN' },
+  { id: 'brave-search', name: 'Brave Search', icon: '🔍', transport: 'stdio' as const, command: 'npx -y @modelcontextprotocol/server-brave-search', description: 'Web search via Brave Search API', envHint: 'BRAVE_API_KEY' },
+  { id: 'memory', name: 'Memory', icon: '🧠', transport: 'stdio' as const, command: 'npx -y @modelcontextprotocol/server-memory', description: 'Persistent knowledge graph for AI memory' },
 ]
 
 interface McpServerStatus { id: string; status: 'connected' | 'disconnected' | 'error' | 'connecting'; toolCount?: number; error?: string }

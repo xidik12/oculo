@@ -139,7 +139,10 @@ export function setupIPC(
   // Chat Panel
   ipcMain.handle(IPC.CHAT_SEND, async (_, message: string) => {
     if (!agent) return { error: 'Agent not initialized' }
-    agent.handleMessage(message)
+    agent.handleMessage(message).catch((err) => {
+      console.error('[Oculo] handleMessage error:', err)
+      agent?.emit({ type: 'error', error: String(err?.message || err) })
+    })
     return true
   })
 
@@ -154,7 +157,7 @@ export function setupIPC(
   })
 
   ipcMain.handle(IPC.CHAT_GET_STATUS, async () => {
-    return agent?.getStatus() || { hasClaudeCode: false, messageCount: 0, activeProvider: 'claude', activeModel: 'claude-sonnet-4-6' }
+    return agent?.getStatus() || { hasClaudeCode: false, messageCount: 0, activeProvider: 'claude', activeModel: 'claude-sonnet-4-5-20241022' }
   })
 
   // AI Provider Management
@@ -173,7 +176,7 @@ export function setupIPC(
   })
 
   ipcMain.handle(IPC.AI_GET_ACTIVE, async () => {
-    return agent?.getActiveProvider() || { providerId: 'claude', modelId: 'claude-sonnet-4-6' }
+    return agent?.getActiveProvider() || { providerId: 'claude', modelId: 'claude-sonnet-4-5-20241022' }
   })
 
   // === Auth (in-app OAuth) ===

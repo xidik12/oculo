@@ -346,7 +346,7 @@ export class AgentController {
   private cardStore = new CardStore()
   private messageCount = 0
   private activeProvider: AIProviderId = 'claude'
-  private activeModel: string = 'claude-sonnet-4-6'
+  private activeModel: string = 'claude-sonnet-4-5-20241022'
   private providerConfigs: Map<AIProviderId, AIProviderConfig> = new Map()
   private currentAbort: AbortController | null = null
   private conversationHistory: Array<{ role: string; content: string | ContentBlock[] }> = []
@@ -1691,7 +1691,13 @@ export class AgentController {
     }
   }
 
-  private emit(event: ChatStreamEvent): void {
-    try { if (!this.mainWindow.isDestroyed()) this.mainWindow.webContents.send('chat:stream', event) } catch {}
+  emit(event: ChatStreamEvent): void {
+    try {
+      if (!this.mainWindow.isDestroyed()) {
+        this.mainWindow.webContents.send('chat:stream', event)
+      }
+    } catch (err) {
+      console.error('[Oculo] emit failed:', err)
+    }
   }
 }

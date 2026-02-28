@@ -262,7 +262,7 @@ function useChatState() {
   const [error, setError] = useState<string | null>(null)
   const [inputValue, setInputValue] = useState('')
   const [activeProvider, setActiveProvider] = useState('claude')
-  const [activeModel, setActiveModel] = useState('claude-sonnet-4-6')
+  const [activeModel, setActiveModel] = useState('claude-sonnet-4-5-20241022')
   const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null)
   const [attachedFiles, setAttachedFiles] = useState<string[]>([])
   const toolCallsRef = useRef<ChatToolCall[]>([])
@@ -952,11 +952,31 @@ function TerminalView({ isVisible }: { isVisible: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
+  const initRef = useRef(false)
+  const cleanupRef = useRef<(() => void) | null>(null)
   const [exited, setExited] = useState(false)
 
+  // Initialize xterm only when the tab becomes visible (container has layout dimensions)
   useEffect(() => {
+    if (!isVisible || initRef.current) {
+      // If already initialized and becoming visible again, just re-fit
+      if (isVisible && termRef.current && fitRef.current) {
+        requestAnimationFrame(() => {
+          fitRef.current?.fit()
+          termRef.current?.focus()
+          const oculo = api()
+          if (oculo && termRef.current) {
+            oculo.ptyResize(termRef.current.cols, termRef.current.rows)
+          }
+        })
+      }
+      return
+    }
+
     const oculo = api()
     if (!oculo || !containerRef.current) return
+
+    initRef.current = true
 
     const term = new Terminal({
       theme: {
@@ -1026,7 +1046,7 @@ function TerminalView({ isVisible }: { isVisible: boolean }) {
     termRef.current = term
     fitRef.current = fitAddon
 
-    return () => {
+    cleanupRef.current = () => {
       observer.disconnect()
       dataDisposable.dispose()
       cleanupData()
@@ -1035,20 +1055,12 @@ function TerminalView({ isVisible }: { isVisible: boolean }) {
       term.dispose()
       termRef.current = null
       fitRef.current = null
+      initRef.current = false
     }
-  }, [])
 
-  // Re-fit and focus when tab becomes visible
-  useEffect(() => {
-    if (isVisible && termRef.current && fitRef.current) {
-      requestAnimationFrame(() => {
-        fitRef.current?.fit()
-        termRef.current?.focus()
-        const oculo = api()
-        if (oculo && termRef.current) {
-          oculo.ptyResize(termRef.current.cols, termRef.current.rows)
-        }
-      })
+    return () => {
+      cleanupRef.current?.()
+      cleanupRef.current = null
     }
   }, [isVisible])
 
