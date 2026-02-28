@@ -262,7 +262,7 @@ function useChatState() {
   const [error, setError] = useState<string | null>(null)
   const [inputValue, setInputValue] = useState('')
   const [activeProvider, setActiveProvider] = useState('claude')
-  const [activeModel, setActiveModel] = useState('claude-sonnet-4-5-20241022')
+  const [activeModel, setActiveModel] = useState('claude-sonnet-4-6')
   const [lastUsage, setLastUsage] = useState<TokenUsage | null>(null)
   const [attachedFiles, setAttachedFiles] = useState<string[]>([])
   const toolCallsRef = useRef<ChatToolCall[]>([])

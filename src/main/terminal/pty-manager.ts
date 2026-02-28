@@ -72,7 +72,15 @@ export class PtyManager {
 
   /** Spawn an interactive PTY session for the terminal tab */
   spawn(cols: number, rows: number): void {
-    if (!pty) return
+    if (!pty) {
+      console.error('[PtyManager] node-pty not loaded — cannot spawn terminal')
+      try {
+        this.mainWindow.webContents.send('pty:data',
+          '\r\n\x1b[31m[Error: node-pty not available. Try: npx electron-rebuild -f -w node-pty]\x1b[0m\r\n')
+      } catch { /* window may be destroyed */ }
+      return
+    }
+    console.log(`[PtyManager] Spawning PTY: ${cols}x${rows}, shell: ${this.shellPath}`)
     if (this.session) this.kill()
 
     const home = process.env['HOME'] || process.env['USERPROFILE'] || os.homedir()
@@ -85,6 +93,8 @@ export class PtyManager {
       env: this.shellEnv
     })
 
+    console.log(`[PtyManager] PTY spawned successfully, pid: ${this.session.pid}`)
+
     this.session.onData((data) => {
       try {
         this.mainWindow.webContents.send('pty:data', data)
@@ -92,6 +102,7 @@ export class PtyManager {
     })
 
     this.session.onExit(({ exitCode, signal }) => {
+      console.log(`[PtyManager] PTY exited: code=${exitCode}, signal=${signal}`)
       try {
         this.mainWindow.webContents.send('pty:exit', exitCode, signal)
       } catch { /* window may be destroyed */ }

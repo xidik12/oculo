@@ -41,8 +41,10 @@ export const AI_PROVIDERS: AIProvider[] = [
     authType: 'dual',
     icon: 'claude',
     models: [
-      { id: 'claude-sonnet-4-5-20241022', name: 'Claude Sonnet 4.5', providerId: 'claude' },
-      { id: 'claude-opus-4-5-20250514', name: 'Claude Opus 4.5', providerId: 'claude' },
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', providerId: 'claude' },
+      { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', providerId: 'claude' },
+      { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', providerId: 'claude' },
+      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', providerId: 'claude' },
       { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', providerId: 'claude' },
     ]
   },

@@ -157,7 +157,7 @@ export function setupIPC(
   })
 
   ipcMain.handle(IPC.CHAT_GET_STATUS, async () => {
-    return agent?.getStatus() || { hasClaudeCode: false, messageCount: 0, activeProvider: 'claude', activeModel: 'claude-sonnet-4-5-20241022' }
+    return agent?.getStatus() || { hasClaudeCode: false, messageCount: 0, activeProvider: 'claude', activeModel: 'claude-sonnet-4-6' }
   })
 
   // AI Provider Management
@@ -176,7 +176,7 @@ export function setupIPC(
   })
 
   ipcMain.handle(IPC.AI_GET_ACTIVE, async () => {
-    return agent?.getActiveProvider() || { providerId: 'claude', modelId: 'claude-sonnet-4-5-20241022' }
+    return agent?.getActiveProvider() || { providerId: 'claude', modelId: 'claude-sonnet-4-6' }
   })
 
   // === Auth (in-app OAuth) ===
