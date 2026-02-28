@@ -2,7 +2,16 @@ node_modules/
 out/
 dist/
 dist-private/
+releases/
 *.tsbuildinfo
 .DS_Store
 .env
 models/
+
+# Stale tsc build artifacts
+electron.vite.config.js
+electron.vite.config.d.ts
+vitest.config.js
+vitest.config.d.ts
+tests/**/*.js
+tests/**/*.d.ts
