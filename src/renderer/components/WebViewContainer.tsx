@@ -6,10 +6,11 @@ interface Props {
   isActive: boolean
   onUpdate: (updates: Partial<Tab>) => void
   onTextSelected?: (data: { text: string; x: number; y: number }) => void
+  onClose?: () => void
   suspended?: boolean
 }
 
-export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelected, suspended }: Props) {
+export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelected, onClose, suspended }: Props) {
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
   const lastLoadedUrl = useRef('')
   const domReady = useRef(false)
@@ -25,6 +26,38 @@ export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelect
     const onNav = (e: any) => {
       lastLoadedUrl.current = e.url
       onUpdate({ url: e.url, isLoading: false, canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() })
+      // OAuth popup detection: if this tab has an opener and the URL contains auth tokens,
+      // relay the auth data back to the opener tab via postMessage and signal for auto-close
+      if (tab.openerId && e.url) {
+        try {
+          const url = new URL(e.url)
+          const params = new URLSearchParams(url.search + (url.hash ? '&' + url.hash.substring(1) : ''))
+          const hasAuth = params.has('code') || params.has('token') || params.has('access_token') || params.has('id_token')
+          if (hasAuth) {
+            const authData: Record<string, string> = {}
+            for (const [k, v] of params.entries()) authData[k] = v
+            // Find the opener webview via the API's webview registry and relay the OAuth data
+            const api = (window as any).oculo
+            // Notify opener's webview via the executeInWebview bridge
+            if (api?.executeInWebview) {
+              // Find opener tab by matching webContentsId
+              const allTabs = document.querySelectorAll('webview')
+              for (const owv of Array.from(allTabs)) {
+                try {
+                  if ((owv as any).getWebContentsId?.() === tab.openerId) {
+                    ;(owv as any).executeJavaScript(
+                      'window.postMessage(' + JSON.stringify({ type: 'oculo:oauth-callback', ...authData }) + ', "*")'
+                    ).catch(() => {})
+                    break
+                  }
+                } catch { /* skip */ }
+              }
+            }
+            // Signal that this popup should be auto-closed
+            onUpdate({ title: '[OAuth Complete]' })
+          }
+        } catch { /* not a valid URL or opener gone */ }
+      }
     }
     const onStartLoad = () => onUpdate({ isLoading: true, canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() })
     const onStopLoad = () => onUpdate({ isLoading: false, canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() })
@@ -47,6 +80,11 @@ export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelect
       console.log('[Oculo] Webview responsive again')
     }
 
+    // Handle window.close() from popup/OAuth tabs
+    const onWindowClose = () => {
+      if (onClose) onClose()
+    }
+
     wv.addEventListener('did-navigate', onNav)
     wv.addEventListener('did-navigate-in-page', onNav)
     wv.addEventListener('did-start-loading', onStartLoad)
@@ -57,7 +95,8 @@ export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelect
     wv.addEventListener('crashed', onCrash)
     wv.addEventListener('unresponsive', onUnresponsive)
     wv.addEventListener('responsive', onResponsive)
-  }, [onUpdate])
+    wv.addEventListener('close', onWindowClose)
+  }, [onUpdate, onClose])
 
   // Register webview with preload API and set up dom-ready listener
   useEffect(() => {
@@ -77,6 +116,33 @@ export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelect
     const onDomReady = () => {
       setupWebview(wv)
       notifyActive()
+      // Wire CAPTCHA MutationObserver to detect dynamically-loaded CAPTCHAs
+      try {
+        ;(wv as any).executeJavaScript(`
+          (function() {
+            if (window.__oculo_captcha_observer) return;
+            var selectors = ['iframe[src*="recaptcha"]','iframe[src*="hcaptcha"]','iframe[src*="turnstile"]','.g-recaptcha','.h-captcha','.cf-turnstile','[data-sitekey]'];
+            function checkCaptcha() {
+              for (var i = 0; i < selectors.length; i++) {
+                if (document.querySelector(selectors[i])) {
+                  window.dispatchEvent(new CustomEvent('oculo:captcha-detected', { detail: { selector: selectors[i] } }));
+                  return true;
+                }
+              }
+              return false;
+            }
+            if (!checkCaptcha()) {
+              window.__oculo_captcha_observer = new MutationObserver(function() {
+                if (checkCaptcha() && window.__oculo_captcha_observer) {
+                  window.__oculo_captcha_observer.disconnect();
+                  window.__oculo_captcha_observer = null;
+                }
+              });
+              window.__oculo_captcha_observer.observe(document.body, { childList: true, subtree: true });
+            }
+          })()
+        `).catch(() => {})
+      } catch { /* CAPTCHA observer setup failed, non-critical */ }
     }
 
     const onDidNavigate = () => {

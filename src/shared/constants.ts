@@ -58,6 +58,8 @@ export const PERMISSION_MAP: Record<string, import('./types').PermissionLevel> =
   'change_password': 'confirm',
   'send_email': 'confirm',
   'download': 'confirm',
+  'exportCookies': 'confirm',
+  'importCookies': 'confirm',
   'oauth': 'confirm',
   'shell': 'notify',
 

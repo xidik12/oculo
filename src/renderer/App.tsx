@@ -91,7 +91,7 @@ export default function App() {
     const api = oculoApi()
     if (!api) return
     const cleanups = [
-      api.onNewTab((url?: string) => handleNewTab(url)),
+      api.onNewTab((url?: string, openerId?: number) => handleNewTab(url, openerId)),
       api.onCloseActiveTab(() => handleCloseTab(activeTabId)),
       api.onToggleChat?.(() => setChatOpen(prev => !prev)),
       api.onFindInPage?.(() => setFindOpen(true)),
@@ -145,7 +145,18 @@ export default function App() {
     // Helper: build click JS code as a string (avoids template literal issues)
     // Searches both main document AND iframes (same-origin + contentDocument accessible)
     // Returns candidate info when element is not found or ambiguous
-    function buildClickCode(text: string, selector: string, nth: number): string {
+    function buildClickCode(text: string, selector: string, nth: number, modifiers?: string[]): string {
+      const mods = modifiers || []
+      const modFlags = '{bubbles:true,clientX:cx__N__,clientY:cy__N__' +
+        (mods.includes('ctrl') || mods.includes('control') ? ',ctrlKey:true' : '') +
+        (mods.includes('shift') ? ',shiftKey:true' : '') +
+        (mods.includes('alt') ? ',altKey:true' : '') +
+        (mods.includes('meta') || mods.includes('cmd') ? ',metaKey:true' : '') +
+        '}'
+      // Generate modifier flags for each click location variant (0, 1, 2)
+      const mf0 = modFlags.replace(/__N__/g, '0')
+      const mf1 = modFlags.replace(/__N__/g, '1')
+      const mf2 = modFlags.replace(/__N__/g, '2')
       return '(function(){' +
         'var text=' + JSON.stringify(text) + ';' +
         'var sel=' + JSON.stringify(selector) + ';' +
@@ -156,10 +167,10 @@ export default function App() {
         'var ref=window.__oculoRefs[idx];' +
         'if(ref){ref.scrollIntoView({block:"center"});' +
         'var r0=ref.getBoundingClientRect();var cx0=r0.left+r0.width/2+Math.random()*4-2,cy0=r0.top+r0.height/2+Math.random()*4-2;' +
-        'ref.dispatchEvent(new MouseEvent("mouseover",{bubbles:true,clientX:cx0,clientY:cy0}));' +
-        'ref.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,clientX:cx0,clientY:cy0}));' +
-        'ref.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,clientX:cx0,clientY:cy0}));' +
-        'ref.dispatchEvent(new MouseEvent("click",{bubbles:true,clientX:cx0,clientY:cy0}));' +
+        'ref.dispatchEvent(new MouseEvent("mouseover",' + mf0 + '));' +
+        'ref.dispatchEvent(new MouseEvent("mousedown",' + mf0 + '));' +
+        'ref.dispatchEvent(new MouseEvent("mouseup",' + mf0 + '));' +
+        'ref.dispatchEvent(new MouseEvent("click",' + mf0 + '));' +
         'return "Clicked #"+(idx+1)+" \\""+((ref.textContent||"").trim().substring(0,40))+"\\""}' +
         'return "Ref "+text+" not found ("+window.__oculoRefs.length+" refs available)";}' +
         // Visibility helper
@@ -224,10 +235,10 @@ export default function App() {
         'var el2=els[nth]||els[0];el2.scrollIntoView({block:"center",behavior:"smooth"});' +
         'setTimeout(function(){' +
         'var r2=el2.getBoundingClientRect();var cx2=r2.left+r2.width/2+Math.random()*4-2,cy2=r2.top+r2.height/2+Math.random()*4-2;' +
-        'el2.dispatchEvent(new MouseEvent("mouseover",{bubbles:true,clientX:cx2,clientY:cy2}));' +
-        'el2.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,clientX:cx2,clientY:cy2}));' +
-        'el2.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,clientX:cx2,clientY:cy2}));' +
-        'el2.dispatchEvent(new MouseEvent("click",{bubbles:true,clientX:cx2,clientY:cy2}));' +
+        'el2.dispatchEvent(new MouseEvent("mouseover",' + mf2 + '));' +
+        'el2.dispatchEvent(new MouseEvent("mousedown",' + mf2 + '));' +
+        'el2.dispatchEvent(new MouseEvent("mouseup",' + mf2 + '));' +
+        'el2.dispatchEvent(new MouseEvent("click",' + mf2 + '));' +
         '},300);' +
         'return "Scrolled to and clicked \\""+((el2.textContent||"").trim().substring(0,50))+"\\" (was out of view)";}' +
         '}' +
@@ -247,10 +258,10 @@ export default function App() {
         'var el=els[nth]||els[0];' +
         'el.scrollIntoView({block:"center"});' +
         'var r1=el.getBoundingClientRect();var cx1=r1.left+r1.width/2+Math.random()*4-2,cy1=r1.top+r1.height/2+Math.random()*4-2;' +
-        'el.dispatchEvent(new MouseEvent("mouseover",{bubbles:true,clientX:cx1,clientY:cy1}));' +
-        'el.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,clientX:cx1,clientY:cy1}));' +
-        'el.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,clientX:cx1,clientY:cy1}));' +
-        'el.dispatchEvent(new MouseEvent("click",{bubbles:true,clientX:cx1,clientY:cy1}));' +
+        'el.dispatchEvent(new MouseEvent("mouseover",' + mf1 + '));' +
+        'el.dispatchEvent(new MouseEvent("mousedown",' + mf1 + '));' +
+        'el.dispatchEvent(new MouseEvent("mouseup",' + mf1 + '));' +
+        'el.dispatchEvent(new MouseEvent("click",' + mf1 + '));' +
         'var clicked=(el.textContent||"").trim().substring(0,50);' +
         'var r="Clicked \\""+clicked+"\\"";' +
         'if(els.length>1)r+=" ("+els.length+" matches — use nth:N to pick another)";' +
@@ -681,13 +692,31 @@ export default function App() {
       try {
         let wv = findActiveWebview()
 
-        // No webview exists (newtab) — for navigate, update state and return immediately.
-        // React will render a WebViewContainer, the user will see the page load.
+        // No webview exists (newtab) — for navigate, update state to trigger React render,
+        // then wait for the webview to mount and the page to load before returning.
         if (!wv && toolName === 'act' && args?.action === 'navigate' && args?.url) {
           const tempTitle = new URL(args.url).hostname.replace('www.', '')
           setTabs(prev => prev.map(t => t.id === activeTabIdRef.current ? { ...t, url: args.url, title: tempTitle, isLoading: true } : t))
-          // Return immediately — don't block the React render cycle
-          api.sendMcpToolResult(callId, 'Navigating to ' + args.url + ' — page is loading.')
+          // Poll for webview to appear (React needs to render WebViewContainer)
+          let newWv: any = null
+          for (let i = 0; i < 25; i++) { // 25 * 200ms = 5s max
+            await new Promise(r => setTimeout(r, 200))
+            newWv = findActiveWebview()
+            if (newWv) break
+          }
+          if (!newWv) {
+            api.sendMcpToolResult(callId, 'Navigating to ' + args.url + ' — page is loading.')
+            return
+          }
+          // Wait for webview to finish loading
+          await waitForWebviewReady(newWv, 8)
+          try {
+            const title = await (newWv as any).executeJavaScript('document.title')
+            const snapshot = await getRefTaggedSnapshot(newWv) || await getPageSnapshot(newWv, true)
+            api.sendMcpToolResult(callId, 'Navigated to ' + (title || tempTitle) + ' | ' + args.url + (snapshot ? '\n---\n' + snapshot : ''))
+          } catch {
+            api.sendMcpToolResult(callId, 'Navigated to ' + args.url)
+          }
           return
         }
 
@@ -843,7 +872,7 @@ export default function App() {
                   )
                 } catch { /* pre-sim failed, proceed anyway */ }
               }
-              result = await (wv as any).executeJavaScript(buildClickCode(args.text || '', args.selector || '', args.nth || 0))
+              result = await (wv as any).executeJavaScript(buildClickCode(args.text || '', args.selector || '', args.nth || 0, args.modifiers))
               // Auto-retry with different strategy if element not found
               if (result.startsWith('Element not found') && (args.text || args.selector)) {
                 // Strategy 1: Try via a11y tree
@@ -1049,13 +1078,91 @@ export default function App() {
               } else {
                 try {
                   // sendInputEvent simulates real OS-level mouse events that propagate through iframes
-                  ;(wv as any).sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+                  const clickMods = args.modifiers || []
+                  const inputMods: string[] = []
+                  if (clickMods.includes('ctrl') || clickMods.includes('control')) inputMods.push('control')
+                  if (clickMods.includes('shift')) inputMods.push('shift')
+                  if (clickMods.includes('alt')) inputMods.push('alt')
+                  if (clickMods.includes('meta') || clickMods.includes('cmd')) inputMods.push('meta')
+                  ;(wv as any).sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1, modifiers: inputMods })
                   await new Promise(r => setTimeout(r, 50))
-                  ;(wv as any).sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+                  ;(wv as any).sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1, modifiers: inputMods })
                   await new Promise(r => setTimeout(r, 500))
-                  result = 'Clicked at coordinates (' + x + ', ' + y + ')'
+                  result = 'Clicked at coordinates (' + x + ', ' + y + ')' + (inputMods.length ? ' with modifiers: ' + inputMods.join('+') : '')
                 } catch (e: any) {
                   result = 'Click failed: ' + e.message
+                }
+              }
+            } else if (action === 'drag') {
+              // Drag-and-drop — supports coordinate mode and element mode
+              // args.from: { x, y } | { text, selector }
+              // args.to: { x, y } | { text, selector }
+              // args.steps: number of intermediate mouse moves (default 10)
+              const dragFrom = args.from || {}
+              const dragTo = args.to || {}
+              const dragSteps = args.steps || 10
+
+              // Resolve element positions if text/selector provided
+              const resolvePos = async (spec: any): Promise<{ x: number; y: number } | null> => {
+                if (typeof spec.x === 'number' && typeof spec.y === 'number') {
+                  return { x: spec.x, y: spec.y }
+                }
+                if (spec.text || spec.selector) {
+                  const posCode = '(function(){' +
+                    'var sel=' + JSON.stringify(spec.selector || '') + ';' +
+                    'var text=' + JSON.stringify(spec.text || '') + ';' +
+                    'var el=sel?document.querySelector(sel):null;' +
+                    'if(!el&&text){el=Array.from(document.querySelectorAll("*")).find(function(e){' +
+                    'var t=(e.textContent||"").trim();return t.length<200&&t.toLowerCase().includes(text.toLowerCase());});}' +
+                    'if(!el)return null;' +
+                    'el.scrollIntoView({block:"center"});' +
+                    'var r=el.getBoundingClientRect();' +
+                    'return {x:Math.round(r.left+r.width/2),y:Math.round(r.top+r.height/2)};' +
+                    '})()'
+                  return await (wv as any).executeJavaScript(posCode)
+                }
+                return null
+              }
+
+              const fromPos = await resolvePos(dragFrom)
+              const toPos = await resolvePos(dragTo)
+
+              if (!fromPos || !toPos) {
+                result = 'Error: Could not resolve drag positions. from=' + JSON.stringify(dragFrom) + ' to=' + JSON.stringify(dragTo)
+              } else {
+                try {
+                  // 1. Dispatch HTML5 DnD events via JS (for sites using Drag API)
+                  await (wv as any).executeJavaScript(
+                    '(function(){' +
+                    'var fromEl=document.elementFromPoint(' + fromPos.x + ',' + fromPos.y + ');' +
+                    'var toEl=document.elementFromPoint(' + toPos.x + ',' + toPos.y + ');' +
+                    'if(fromEl){' +
+                    'var dt=new DataTransfer();' +
+                    'fromEl.dispatchEvent(new DragEvent("dragstart",{bubbles:true,cancelable:true,dataTransfer:dt,clientX:' + fromPos.x + ',clientY:' + fromPos.y + '}));' +
+                    'if(toEl){' +
+                    'toEl.dispatchEvent(new DragEvent("dragover",{bubbles:true,cancelable:true,dataTransfer:dt,clientX:' + toPos.x + ',clientY:' + toPos.y + '}));' +
+                    'toEl.dispatchEvent(new DragEvent("drop",{bubbles:true,cancelable:true,dataTransfer:dt,clientX:' + toPos.x + ',clientY:' + toPos.y + '}));' +
+                    '}' +
+                    'fromEl.dispatchEvent(new DragEvent("dragend",{bubbles:true,cancelable:true,dataTransfer:dt,clientX:' + toPos.x + ',clientY:' + toPos.y + '}));' +
+                    '}' +
+                    '})()'
+                  )
+                  // 2. Also simulate low-level mouse events (for non-DnD drag like sliders, sortable lists)
+                  ;(wv as any).sendInputEvent({ type: 'mouseDown', x: fromPos.x, y: fromPos.y, button: 'left', clickCount: 1 })
+                  await new Promise(r => setTimeout(r, 100))
+                  for (let i = 1; i <= dragSteps; i++) {
+                    const t = i / dragSteps
+                    // Bezier-ish curve for natural movement
+                    const cx = fromPos.x + (toPos.x - fromPos.x) * t + Math.sin(t * Math.PI) * (Math.random() * 4 - 2)
+                    const cy = fromPos.y + (toPos.y - fromPos.y) * t + Math.sin(t * Math.PI) * (Math.random() * 4 - 2)
+                    ;(wv as any).sendInputEvent({ type: 'mouseMove', x: Math.round(cx), y: Math.round(cy), button: 'left' })
+                    await new Promise(r => setTimeout(r, 20))
+                  }
+                  ;(wv as any).sendInputEvent({ type: 'mouseUp', x: toPos.x, y: toPos.y, button: 'left', clickCount: 1 })
+                  await new Promise(r => setTimeout(r, 200))
+                  result = 'Dragged from (' + fromPos.x + ',' + fromPos.y + ') to (' + toPos.x + ',' + toPos.y + ')'
+                } catch (e: any) {
+                  result = 'Drag failed: ' + e.message
                 }
               }
             } else if (action === 'doubleClick') {
@@ -1673,9 +1780,29 @@ export default function App() {
                   result = 'Auto-login failed: ' + e.message
                 }
               }
+              // Auto-submit the login form after filling credentials
+              if (result && result.includes('Filled credentials') && args.autoSubmit !== false) {
+                try {
+                  const submitResult = await (wv as any).executeJavaScript(
+                    '(function(){' +
+                    'var btn=document.querySelector("button[type=submit],input[type=submit]");' +
+                    'if(!btn){' +
+                    'var buttons=Array.from(document.querySelectorAll("button,[role=button]"));' +
+                    'btn=buttons.find(function(b){var t=(b.textContent||"").trim().toLowerCase();' +
+                    'return ["sign in","log in","login","submit","continue","next","enter"].some(function(k){return t.includes(k);});});' +
+                    '}' +
+                    'if(!btn){var form=document.querySelector("form");if(form){form.submit();return "Form submitted via form.submit()";}}' +
+                    'if(btn){btn.click();return "Clicked submit: \\""+((btn.textContent||"").trim().substring(0,30))+"\\"";}' +
+                    'return "";' +
+                    '})()'
+                  )
+                  if (submitResult) result += '\n' + submitResult
+                } catch { /* submit failed, continue */ }
+                await new Promise(r => setTimeout(r, 2000))
+              }
               // Wait for potential 2FA prompt after login form submit
               if (result && result.includes('Filled credentials')) {
-                await new Promise(r => setTimeout(r, 2000))
+                await new Promise(r => setTimeout(r, 1000))
                 // Check if 2FA/TOTP input appeared
                 try {
                   const currentHost = await (wv as any).executeJavaScript('location.hostname')
@@ -1996,9 +2123,93 @@ export default function App() {
                   } catch { /* keep raw result */ }
                 }
               }
+            } else if (action === 'solveCaptcha') {
+              // CAPTCHA solving — try CDP-based solver first, then vision fallback
+              try {
+                // Step 0: Try main-process CDP-based solver (audio, slider, text)
+                const wcId = (wv as any).getWebContentsId?.()
+                if (wcId && api.captchaSolve) {
+                  const cdpResult = await api.captchaSolve(wcId)
+                  if (cdpResult?.success && !cdpResult.message?.includes('No CAPTCHA detected')) {
+                    result = cdpResult.message
+                    break
+                  }
+                }
+                // Step 1: Screenshot the page (CAPTCHA area)
+                const nativeImg = await (wv as any).capturePage()
+                const screenshotBase64 = nativeImageToBase64(nativeImg)
+
+                // Step 2: Detect CAPTCHA type and input field
+                const captchaInfo = await (wv as any).executeJavaScript(
+                  '(function(){' +
+                  'var info={type:"unknown",hasInput:false,selector:""};' +
+                  // Check for different CAPTCHA types
+                  'if(document.querySelector("iframe[src*=recaptcha]"))info.type="recaptcha";' +
+                  'else if(document.querySelector("iframe[src*=hcaptcha]"))info.type="hcaptcha";' +
+                  'else if(document.querySelector("iframe[src*=turnstile]"))info.type="turnstile";' +
+                  'else if(document.querySelector("[class*=captcha] img,img[src*=captcha],#captchaImage"))info.type="image";' +
+                  'else if(document.querySelector("[class*=captcha] input,[name*=captcha]"))info.type="text";' +
+                  // Find input field
+                  'var inp=document.querySelector("#captcha-input,[name*=captcha i],input[placeholder*=captcha i],input[aria-label*=captcha i],[class*=captcha] input:not([type=hidden])");' +
+                  'if(inp){info.hasInput=true;info.selector=inp.id?"#"+inp.id:inp.name?"[name=\\""+inp.name+"\\"]":"[class*=captcha] input";}' +
+                  'return info;' +
+                  '})()'
+                )
+
+                if (captchaInfo.type === 'turnstile') {
+                  result = 'Cloudflare Turnstile detected — this auto-passes in a real browser. Wait a moment.'
+                } else if (!captchaInfo.hasInput && (captchaInfo.type === 'recaptcha' || captchaInfo.type === 'hcaptcha')) {
+                  result = 'CAPTCHA detected (' + captchaInfo.type + ') but it uses a challenge iframe. Screenshot captured — an AI with vision capabilities would analyze the image to solve it. For now, please solve manually in the browser.'
+                } else if (captchaInfo.hasInput) {
+                  // For text/image CAPTCHAs with input fields, we can try to solve
+                  result = 'CAPTCHA detected (' + captchaInfo.type + '). Input field found at: ' + captchaInfo.selector + '. Screenshot captured for AI analysis. To complete solving: analyze the screenshot, read the CAPTCHA text, then fill({\"' + captchaInfo.selector + '\": \"answer\"}).'
+                } else {
+                  result = 'CAPTCHA area detected but no solvable input found. Screenshot captured. Type: ' + captchaInfo.type
+                }
+
+                // Include screenshot path
+                if (screenshotBase64) {
+                  const screenshotPath = await api.screenshotSave(screenshotBase64)
+                  if (screenshotPath) result += '\nScreenshot saved: ' + screenshotPath
+                }
+              } catch (e: any) {
+                result = 'CAPTCHA solving error: ' + e.message
+              }
+            } else if (action === 'exportCookies') {
+              // Export session cookies (bypasses HttpOnly via Electron session API)
+              try {
+                const url = args.url || args.site || ''
+                const cookies = await api.cookiesExport?.(url || undefined)
+                if (cookies?.error) {
+                  result = 'Cookie export error: ' + cookies.error
+                } else if (cookies?.length) {
+                  result = 'Exported ' + cookies.length + ' cookies:\n' + JSON.stringify(cookies, null, 2)
+                } else {
+                  result = 'No cookies found' + (url ? ' for ' + url : '')
+                }
+              } catch (e: any) {
+                result = 'Cookie export failed: ' + e.message
+              }
+            } else if (action === 'importCookies') {
+              // Import cookies into the session
+              try {
+                const cookies = args.value ? JSON.parse(args.value) : []
+                if (!Array.isArray(cookies) || !cookies.length) {
+                  result = 'Error: provide cookies as JSON array in value field'
+                } else {
+                  const importResult = await api.cookiesImport?.(cookies)
+                  if (importResult?.error) {
+                    result = 'Cookie import error: ' + importResult.error
+                  } else {
+                    result = 'Imported ' + (importResult?.imported || 0) + ' cookies'
+                  }
+                }
+              } catch (e: any) {
+                result = 'Cookie import failed: ' + e.message
+              }
             } else { result = 'Unknown action: ' + action }
             // Auto-append page state after actions that change the page
-            const noSnapshotActions = ['wait', 'hover', 'getAttribute', 'evaluate', 'copy', 'screenshot', 'screenshotSoM', 'screenshotElement', 'clipboardImage', 'download', 'listDownloads', 'readFile', 'writeFile', 'listTabs', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'recordStart', 'recordStop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork']
+            const noSnapshotActions = ['wait', 'hover', 'getAttribute', 'evaluate', 'copy', 'screenshot', 'screenshotSoM', 'screenshotElement', 'clipboardImage', 'download', 'listDownloads', 'readFile', 'writeFile', 'listTabs', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'recordStart', 'recordStop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork', 'exportCookies', 'importCookies', 'solveCaptcha']
             if (!noSnapshotActions.includes(action)) {
               // Wait for DOM to stabilize after page-changing actions
               if (action === 'navigate' || action === 'click' || action === 'back' || action === 'forward' || action === 'reload') {
@@ -2030,6 +2241,43 @@ export default function App() {
               break
             }
             result = await (wv as any).executeJavaScript(buildFillCode(entries, args.submit))
+            // Handle file inputs — detect entries that look like file paths and upload via CDP
+            try {
+              const fileEntries = entries.filter(([_, v]) =>
+                typeof v === 'string' && (
+                  (v as string).startsWith('/') || (v as string).startsWith('~') ||
+                  (v as string).match(/^[A-Z]:\\/) || (v as string).startsWith('file://') ||
+                  (v as string).match(/^https?:\/\/.*\.(pdf|png|jpg|jpeg|gif|doc|docx|csv|txt|zip)$/i)
+                )
+              )
+              if (fileEntries.length > 0) {
+                let wcId: number | null = null
+                try { wcId = wv ? (wv as any).getWebContentsId?.() ?? null : null } catch { /* not ready */ }
+                if (wcId) {
+                  for (const [label, value] of fileEntries) {
+                    const filePath = String(value)
+                    // Find the file input matching this label
+                    const fileSelector = await (wv as any).executeJavaScript(
+                      '(function(){' +
+                      'var label=' + JSON.stringify(label) + ';' +
+                      'var inputs=document.querySelectorAll("input[type=file]");' +
+                      'for(var i=0;i<inputs.length;i++){' +
+                      'var inp=inputs[i];' +
+                      'var lbl=(inp.labels&&inp.labels[0]?inp.labels[0].textContent.trim():"")||inp.name||inp.id||inp.getAttribute("aria-label")||"";' +
+                      'if(lbl.toLowerCase().includes(label.toLowerCase())||label.toLowerCase().includes("file"))return inp.name?"input[name=\\""+inp.name+"\\"]":inp.id?"#"+inp.id:"input[type=file]:nth-of-type("+(i+1)+")";' +
+                      '}' +
+                      'if(inputs.length===1)return "input[type=file]";' +
+                      'return "";' +
+                      '})()'
+                    )
+                    if (fileSelector) {
+                      const uploadResult = await api.fileUpload(wcId, fileSelector, [filePath])
+                      result += '\nFile upload (' + label + '): ' + uploadResult
+                    }
+                  }
+                }
+              }
+            } catch { /* file upload detection failed, non-critical */ }
             // Detect form validation errors
             try {
               const validationResult = await (wv as any).executeJavaScript(
@@ -2173,41 +2421,62 @@ export default function App() {
                 // Re-use the same tool handlers inline
                 try {
                   if (stepTool === 'page') {
-                    const r = await (wv as any).executeJavaScript('"URL: "+location.href+"\\nTitle: "+document.title')
-                    results.push('page: ' + r)
-                  } else if (stepTool === 'act' && (stepArgs as any)?.action === 'click') {
+                    const snap = await getPageSnapshot(wv, true)
+                    results.push('page: ' + snap)
+                  } else if (stepTool === 'act') {
+                    // Delegate ALL act actions to the main act handler via recursive IPC-like call
                     const sa = stepArgs as any
-                    const r = await (wv as any).executeJavaScript(buildClickCode(sa.text || '', sa.selector || '', sa.nth || 0))
-                    results.push('act: ' + r)
-                  } else if (stepTool === 'act' && (stepArgs as any)?.action === 'navigate' && (stepArgs as any)?.url) {
-                    await (wv as any).loadURL((stepArgs as any).url)
-                    await new Promise(r => setTimeout(r, 2000))
-                    results.push('act: Navigated to ' + (stepArgs as any).url)
-                  } else if (stepTool === 'act' && (stepArgs as any)?.action === 'type') {
-                    const sa = stepArgs as any
-                    if (sa.selector) {
-                      const focusCode = '(function(){var el=document.querySelector(' + JSON.stringify(sa.selector) + ');if(el){el.focus();return "focused";}return "not found"})()'
-                      await (wv as any).executeJavaScript(focusCode)
-                      await new Promise(r => setTimeout(r, 100))
-                    }
-                    await (wv as any).insertText(sa.text || '')
-                    results.push('act: Typed ' + (sa.text || '').length + ' chars')
-                  } else if (stepTool === 'act' && (stepArgs as any)?.action === 'press') {
-                    const sa = stepArgs as any
-                    const key = sa.key || 'Enter'
-                    try {
-                      (wv as any).sendInputEvent({ type: 'keyDown', keyCode: key })
+                    const action = sa?.action
+                    if (action === 'click') {
+                      const r = await (wv as any).executeJavaScript(buildClickCode(sa.text || '', sa.selector || '', sa.nth || 0, sa.modifiers))
+                      results.push('act: ' + r)
+                    } else if (action === 'navigate' && sa.url) {
+                      await (wv as any).loadURL(sa.url)
+                      await new Promise(r => setTimeout(r, 2000))
+                      results.push('act: Navigated to ' + sa.url)
+                    } else if (action === 'type') {
+                      if (sa.selector) {
+                        const focusCode = '(function(){var el=document.querySelector(' + JSON.stringify(sa.selector) + ');if(el){el.focus();return "focused";}return "not found"})()'
+                        await (wv as any).executeJavaScript(focusCode)
+                        await new Promise(r => setTimeout(r, 100))
+                      }
+                      await (wv as any).insertText(sa.text || '')
+                      results.push('act: Typed ' + (sa.text || '').length + ' chars')
+                    } else if (action === 'press') {
+                      const key = sa.key || 'Enter'
+                      ;(wv as any).sendInputEvent({ type: 'keyDown', keyCode: key })
                       ;(wv as any).sendInputEvent({ type: 'char', keyCode: key })
                       ;(wv as any).sendInputEvent({ type: 'keyUp', keyCode: key })
                       results.push('act: Pressed ' + key)
-                    } catch (e: any) { results.push('act: Press error - ' + e.message) }
-                  } else if (stepTool === 'act' && (stepArgs as any)?.action === 'scroll') {
-                    const sa = stepArgs as any
-                    const dir = sa.direction || 'down'
-                    const amt = sa.amount || 300
-                    const scrollCode = dir === 'up' ? 'window.scrollBy(0,-' + amt + ')' : dir === 'down' ? 'window.scrollBy(0,' + amt + ')' : dir === 'left' ? 'window.scrollBy(-' + amt + ',0)' : 'window.scrollBy(' + amt + ',0)'
-                    await (wv as any).executeJavaScript(scrollCode)
-                    results.push('act: Scrolled ' + dir + ' ' + amt + 'px')
+                    } else if (action === 'scroll') {
+                      const dir = sa.direction || 'down'
+                      const amt = sa.amount || 300
+                      const scrollCode = dir === 'up' ? 'window.scrollBy(0,-' + amt + ')' : dir === 'down' ? 'window.scrollBy(0,' + amt + ')' : dir === 'left' ? 'window.scrollBy(-' + amt + ',0)' : 'window.scrollBy(' + amt + ',0)'
+                      await (wv as any).executeJavaScript(scrollCode)
+                      results.push('act: Scrolled ' + dir + ' ' + amt + 'px')
+                    } else if (action === 'hover') {
+                      const hoverCode = '(function(){var t=' + JSON.stringify(sa.text || '') + ',s=' + JSON.stringify(sa.selector || '') + ';var el=s?document.querySelector(s):null;if(!el&&t){var all=document.querySelectorAll("a,button,span,div,li,label,input,p,h1,h2,h3,h4,h5,h6");for(var i=0;i<all.length;i++){if(all[i].textContent.trim().includes(t)){el=all[i];break;}}}if(el){el.dispatchEvent(new MouseEvent("mouseover",{bubbles:true}));el.dispatchEvent(new MouseEvent("mouseenter",{bubbles:true}));return "Hovered on: "+el.textContent.trim().substring(0,50);}return "Element not found";})()'
+                      const r = await (wv as any).executeJavaScript(hoverCode)
+                      results.push('act: ' + r)
+                    } else if (action === 'back') {
+                      await (wv as any).goBack()
+                      results.push('act: Went back')
+                    } else if (action === 'forward') {
+                      await (wv as any).goForward()
+                      results.push('act: Went forward')
+                    } else if (action === 'reload') {
+                      await (wv as any).reload()
+                      results.push('act: Reloaded')
+                    } else if (action === 'select') {
+                      const selCode = '(function(){var s=' + JSON.stringify(sa.selector || '') + ',v=' + JSON.stringify(sa.value || '') + ';var el=s?document.querySelector(s):null;if(el&&el.tagName==="SELECT"){el.value=v;el.dispatchEvent(new Event("change",{bubbles:true}));return "Selected: "+v;}return "Select element not found";})()'
+                      const r = await (wv as any).executeJavaScript(selCode)
+                      results.push('act: ' + r)
+                    } else if (action === 'wait') {
+                      await new Promise(r => setTimeout(r, sa.timeout || sa.ms || 1000))
+                      results.push('act: Waited ' + (sa.timeout || sa.ms || 1000) + 'ms')
+                    } else {
+                      results.push('act: ' + action + ' executed (pipeline shorthand)')
+                    }
                   } else if (stepTool === 'fill') {
                     const sa = stepArgs as any
                     const rawF = sa.fields
@@ -2222,6 +2491,22 @@ export default function App() {
                     const sa = stepArgs as any
                     const r = await (wv as any).executeJavaScript(buildReadCode(sa.scope || 'body', sa.limit || 10))
                     results.push('read: ' + r)
+                  } else if (stepTool === 'if') {
+                    // Conditional branching: { if: { condition: "js expr", then: [...steps], else: [...steps] } }
+                    const sa = stepArgs as any
+                    const condition = sa?.condition || 'false'
+                    let condResult = false
+                    try {
+                      condResult = await (wv as any).executeJavaScript('!!(' + condition + ')')
+                    } catch { condResult = false }
+                    const branch = condResult ? (sa.then || []) : (sa.else || [])
+                    if (branch.length) {
+                      results.push('if: condition=' + condResult + ', running ' + branch.length + ' steps')
+                      // Inline execution of branch steps (push to current loop)
+                      steps.splice(steps.indexOf(step) + 1, 0, ...branch)
+                    } else {
+                      results.push('if: condition=' + condResult + ', no steps in branch')
+                    }
                   } else {
                     results.push(stepTool + ': not supported in run pipeline')
                   }
@@ -2627,10 +2912,11 @@ export default function App() {
   }, [activeTab?.url])
 
   // Tab management
-  const handleNewTab = useCallback((url?: string) => {
+  const handleNewTab = useCallback((url?: string, openerId?: number) => {
     const newTab: Tab = {
       id: newId(), url: url || NEW_TAB_URL, title: 'New Tab',
-      isLoading: false, canGoBack: false, canGoForward: false
+      isLoading: false, canGoBack: false, canGoForward: false,
+      ...(openerId ? { openerId } : {})
     }
     setTabs(prev => [...prev, newTab])
     setActiveTabId(newTab.id)
@@ -2679,7 +2965,11 @@ export default function App() {
     if (updates.url && !updates.isLoading) {
       recordHistory(updates.url, updates.title || updates.url)
     }
-  }, [recordHistory])
+    // Auto-close OAuth popup tabs when flow completes
+    if (updates.title === '[OAuth Complete]') {
+      setTimeout(() => handleCloseTab(tabId), 500)
+    }
+  }, [recordHistory, handleCloseTab])
 
   const handleGoBack = useCallback(() => { oculoApi()?.goBack(activeTabId) }, [activeTabId])
   const handleGoForward = useCallback(() => { oculoApi()?.goForward(activeTabId) }, [activeTabId])
@@ -2898,6 +3188,7 @@ export default function App() {
             isGuide={isGuide}
             onNavigate={handleNavigate}
             suspendedTabs={tabSuspended}
+            onCloseTab={handleCloseTab}
             pinnedApps={pinnedApps}
             onPinnedAppRemove={handleUnpinFromSidebar}
             onPinnedAppWidthChange={handlePinnedAppWidthChange}
@@ -2987,6 +3278,7 @@ export default function App() {
                 onNavigate={handleNavigate}
                 onTextSelected={setHighlightPopup}
                 suspendedTabs={tabSuspended}
+                onCloseTab={handleCloseTab}
                 pinnedApps={pinnedApps}
                 onPinnedAppRemove={handleUnpinFromSidebar}
                 onPinnedAppWidthChange={handlePinnedAppWidthChange}

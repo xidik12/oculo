@@ -25,7 +25,7 @@ export class CaptchaStrategy {
    */
   async solve(webContents: WebContents): Promise<string> {
     const detection = await this.detector.detect(webContents)
-    
+
     if (!detection.detected) {
       return 'No CAPTCHA detected'
     }
@@ -54,16 +54,62 @@ export class CaptchaStrategy {
         } catch (err) {
           console.log('Audio CAPTCHA solving failed:', err)
         }
-        
-        // If audio fails, notify the user
-        return 'CAPTCHA requires manual solving. Please solve it in the browser window.'
+
+        // Audio failed — suggest using solveCaptcha action for AI vision
+        return 'CAPTCHA requires solving. Use act({action:"solveCaptcha"}) for AI vision-based solving, or solve manually in the browser.'
 
       case 'image':
-        // Image CAPTCHAs — notify user
-        return 'Image CAPTCHA detected. Please solve it in the browser window.'
+        // Image CAPTCHAs — suggest AI vision solving
+        return 'Image CAPTCHA detected. Use act({action:"solveCaptcha"}) for AI vision-based solving, or solve manually in the browser.'
 
       default:
-        return `Unknown CAPTCHA type: ${detection.type}. Please solve it manually.`
+        return `Unknown CAPTCHA type: ${detection.type}. Try act({action:"solveCaptcha"}) or solve manually.`
+    }
+  }
+
+  /**
+   * Attempt vision-based CAPTCHA solving by screenshotting the CAPTCHA region
+   * and sending it to an AI provider for analysis.
+   * Returns the AI's response text (the CAPTCHA answer).
+   */
+  async solveWithVision(
+    webContents: WebContents,
+    screenshotBase64: string
+  ): Promise<{ answer: string | null; message: string }> {
+    // This method is called from the renderer (App.tsx solveCaptcha action)
+    // which provides the screenshot. The actual AI call is made from the renderer
+    // since it has access to the AI provider configuration.
+    // We just detect what kind of CAPTCHA it is and where the input field is.
+
+    const detection = await this.detector.detect(webContents)
+
+    if (!detection.detected) {
+      return { answer: null, message: 'No CAPTCHA detected on page' }
+    }
+
+    // Find the CAPTCHA input field selector
+    const inputInfo = await webContents.executeJavaScript(`
+      (function() {
+        // Text/image CAPTCHA input
+        var inp = document.querySelector('#captcha-input, [name*=captcha i], input[placeholder*=captcha i], input[aria-label*=captcha i]');
+        if (inp) return { selector: inp.id ? '#' + inp.id : (inp.name ? '[name="' + inp.name + '"]' : 'input[placeholder*=captcha i]'), type: 'text' };
+
+        // reCAPTCHA audio response
+        var audioInp = document.querySelector('#audio-response');
+        if (audioInp) return { selector: '#audio-response', type: 'audio' };
+
+        return { selector: null, type: '${detection.type}' };
+      })()
+    `)
+
+    return {
+      answer: null,
+      message: JSON.stringify({
+        type: detection.type,
+        inputSelector: inputInfo?.selector,
+        inputType: inputInfo?.type,
+        hint: 'Screenshot provided — use AI to read the CAPTCHA text'
+      })
     }
   }
 }

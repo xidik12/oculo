@@ -725,7 +725,7 @@ function ToolCallGroup({ toolCalls }: { toolCalls: ChatToolCall[] }) {
           <span className="inline-block w-3 h-3 border-2 border-accent border-t-transparent rounded-full animate-spin flex-shrink-0" />
           <span className="text-accent">{runningCall.name}</span>
           <span className="text-gray-500 truncate">
-            {runningCall.input?.action || runningCall.input?.what || ''}
+            {String(runningCall.input?.action ?? runningCall.input?.what ?? '')}
           </span>
         </div>
       )}

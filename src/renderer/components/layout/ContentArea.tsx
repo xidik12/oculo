@@ -20,6 +20,7 @@ interface ContentAreaProps {
   onNavigate: (url: string) => void
   onTextSelected?: (data: { text: string; x: number; y: number }) => void
   suspendedTabs?: Set<string>
+  onCloseTab?: (tabId: string) => void
   pinnedApps?: PinnedApp[]
   onPinnedAppRemove?: (id: string) => void
   onPinnedAppWidthChange?: (id: string, width: number) => void
@@ -114,7 +115,7 @@ function PinnedPanel({
   )
 }
 
-export default function ContentArea({ tabs, activeTabId, chatOpen, onWebViewUpdate, onCloseChat, isNewTab, isAbout, isContact, isGuide, onNavigate, onTextSelected, suspendedTabs, pinnedApps, onPinnedAppRemove, onPinnedAppWidthChange }: ContentAreaProps) {
+export default function ContentArea({ tabs, activeTabId, chatOpen, onWebViewUpdate, onCloseChat, isNewTab, isAbout, isContact, isGuide, onNavigate, onTextSelected, suspendedTabs, onCloseTab, pinnedApps, onPinnedAppRemove, onPinnedAppWidthChange }: ContentAreaProps) {
   const isInternalPage = isNewTab || isAbout || isContact || isGuide
 
   return (
@@ -156,6 +157,7 @@ export default function ContentArea({ tabs, activeTabId, chatOpen, onWebViewUpda
               isActive={tab.id === activeTabId}
               onUpdate={(updates) => onWebViewUpdate(tab.id, updates)}
               onTextSelected={onTextSelected}
+              onClose={tab.openerId ? () => onCloseTab?.(tab.id) : undefined}
               suspended={suspendedTabs?.has(tab.id)}
             />
           )

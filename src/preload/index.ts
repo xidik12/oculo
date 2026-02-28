@@ -67,6 +67,9 @@ const IPC = {
   PTY_KILL: 'pty:kill',
   AUTH_LOGIN: 'auth:login',
   AUTH_STATUS: 'auth:status',
+  COOKIES_EXPORT: 'cookies:export',
+  COOKIES_IMPORT: 'cookies:import',
+  CAPTCHA_SOLVE: 'captcha:solve',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -75,8 +78,8 @@ const webviewRegistry = new Map<string, any>()
 
 const api = {
   // === Tab Management (from main process) ===
-  onNewTab: (callback: (url?: string) => void) => {
-    const handler = (_: any, url?: string) => callback(url)
+  onNewTab: (callback: (url?: string, openerId?: number) => void) => {
+    const handler = (_: any, url?: string, openerId?: number) => callback(url, openerId)
     ipcRenderer.on(IPC.TAB_CREATE, handler)
     return () => { ipcRenderer.removeListener(IPC.TAB_CREATE, handler) }
   },
@@ -577,6 +580,16 @@ const api = {
     ipcRenderer.invoke('pinned-app:update', id, updates),
   pinnedAppSave: (apps: any[]): Promise<boolean> =>
     ipcRenderer.invoke('pinned-app:save', apps),
+
+  // === Session Cookies ===
+  cookiesExport: (url?: string): Promise<any[]> =>
+    ipcRenderer.invoke(IPC.COOKIES_EXPORT, url),
+  cookiesImport: (cookies: any[]): Promise<any> =>
+    ipcRenderer.invoke(IPC.COOKIES_IMPORT, cookies),
+
+  // === CAPTCHA Solving ===
+  captchaSolve: (webContentsId: number): Promise<any> =>
+    ipcRenderer.invoke(IPC.CAPTCHA_SOLVE, webContentsId),
 
   // === Focus Mode ===
   onFocusMode: (callback: () => void) => {

@@ -75,7 +75,7 @@ export class McpServerManager {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'writeFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork'], description: 'Action to perform' },
+          action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'writeFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork', 'drag', 'clickAtPoint', 'doubleClick', 'rightClick', 'tripleClick', 'selectAll', 'scrollIntoView', 'waitForElement', 'wait', 'copy', 'paste', 'evaluate', 'getAttribute', 'solveCaptcha', 'exportCookies', 'importCookies'], description: 'Action to perform' },
           ref: { type: 'string', description: 'Element ref from a11y snapshot (e.g. "e5"). Preferred over text/selector — use page({detail:"a11y"}) first.' },
           text: { type: 'string', description: 'Visible text on the element to interact with' },
           role: { type: 'string', description: 'ARIA role (button, link, textbox, etc.)' },
@@ -93,7 +93,15 @@ export class McpServerManager {
           content: { type: 'string', description: 'File content for writeFile action' },
           site: { type: 'string', description: 'Site domain for login action (uses credential vault)' },
           clear: { type: 'boolean', description: 'Clear existing content before typing (for type action). Works with both regular inputs and contenteditable fields.' },
-          screenshot: { type: 'boolean', description: 'Attach screenshot after action' }
+          screenshot: { type: 'boolean', description: 'Attach screenshot after action' },
+          from: { type: 'object', description: 'Drag source: {x, y} or {text, selector}' },
+          to: { type: 'object', description: 'Drag target: {x, y} or {text, selector}' },
+          x: { type: 'number', description: 'X coordinate for clickAtPoint/drag' },
+          y: { type: 'number', description: 'Y coordinate for clickAtPoint/drag' },
+          expression: { type: 'string', description: 'JavaScript expression for evaluate action' },
+          attribute: { type: 'string', description: 'Attribute name for getAttribute action' },
+          cookies: { type: 'array', description: 'Cookies array for importCookies action' },
+          autoSubmit: { type: 'boolean', description: 'Auto-submit after login (default: true)' }
         },
         required: ['action']
       }

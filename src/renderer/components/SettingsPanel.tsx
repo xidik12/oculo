@@ -57,19 +57,21 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     flash('Saved')
   }, [])
 
-  const handleSaveApiKey = useCallback(async (providerId: AIProviderId) => {
-    const key = apiKeys[providerId]?.trim()
+  const handleSaveApiKey = useCallback(async (providerId: string) => {
+    const id = providerId as AIProviderId
+    const key = apiKeys[id]?.trim()
     if (!key) return
-    await api()?.aiSetConfig({ providerId, enabled: true, apiKey: key })
-    setApiKeys(prev => ({ ...prev, [providerId]: '' }))
+    await api()?.aiSetConfig({ providerId: id, enabled: true, apiKey: key })
+    setApiKeys(prev => ({ ...prev, [id]: '' }))
     refreshStatuses()
-    flash(`${providerId} API key saved`)
+    flash(`${id} API key saved`)
   }, [apiKeys, refreshStatuses])
 
-  const handleRemoveApiKey = useCallback(async (providerId: AIProviderId) => {
-    await api()?.aiSetConfig({ providerId, enabled: false, apiKey: '' })
+  const handleRemoveApiKey = useCallback(async (providerId: string) => {
+    const id = providerId as AIProviderId
+    await api()?.aiSetConfig({ providerId: id, enabled: false, apiKey: '' })
     refreshStatuses()
-    flash(`${providerId} API key removed`)
+    flash(`${id} API key removed`)
   }, [refreshStatuses])
 
   function flash(msg: string) {
@@ -469,8 +471,8 @@ const MEDIA_PROVIDERS = [
 function MediaSettings({ apiKeys, setApiKeys, onSaveKey, onRemoveKey, statuses }: {
   apiKeys: Record<string, string>
   setApiKeys: React.Dispatch<React.SetStateAction<Record<string, string>>>
-  onSaveKey: (providerId: string) => void
-  onRemoveKey: (providerId: string) => void
+  onSaveKey: (providerId: string) => void | Promise<void>
+  onRemoveKey: (providerId: string) => void | Promise<void>
   statuses: Record<string, { ready?: boolean }>
 }) {
   return (

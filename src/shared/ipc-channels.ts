@@ -35,6 +35,7 @@ export const IPC = {
   CAPTCHA_DETECTED: 'captcha:detected',
   CAPTCHA_SOLVED: 'captcha:solved',
   CAPTCHA_FAILED: 'captcha:failed',
+  CAPTCHA_SOLVE: 'captcha:solve',
 
   // Settings
   SETTINGS_GET: 'settings:get',
@@ -176,6 +177,10 @@ export const IPC = {
 
   // Focus Mode (Feature 4)
   FOCUS_MODE: 'focus-mode',
+
+  // Session Cookies (Export/Import)
+  COOKIES_EXPORT: 'cookies:export',
+  COOKIES_IMPORT: 'cookies:import',
 
   // Pinned Sidebar Apps (Feature 15)
   PINNED_APP_LIST: 'pinned-app:list',

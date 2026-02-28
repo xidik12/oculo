@@ -271,7 +271,8 @@ app.whenReady().then(async () => {
       if (adBlocker.isAdDomain(details.url)) {
         return { action: 'deny' }
       }
-      mainWindow?.webContents.send('tab:create', details.url)
+      // Pass opener webContentsId so renderer can relay OAuth data back
+      mainWindow?.webContents.send('tab:create', details.url, wc.id)
       return { action: 'deny' }
     })
   })
@@ -390,7 +391,7 @@ app.whenReady().then(async () => {
     // Resolve target webContents
     let wc: Electron.WebContents | null = null
     if (targetWcId != null) {
-      try { wc = webContents.fromId(targetWcId) } catch {}
+      try { wc = webContents.fromId(targetWcId) ?? null } catch {}
     }
     if (!wc || wc.isDestroyed()) wc = findActiveWebviewWC()
     if (!wc) return
@@ -412,7 +413,7 @@ app.whenReady().then(async () => {
 
     // Use setDevToolsWebContents to render DevTools INTO our view
     wc.setDevToolsWebContents(devToolsView.webContents)
-    wc.openDevTools({ activate: true })
+    wc.openDevTools({ activate: true, mode: 'detach' })
 
     layoutDevTools()
 
@@ -538,24 +539,24 @@ app.whenReady().then(async () => {
   agentController = new AgentController(window)
 
   // Wire up persistence — save API keys to settings.json, restore on startup
-  const allSettings = securityManager.getSettings()
+  const allSettings = securityManager!.getSettings()
   const savedProviders = (allSettings as any)?.aiProviders as Record<string, any> | undefined
   console.log('[Oculo] Restoring provider configs:', savedProviders ? Object.keys(savedProviders) : 'none')
 
-  agentController.setPersistence(
-    (configs) => securityManager.saveSettings({ aiProviders: configs } as any),
+  agentController!.setPersistence(
+    (configs) => securityManager!.saveSettings({ aiProviders: configs } as any),
     savedProviders
   )
 
   // Wire up MCP server to receive provider configs from agent for media generation
-  const originalSetConfig = agentController.setProviderConfig.bind(agentController)
-  agentController.setProviderConfig = (config: any) => {
+  const originalSetConfig = agentController!.setProviderConfig.bind(agentController!)
+  agentController!.setProviderConfig = (config: any) => {
     originalSetConfig(config)
-    mcpServer?.setProviderConfigs(agentController.getProviderConfigs())
+    mcpServer?.setProviderConfigs(agentController!.getProviderConfigs())
   }
 
   // Push restored configs to MCP server so media generation works on startup
-  const agentConfigs = agentController.getProviderConfigs()
+  const agentConfigs = agentController!.getProviderConfigs()
   console.log('[Oculo] Agent has configs for:', [...agentConfigs.keys()])
   if (agentConfigs.size > 0) {
     mcpServer?.setProviderConfigs(agentConfigs)

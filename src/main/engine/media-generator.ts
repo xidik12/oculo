@@ -12,6 +12,7 @@ export type MediaProviderId = 'gemini' | 'openai' | 'stability' | 'veo'
 export interface MediaRequest {
   type: 'image' | 'video'
   prompt: string
+  image?: string     // path to reference image for image-to-image editing
   size?: string      // e.g. '1024x1024', '2K', '4K'
   style?: string     // e.g. 'natural', 'vivid'
   provider?: string  // force specific provider
@@ -98,7 +99,7 @@ export class MediaGenerator {
       if (!key) continue
 
       try {
-        let base64: string
+        let base64: string = ''
 
         if (providerId === 'gemini') {
           // Try requested model, then auto-fallback through all Gemini image models
@@ -206,8 +207,19 @@ export class MediaGenerator {
       }
     }
 
+    // Build parts array — add reference image if provided (image-to-image)
+    const parts: Array<Record<string, unknown>> = []
+    if (request.image && fs.existsSync(request.image)) {
+      const imageData = fs.readFileSync(request.image)
+      const base64 = imageData.toString('base64')
+      const ext = path.extname(request.image).toLowerCase()
+      const mimeMap: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }
+      parts.push({ inlineData: { mimeType: mimeMap[ext] || 'image/png', data: base64 } })
+    }
+    parts.push({ text: prompt })
+
     const body = JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
+      contents: [{ parts }],
       generationConfig
     })
 

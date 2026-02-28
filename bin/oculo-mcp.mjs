@@ -39,12 +39,12 @@ const STATIC_TOOLS = [
   {
     name: 'page',
     description:
-      'Describe the current page in Oculo browser. Default: compact (~30-80 tokens). Use detail="a11y" for full accessibility tree with interactive elements numbered [1],[2]... — better for complex React forms.',
+      'Describe the current page in Oculo browser. Default: compact (~30-80 tokens). Use detail="a11y" for ref-tagged accessibility tree — interactive elements get [ref=e1],[ref=e2]... refs usable in act tool. Use detail="markdown" for full article content as clean markdown.',
     inputSchema: {
       type: 'object',
       properties: {
         scope: { type: 'string', description: 'CSS selector to scope description to a section of the page' },
-        detail: { type: 'string', enum: ['compact', 'a11y'], description: 'compact (default ~30-80 tokens) or a11y (full accessibility tree ~200-500 tokens)' },
+        detail: { type: 'string', enum: ['compact', 'a11y', 'markdown'], description: 'compact (default ~30-80 tokens), a11y (ref-tagged accessibility tree ~200-500 tokens), or markdown (article extraction via Readability)' },
         include: { type: 'array', items: { type: 'string' }, description: 'What to include: "forms", "buttons", "links", "headings", "text", "images"' },
         screenshot: { type: 'boolean', description: 'Attach a screenshot (default: false)' }
       }
@@ -53,11 +53,12 @@ const STATIC_TOOLS = [
   {
     name: 'act',
     description:
-      'Perform an action in Oculo browser: click, navigate, scroll, press key, hover, type, login. Elements found by text, role, label, placeholder, or data-placeholder (contenteditable).',
+      'Perform an action in Oculo browser: click, navigate, scroll, press key, hover, type, login. Elements found by ref (from a11y snapshot), text, role, label, placeholder, or CSS selector. After click/navigate/back/forward/reload, returns fresh ref-tagged snapshot.',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork'], description: 'Action to perform' },
+        action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'writeFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork', 'drag', 'clickAtPoint', 'doubleClick', 'rightClick', 'tripleClick', 'selectAll', 'scrollIntoView', 'waitForElement', 'wait', 'copy', 'paste', 'evaluate', 'getAttribute', 'solveCaptcha', 'exportCookies', 'importCookies'], description: 'Action to perform' },
+        ref: { type: 'string', description: 'Element ref from a11y snapshot (e.g. "e5"). Preferred over text/selector — use page({detail:"a11y"}) first.' },
         text: { type: 'string', description: 'Visible text on the element to interact with' },
         role: { type: 'string', description: 'ARIA role (button, link, textbox, etc.)' },
         name: { type: 'string', description: 'Accessible name of the element' },
@@ -70,10 +71,19 @@ const STATIC_TOOLS = [
         amount: { type: 'number', description: 'Scroll amount in pixels' },
         key: { type: 'string', description: 'Key to press (Enter, Tab, Escape, etc.)' },
         modifiers: { type: 'array', items: { type: 'string' }, description: 'Modifier keys (Ctrl, Shift, Alt, Meta)' },
-        value: { type: 'string', description: 'Value for select action' },
+        value: { type: 'string', description: 'Value for select action, file path for readFile/writeFile' },
+        content: { type: 'string', description: 'File content for writeFile action' },
         site: { type: 'string', description: 'Site domain for login action (uses credential vault)' },
         clear: { type: 'boolean', description: 'Clear existing content before typing (for type action). Works with both regular inputs and contenteditable fields.' },
-        screenshot: { type: 'boolean', description: 'Attach screenshot after action' }
+        screenshot: { type: 'boolean', description: 'Attach screenshot after action' },
+        from: { type: 'object', description: 'Drag source: {x, y} or {text, selector}' },
+        to: { type: 'object', description: 'Drag target: {x, y} or {text, selector}' },
+        x: { type: 'number', description: 'X coordinate for clickAtPoint/drag' },
+        y: { type: 'number', description: 'Y coordinate for clickAtPoint/drag' },
+        expression: { type: 'string', description: 'JavaScript expression for evaluate action' },
+        attribute: { type: 'string', description: 'Attribute name for getAttribute action' },
+        cookies: { type: 'array', description: 'Cookies array for importCookies action' },
+        autoSubmit: { type: 'boolean', description: 'Auto-submit after login (default: true)' }
       },
       required: ['action']
     }
@@ -192,12 +202,13 @@ const STATIC_TOOLS = [
   },
   {
     name: 'media',
-    description: 'Generate images (Nano Banana 2 / DALL-E 3) or videos (Veo 3.1) via Oculo. Returns saved file path.',
+    description: 'Generate images (Nano Banana 2 / DALL-E 3) or videos (Veo 3.1) via Oculo. Returns saved file path. Supports image-to-image editing with reference image.',
     inputSchema: {
       type: 'object',
       properties: {
         type: { type: 'string', enum: ['image', 'video'], description: 'Generate an image or video' },
         prompt: { type: 'string', description: 'What to create' },
+        image: { type: 'string', description: 'Path to reference image for image-to-image editing/transformation (Gemini only)' },
         model: { type: 'string', description: 'Image model: nano-banana-2 (default), nano-banana-pro, nano-banana' },
         size: { type: 'string', description: 'Image: 1024x1024, 2K, 4K. Video: 16:9, 9:16' },
         style: { type: 'string', description: 'natural, vivid, cinematic, anime' },
@@ -205,6 +216,38 @@ const STATIC_TOOLS = [
         duration: { type: 'number', description: 'Video duration: 4, 6, or 8 seconds' }
       },
       required: ['type', 'prompt']
+    }
+  },
+  {
+    name: 'shell',
+    description: 'Execute a shell command (ls, npm, git, node, python, etc.) via Oculo and return stdout+stderr. Non-interactive only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The shell command to execute' },
+        timeout: { type: 'number', description: 'Timeout in milliseconds (default: 30000, max: 120000)' }
+      },
+      required: ['command']
+    }
+  },
+  {
+    name: 'webmcp_list',
+    description: 'Discover WebMCP tools registered by the current page via navigator.modelContext.registerTool() or <form toolname="..."> elements. Returns list of available page-declared tools.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'webmcp_call',
+    description: 'Call a WebMCP tool registered by the current page. Use webmcp_list first to discover available tools.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Tool name to call (from webmcp_list)' },
+        args: { type: 'object', description: 'Arguments to pass to the tool' }
+      },
+      required: ['name']
     }
   }
 ]
@@ -310,7 +353,7 @@ function httpPost(port, body, token) {
 // ── MCP Server (stdio side) ───────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'oculo', version: '0.1.0' },
+  { name: 'oculo', version: '0.2.0' },
   { capabilities: { tools: {} } }
 )
 
@@ -389,6 +432,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true
     }
   }
+})
+
+// ── Exit watchdog ─────────────────────────────────────────────────────────
+// When the parent process (Claude Code) closes stdin, gracefully exit after 15s.
+// This prevents orphaned oculo-mcp processes from lingering indefinitely.
+process.stdin.on('end', () => {
+  process.stderr.write('[oculo-mcp] stdin closed, shutting down in 15s...\n')
+  setTimeout(() => {
+    process.stderr.write('[oculo-mcp] exit watchdog fired, shutting down\n')
+    process.exit(0)
+  }, 15_000).unref()
+})
+
+process.stdin.on('error', () => {
+  // stdin error (e.g. EPIPE) — schedule exit
+  setTimeout(() => process.exit(0), 15_000).unref()
 })
 
 // ── Connect stdio transport ───────────────────────────────────────────────

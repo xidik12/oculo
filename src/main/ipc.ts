@@ -3,6 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { IPC } from '../shared/ipc-channels'
+import { AIProviderConfig } from '../shared/ai-types'
 import { SecurityManager } from './security/vault'
 import { AuditLog } from './security/audit'
 import { Redactor } from './security/redactor'
@@ -163,7 +164,7 @@ export function setupIPC(
   })
 
   ipcMain.handle(IPC.AI_SET_CONFIG, async (_, config: { providerId: string; enabled?: boolean; apiKey?: string; modelId?: string }) => {
-    agent?.setProviderConfig(config)
+    agent?.setProviderConfig(config as AIProviderConfig)
     return true
   })
 
@@ -827,6 +828,67 @@ export function setupIPC(
   ipcMain.handle(IPC.PINNED_APP_SAVE, async (_, apps: import('../shared/types').PinnedApp[]) => {
     pinnedAppStore?.saveAll(apps)
     return true
+  })
+
+  // === Session Cookies Export/Import ===
+  ipcMain.handle(IPC.COOKIES_EXPORT, async (_, url?: string) => {
+    try {
+      const { session } = require('electron')
+      const filter = url ? { url } : {}
+      const cookies = await session.defaultSession.cookies.get(filter)
+      return cookies.map((c: any) => ({
+        name: c.name,
+        value: c.value,
+        domain: c.domain,
+        path: c.path,
+        secure: c.secure,
+        httpOnly: c.httpOnly,
+        sameSite: c.sameSite,
+        expirationDate: c.expirationDate
+      }))
+    } catch (e: any) {
+      return { error: e.message }
+    }
+  })
+
+  ipcMain.handle(IPC.COOKIES_IMPORT, async (_, cookies: any[]) => {
+    try {
+      const { session } = require('electron')
+      let imported = 0
+      for (const cookie of cookies) {
+        const url = `http${cookie.secure ? 's' : ''}://${cookie.domain?.replace(/^\./, '')}${cookie.path || '/'}`
+        await session.defaultSession.cookies.set({
+          url,
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path,
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          sameSite: cookie.sameSite || 'lax',
+          expirationDate: cookie.expirationDate
+        })
+        imported++
+      }
+      return { success: true, imported }
+    } catch (e: any) {
+      return { error: e.message }
+    }
+  })
+
+  // === CAPTCHA Solving (CDP-based, main process) ===
+  ipcMain.handle(IPC.CAPTCHA_SOLVE, async (_, webContentsId: number) => {
+    try {
+      const { webContents } = require('electron')
+      const wc = webContents.fromId(webContentsId)
+      if (!wc || wc.isDestroyed()) return { error: 'WebContents not found' }
+      const { CaptchaStrategy } = require('./captcha/strategy')
+      const strategy = new CaptchaStrategy()
+      const result = await strategy.solve(wc)
+      return { success: true, message: result }
+    } catch (e: any) {
+      return { error: e.message }
+    }
   })
 
   // === PTY Terminal ===
