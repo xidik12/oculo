@@ -123,7 +123,7 @@ function ProviderSelector({ activeProvider, activeModel, onSelect }: {
                     {isReady && provider.id === 'ollama' && (
                       <span className="text-[9px] px-1 py-0.5 rounded bg-purple-900/50 text-purple-300">Local</span>
                     )}
-                    {isReady && provider.id !== 'ollama' && authMode === 'subscription' && (provider.id !== 'claude' || __ENABLE_CLAUDE_OAUTH__) && (
+                    {isReady && provider.id !== 'ollama' && authMode === 'subscription' && (
                       <span className="text-[9px] px-1 py-0.5 rounded bg-oculo-900/50 text-oculo-300">CLI</span>
                     )}
                     {isReady && provider.id !== 'ollama' && authMode === 'api-key' && (
@@ -795,7 +795,7 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
 
   useEffect(() => {
     // Check which providers are ready
-    ;['claude', 'openai'].forEach(async (id) => {
+    ;['claude', 'codex'].forEach(async (id) => {
       const status = await api()?.aiGetProviderStatus(id)
       if (status) setStatuses(prev => ({ ...prev, [id]: status }))
     })
@@ -816,8 +816,8 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
   }
 
   const claudeReady = statuses['claude']?.ready
-  const openaiReady = statuses['openai']?.ready
-  const anyReady = claudeReady || openaiReady
+  const codexReady = statuses['codex']?.ready
+  const anyReady = claudeReady || codexReady
 
   if (anyReady) return null // Don't show auth screen if already logged in
 
@@ -837,7 +837,6 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
       </div>
 
       <div className="w-full max-w-[280px] space-y-2 mt-1">
-          {__ENABLE_CLAUDE_OAUTH__ && (
           <button
             onClick={() => handleLogin('claude')}
             disabled={loading !== null}
@@ -851,20 +850,19 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
             </div>
             {loading === 'claude' && <span className="w-3 h-3 border-2 border-[#d97706] border-t-transparent rounded-full animate-spin flex-shrink-0" />}
           </button>
-          )}
 
           <button
-            onClick={() => handleLogin('openai')}
+            onClick={() => handleLogin('codex')}
             disabled={loading !== null}
             className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/15 hover:border-emerald-500/30 transition-colors text-left disabled:opacity-50 disabled:cursor-wait">
             <div className="w-7 h-7 rounded-md bg-emerald-500/20 flex items-center justify-center flex-shrink-0">
               <span className="text-emerald-400 text-sm font-bold">G</span>
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-medium text-gray-200">Sign in with OpenAI</div>
+              <div className="text-xs font-medium text-gray-200">Sign in with Codex</div>
               <div className="text-[10px] text-gray-500">ChatGPT Plus / Pro subscription</div>
             </div>
-            {loading === 'openai' && <span className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
+            {loading === 'codex' && <span className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />}
           </button>
         </div>
 
@@ -915,7 +913,7 @@ function ChatView({ state, onAuthComplete }: { state: ReturnType<typeof useChatS
     let cancelled = false
     async function check() {
       const statuses = await Promise.all(
-        ['claude', 'openai', 'gemini', 'grok'].map(id => api()?.aiGetProviderStatus(id))
+        ['claude', 'anthropic', 'codex', 'openai', 'gemini', 'grok'].map(id => api()?.aiGetProviderStatus(id))
       )
       if (cancelled) return
       const anyReady = statuses.some(s => s?.ready)
@@ -1274,7 +1272,7 @@ export default function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
       <div className="flex items-center h-11 px-2 border-b border-surface-dark-3 flex-shrink-0 gap-1">
         <ProviderSelector activeProvider={state.activeProvider} activeModel={state.activeModel} onSelect={state.handleProviderSelect} />
 
-        {authMode && (authMode !== 'subscription' || state.activeProvider !== 'claude' || __ENABLE_CLAUDE_OAUTH__) && (
+        {authMode && (
           <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
             authMode === 'subscription' ? 'bg-oculo-900/50 text-oculo-300' :
             authMode === 'api-key' ? 'bg-emerald-900/50 text-emerald-300' :

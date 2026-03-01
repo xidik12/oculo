@@ -354,7 +354,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
                     ? 'bg-emerald-900/50 text-emerald-300'
                     : 'bg-oculo-900/50 text-oculo-300'
                 }`}>
-                  {authMode === 'api-key' ? 'API Key' : ((provider.id !== 'claude' || __ENABLE_CLAUDE_OAUTH__) ? 'Signed In' : 'Active')}
+                  {authMode === 'api-key' ? 'API Key' : 'Signed In'}
                 </span>
               )}
               {isReady && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 ml-auto" />}
@@ -363,7 +363,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
 
             <p className="text-[11px] text-gray-500 mb-2">{provider.description}</p>
 
-            {__ENABLE_CLAUDE_OAUTH__ && provider.id === 'claude' && authMode === 'subscription' && isReady && (
+            {provider.id === 'claude' && authMode === 'subscription' && isReady && (
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[11px] text-oculo-400">
                   Signed in with Claude account.
@@ -379,7 +379,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
               </div>
             )}
 
-            {__ENABLE_CLAUDE_OAUTH__ && provider.id === 'claude' && !isReady && (
+            {provider.id === 'claude' && !isReady && (
               <div className="mb-2">
                 <button
                   onClick={async () => {
@@ -402,14 +402,14 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
               </div>
             )}
 
-            {provider.id === 'openai' && authMode === 'subscription' && isReady && (
+            {provider.id === 'codex' && authMode === 'subscription' && isReady && (
               <div className="flex items-center justify-between mb-2">
                 <p className="text-[11px] text-oculo-400">
                   Signed in with ChatGPT account.
                 </p>
                 <button
                   onClick={async () => {
-                    await api()?.authLogout('openai')
+                    await api()?.authLogout('codex')
                     refreshStatuses()
                     flash('Signed out of ChatGPT')
                   }}
@@ -418,11 +418,11 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
               </div>
             )}
 
-            {provider.id === 'openai' && !isReady && (
+            {provider.id === 'codex' && !isReady && (
               <div className="mb-2">
                 <button
                   onClick={async () => {
-                    const result = await api()?.authLogin('openai')
+                    const result = await api()?.authLogin('codex')
                     if (result?.success) refreshStatuses()
                   }}
                   className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500/15 transition-colors text-left mb-2"
@@ -441,6 +441,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
               </div>
             )}
 
+            {provider.id !== 'claude' && (
             <div className="flex items-center gap-2">
               <input
                 type="password"
@@ -464,6 +465,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
                 </button>
               )}
             </div>
+            )}
 
             <div className="mt-2 flex flex-wrap gap-1">
               {provider.models.map(m => (

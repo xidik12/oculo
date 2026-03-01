@@ -108,6 +108,15 @@ export default function App() {
     const cleanups = [
       api.onNewTab((url?: string, openerId?: number) => handleNewTab(url, openerId)),
       api.onCloseActiveTab(() => handleCloseTab(activeTabIdRef.current)),
+      api.onCloseTabByUrl?.((urlPrefix: string) => {
+        setTabs(prev => {
+          const tab = prev.find(t => t.url.startsWith(urlPrefix) || t.url.includes('auth.openai.com') || t.url.includes('auth0.openai.com'))
+          if (tab) {
+            setTimeout(() => handleCloseTab(tab.id), 500)
+          }
+          return prev
+        })
+      }),
       api.onToggleChat?.(() => setChatOpen(prev => !prev)),
       api.onFindInPage?.(() => setFindOpen(true)),
       api.onToggleDevTools?.(() => api.openWebviewDevTools(activeTabIdRef.current)),
@@ -129,6 +138,19 @@ export default function App() {
       api.onZoomReset?.(() => handleZoomReset()),
       api.onDevToolsResized?.((height: number) => setDevToolsHeight(height)),
       api.onFocusMode?.(() => setFocusMode(prev => !prev)),
+      api.onCloseTabByUrl?.((urlPrefix: string) => {
+        setTabs(prev => {
+          const match = prev.find(t => t.url.startsWith(urlPrefix))
+          if (!match || prev.length <= 1) return prev
+          const newTabs = prev.filter(t => t.id !== match.id)
+          setActiveTabId(cur => {
+            if (cur !== match.id) return cur
+            const idx = prev.findIndex(t => t.id === match.id)
+            return newTabs[Math.min(idx, newTabs.length - 1)].id
+          })
+          return newTabs
+        })
+      }),
     ]
     return () => cleanups.forEach(c => c?.())
   }, [activeTabId])
@@ -3223,14 +3245,13 @@ export default function App() {
         </div>
       ) : (
         <>
-          {/* Sidebar */}
+          {/* Sidebar + sub-panels share mouse region so hovering a panel cancels collapse */}
+          <div className="relative flex-shrink-0 flex" onMouseEnter={sidebar.onMouseEnter} onMouseLeave={sidebar.onMouseLeave}>
           <Sidebar
             tabs={tabs}
             activeTabId={activeTabId}
             expanded={sidebar.expanded}
             activePanel={sidebar.activePanel}
-            onMouseEnter={sidebar.onMouseEnter}
-            onMouseLeave={sidebar.onMouseLeave}
             onTabSwitch={handleTabSwitch}
             onTabClose={handleCloseTab}
             onNewTab={() => handleNewTab()}
@@ -3264,6 +3285,7 @@ export default function App() {
               oculoApi()?.macroExecute(id)
             }}
           />
+          </div>
 
           {/* Main content */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0">

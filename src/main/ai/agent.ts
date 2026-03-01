@@ -613,14 +613,7 @@ export class AgentController {
 
   getProviderStatus(providerId: AIProviderId): AIProviderStatus {
     if (providerId === 'claude') {
-      const config = this.providerConfigs.get('claude')
-      const hasApiKey = !!(config?.apiKey)
-
-      if (hasApiKey) {
-        return { providerId: 'claude', connected: true, ready: true, authMode: 'api-key' }
-      }
-
-      // Check OAuth subscription token
+      // Claude is subscription-only (OAuth sign-in)
       const oauthToken = this.oauth.getOAuthToken()
       if (oauthToken) {
         return { providerId: 'claude', connected: true, ready: true, authMode: 'subscription' }
@@ -644,13 +637,43 @@ export class AgentController {
       return { providerId: 'claude', connected: true, ready: this.oauth.claudeLoggedIn, authMode: 'subscription' }
     }
 
-    // OpenAI: check ChatGPT subscription first, then API key
-    if (providerId === 'openai') {
-      if (this.oauth.codexToken) {
-        return { providerId: 'openai', connected: true, ready: true, authMode: 'subscription',
-          error: undefined }
+    // Anthropic: API key only
+    if (providerId === 'anthropic') {
+      const config = this.providerConfigs.get('anthropic')
+      const hasApiKey = !!(config?.apiKey)
+
+      if (hasApiKey) {
+        return { providerId: 'anthropic', connected: true, ready: true, authMode: 'api-key' }
       }
 
+      return {
+        providerId: 'anthropic', connected: false, ready: false,
+        error: 'Add an API key in Settings.',
+        authMode: 'api-key'
+      }
+    }
+
+    // Codex: ChatGPT subscription (OAuth first, API key fallback)
+    if (providerId === 'codex') {
+      if (this.oauth.codexToken) {
+        return { providerId: 'codex', connected: true, ready: true, authMode: 'subscription' }
+      }
+
+      const config = this.providerConfigs.get('codex')
+      const hasApiKey = !!(config?.apiKey)
+      if (hasApiKey) {
+        return { providerId: 'codex', connected: true, ready: true, authMode: 'api-key' }
+      }
+
+      return {
+        providerId: 'codex', connected: false, ready: false,
+        error: 'Sign in with your ChatGPT account to get started.',
+        authMode: 'subscription'
+      }
+    }
+
+    // OpenAI: API key only
+    if (providerId === 'openai') {
       const config = this.providerConfigs.get('openai')
       const hasApiKey = !!(config?.apiKey)
 
@@ -660,8 +683,8 @@ export class AgentController {
 
       return {
         providerId: 'openai', connected: false, ready: false,
-        error: 'Sign in with your ChatGPT account to get started.',
-        authMode: 'subscription'
+        error: 'Add an API key in Settings.',
+        authMode: 'api-key'
       }
     }
 
@@ -676,7 +699,8 @@ export class AgentController {
       providerId,
       connected: hasKey,
       ready: hasKey && (config?.enabled ?? false),
-      error: hasKey ? undefined : `API key not configured. Add it in Settings.`
+      error: hasKey ? undefined : `API key not configured. Add it in Settings.`,
+      authMode: 'api-key'
     }
   }
 
@@ -691,35 +715,43 @@ export class AgentController {
     this.conversationHistory.push({ role: 'user', content: userText })
 
     if (this.activeProvider === 'claude') {
-      // Priority 1: OAuth subscription token
+      // Claude is subscription-only (OAuth sign-in)
       const oauthToken = this.oauth.getOAuthToken()
       if (oauthToken) {
         return this.handleAnthropicWithTools(oauthToken, 'oauth')
       }
 
-      // Priority 2: API key
-      const config = this.providerConfigs.get('claude')
-      if (config?.apiKey) {
-        return this.handleAnthropicWithTools(config.apiKey, 'api-key')
-      }
-
-      // Priority 3: No auth available
+      // No auth available
       this.emit({
         type: 'error',
-        error: 'Not authenticated with Claude.\n\nSign in with your Claude account, or add an API key in Settings > AI Providers.'
+        error: 'Not authenticated with Claude.\n\nSign in with your Claude account in Settings > AI Providers.'
       })
       return
     }
 
-    if (this.activeProvider === 'openai') {
+    if (this.activeProvider === 'anthropic') {
+      // Anthropic is API key only
+      const config = this.providerConfigs.get('anthropic')
+      if (config?.apiKey) {
+        return this.handleAnthropicWithTools(config.apiKey, 'api-key')
+      }
+
+      this.emit({
+        type: 'error',
+        error: 'Not authenticated with Anthropic.\n\nAdd an API key in Settings > AI Providers.'
+      })
+      return
+    }
+
+    if (this.activeProvider === 'codex') {
       // Priority 1: ChatGPT subscription token
       const codexToken = await this.oauth.getCodexToken()
       if (codexToken) {
         return this.handleOpenAIWithTools(codexToken, 'oauth')
       }
 
-      // Priority 2: API key
-      const config = this.providerConfigs.get('openai')
+      // Priority 2: API key fallback
+      const config = this.providerConfigs.get('codex')
       if (config?.apiKey) {
         return this.handleOpenAIWithTools(config.apiKey, 'api-key')
       }
@@ -727,7 +759,21 @@ export class AgentController {
       // Priority 3: No auth available
       this.emit({
         type: 'error',
-        error: 'Not authenticated with OpenAI.\n\nSign in with your ChatGPT account, or add an API key in Settings > AI Providers.'
+        error: 'Not authenticated with Codex.\n\nSign in with your ChatGPT account, or add an API key in Settings > AI Providers.'
+      })
+      return
+    }
+
+    if (this.activeProvider === 'openai') {
+      // API key only
+      const config = this.providerConfigs.get('openai')
+      if (config?.apiKey) {
+        return this.handleOpenAIWithTools(config.apiKey, 'api-key')
+      }
+
+      this.emit({
+        type: 'error',
+        error: 'Not authenticated with OpenAI.\n\nAdd an API key in Settings > AI Providers.'
       })
       return
     }
@@ -1666,11 +1712,11 @@ export class AgentController {
   }
 
   getStatus(): { hasClaudeCode: boolean; messageCount: number; activeProvider: AIProviderId; activeModel: string; loggedIn: boolean; email?: string; authMode?: string } {
-    if (this.activeProvider === 'openai') {
-      const openaiConfig = this.providerConfigs.get('openai')
-      const hasApiKey = !!(openaiConfig?.apiKey)
+    if (this.activeProvider === 'codex') {
+      const codexConfig = this.providerConfigs.get('codex')
+      const hasApiKey = !!(codexConfig?.apiKey)
       const hasCodex = !!this.oauth.codexToken
-      const authMode = hasApiKey ? 'api-key' : hasCodex ? 'subscription' : 'none'
+      const authMode = hasCodex ? 'subscription' : hasApiKey ? 'api-key' : 'none'
       return {
         hasClaudeCode: true,
         messageCount: this.messageCount,
@@ -1682,16 +1728,41 @@ export class AgentController {
       }
     }
 
-    const claudeConfig = this.providerConfigs.get('claude')
-    const hasApiKey = !!(claudeConfig?.apiKey)
+    if (this.activeProvider === 'openai') {
+      const openaiConfig = this.providerConfigs.get('openai')
+      const hasApiKey = !!(openaiConfig?.apiKey)
+      return {
+        hasClaudeCode: true,
+        messageCount: this.messageCount,
+        activeProvider: this.activeProvider,
+        activeModel: this.activeModel,
+        loggedIn: hasApiKey,
+        authMode: hasApiKey ? 'api-key' : 'none'
+      }
+    }
+
+    if (this.activeProvider === 'anthropic') {
+      const anthropicConfig = this.providerConfigs.get('anthropic')
+      const hasApiKey = !!(anthropicConfig?.apiKey)
+      return {
+        hasClaudeCode: true,
+        messageCount: this.messageCount,
+        activeProvider: this.activeProvider,
+        activeModel: this.activeModel,
+        loggedIn: hasApiKey,
+        authMode: hasApiKey ? 'api-key' : 'none'
+      }
+    }
+
+    // Claude: subscription only (OAuth / CLI)
     const hasOAuth = !!this.oauth.getOAuthToken()
-    const authMode = hasOAuth ? 'subscription' : hasApiKey ? 'api-key' : this.oauth.claudeLoggedIn ? 'cli' : 'none'
+    const authMode = hasOAuth ? 'subscription' : this.oauth.claudeLoggedIn ? 'cli' : 'none'
     return {
-      hasClaudeCode: hasApiKey || hasOAuth || this.claudePath !== null,
+      hasClaudeCode: hasOAuth || this.claudePath !== null,
       messageCount: this.messageCount,
       activeProvider: this.activeProvider,
       activeModel: this.activeModel,
-      loggedIn: hasApiKey || hasOAuth || this.oauth.claudeLoggedIn,
+      loggedIn: hasOAuth || this.oauth.claudeLoggedIn,
       email: this.oauth.claudeAuthEmail,
       authMode
     }

@@ -7,8 +7,6 @@ interface SidebarProps {
   activeTabId: string
   expanded: boolean
   activePanel: SidebarPanel
-  onMouseEnter: () => void
-  onMouseLeave: () => void
   onTabSwitch: (id: string) => void
   onTabClose: (id: string) => void
   onNewTab: () => void
@@ -35,7 +33,6 @@ function getFaviconUrl(tab: Tab): string | null {
 
 export default function Sidebar({
   tabs, activeTabId, expanded, activePanel,
-  onMouseEnter, onMouseLeave,
   onTabSwitch, onTabClose, onNewTab,
   onTogglePanel, onToggleChat, onOpenSettings, chatOpen,
   tabGroups, onTabContextMenu, onToggleGroupCollapse
@@ -49,8 +46,6 @@ export default function Sidebar({
       className={`flex flex-col h-full bg-sidebar-light-bg dark:bg-sidebar-bg flex-shrink-0 border-r border-sidebar-light-border dark:border-sidebar-border transition-all duration-200 ease-out ${
         expanded ? 'w-[var(--sidebar-expanded)]' : 'w-[var(--sidebar-width)]'
       }`}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
     >
       {/* macOS traffic light spacer + drag region */}
       <div className="h-[38px] flex-shrink-0" style={{ WebkitAppRegion: 'drag' } as any} />
@@ -115,6 +110,7 @@ export default function Sidebar({
         <SidebarButton icon="bookmarks" label="Bookmarks" expanded={expanded} active={activePanel === 'bookmarks'} onClick={() => onTogglePanel('bookmarks')} />
         <SidebarButton icon="downloads" label="Downloads" expanded={expanded} active={activePanel === 'downloads'} onClick={() => onTogglePanel('downloads')} />
         <SidebarButton icon="history" label="History" expanded={expanded} active={activePanel === 'history'} onClick={() => onTogglePanel('history')} />
+        <SidebarButton icon="pipelines" label="Pipelines" expanded={expanded} active={activePanel === 'pipelines'} onClick={() => onTogglePanel('pipelines')} />
         <SidebarButton icon="ai" label="AI Chat" expanded={expanded} active={chatOpen} onClick={onToggleChat} />
         <SidebarButton icon="settings" label="Settings" expanded={expanded} active={false} onClick={onOpenSettings} />
       </div>
@@ -182,6 +178,7 @@ function SidebarButton({ icon, label, expanded, active, onClick }: {
     bookmarks: <svg width="16" height="16" viewBox="0 0 24 24" fill={active ? 'currentColor' : 'none'} stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z" /></svg>,
     downloads: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>,
     history: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>,
+    pipelines: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6h16M4 12h16M4 18h16" /><circle cx="8" cy="6" r="1.5" fill="currentColor" /><circle cx="14" cy="12" r="1.5" fill="currentColor" /><circle cx="10" cy="18" r="1.5" fill="currentColor" /></svg>,
     ai: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" /><circle cx="12" cy="12" r="3" /><path d="M12 2v4M12 18v4M2 12h4M18 12h4" /></svg>,
     settings: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" /></svg>
   }

@@ -1,6 +1,6 @@
 // AI Provider definitions
 
-export type AIProviderId = 'claude' | 'gemini' | 'openai' | 'grok' | 'openclaw' | 'ollama'
+export type AIProviderId = 'claude' | 'anthropic' | 'codex' | 'gemini' | 'openai' | 'grok' | 'openclaw' | 'ollama'
 
 export interface AIProvider {
   id: AIProviderId
@@ -37,7 +37,7 @@ export const AI_PROVIDERS: AIProvider[] = [
   {
     id: 'claude',
     name: 'Claude',
-    description: 'Paste API key for instant responses, or use CLI subscription (slower)',
+    description: 'Sign in with Claude — uses your Max/Pro subscription',
     authType: 'dual',
     icon: 'claude',
     models: [
@@ -46,6 +46,20 @@ export const AI_PROVIDERS: AIProvider[] = [
       { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', providerId: 'claude' },
       { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', providerId: 'claude' },
       { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', providerId: 'claude' },
+    ]
+  },
+  {
+    id: 'anthropic',
+    name: 'Anthropic',
+    description: 'Anthropic API — requires API key from console.anthropic.com',
+    authType: 'api-key',
+    icon: 'claude',
+    models: [
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', providerId: 'anthropic' },
+      { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5', providerId: 'anthropic' },
+      { id: 'claude-opus-4-6', name: 'Claude Opus 4.6', providerId: 'anthropic' },
+      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', providerId: 'anthropic' },
+      { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5', providerId: 'anthropic' },
     ]
   },
   {
@@ -61,17 +75,31 @@ export const AI_PROVIDERS: AIProvider[] = [
     ]
   },
   {
+    id: 'codex',
+    name: 'Codex',
+    description: 'Sign in with ChatGPT — uses your Plus/Pro subscription',
+    authType: 'dual',
+    icon: 'openai',
+    models: [
+      { id: 'gpt-5.3-codex', name: 'GPT-5.3 Codex', providerId: 'codex' },
+      { id: 'gpt-5.2-codex', name: 'GPT-5.2 Codex', providerId: 'codex' },
+      { id: 'gpt-5.2', name: 'GPT-5.2', providerId: 'codex' },
+      { id: 'gpt-5-codex-mini', name: 'GPT-5 Codex Mini', providerId: 'codex' },
+      { id: 'o3', name: 'o3', providerId: 'codex' },
+    ]
+  },
+  {
     id: 'openai',
     name: 'OpenAI',
-    description: 'Use Codex CLI subscription or API key from platform.openai.com',
-    authType: 'dual',
+    description: 'OpenAI API — requires API key from platform.openai.com',
+    authType: 'api-key',
     icon: 'openai',
     models: [
       { id: 'gpt-4.1', name: 'GPT-4.1', providerId: 'openai' },
       { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', providerId: 'openai' },
       { id: 'o3', name: 'o3', providerId: 'openai' },
       { id: 'o4-mini', name: 'o4 Mini', providerId: 'openai' },
-      { id: 'codex-mini', name: 'Codex Mini', providerId: 'openai' },
+      { id: 'gpt-5.2', name: 'GPT-5.2', providerId: 'openai' },
     ]
   },
   {
