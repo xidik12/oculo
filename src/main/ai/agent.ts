@@ -798,6 +798,7 @@ export class AgentController {
       const loopState = { lastSig: '', dupes: 0 }
       const toolCallCounts: Record<string, number> = {}
       const mediaFilePaths: string[] = []
+      const completedSubmits = new Set<string>()
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.pruneHistory()
@@ -840,13 +841,18 @@ export class AgentController {
           toolCallCounts[tool.name] = (toolCallCounts[tool.name] || 0) + 1
         }
 
-        // Execute tool calls — intercept redundant media regeneration
+        // Execute tool calls — intercept redundant media regeneration and duplicate submits
         const toolResults: ToolResultBlock[] = []
         for (const tool of toolUses) {
           this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.input, status: 'running' } })
 
           let result: string
-          if (tool.name === 'media' && mediaFilePaths.length > 0 && toolCallCounts['media']! > 1) {
+
+          // Guard: block duplicate submit-type clicks (Post, Send, Tweet, etc.)
+          const submitBlock = tool.name === 'act' ? this.checkSubmitGuard(tool.input as Record<string, unknown>, completedSubmits) : null
+          if (submitBlock) {
+            result = submitBlock
+          } else if (tool.name === 'media' && mediaFilePaths.length > 0 && toolCallCounts['media']! > 1) {
             console.log(`[Oculo] Blocking redundant media call — already generated ${mediaFilePaths.length} file(s). Returning existing path.`)
             result = `Image already generated this session: ${mediaFilePaths[mediaFilePaths.length - 1]}. Use this path for upload — do NOT regenerate.`
           } else {
@@ -855,6 +861,8 @@ export class AgentController {
               const pathMatch = result.match(/:\s*(\/[^\s]+\.(png|jpg|jpeg|webp|mp4|gif))/)
               if (pathMatch) mediaFilePaths.push(pathMatch[1])
             }
+            // Record successful submit clicks
+            if (tool.name === 'act') this.recordSubmit(tool.input as Record<string, unknown>, result, completedSubmits)
           }
 
           this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
@@ -921,15 +929,75 @@ export class AgentController {
     return false
   }
 
+  // ── Submit action guard ────────────────────────────────────────────────────
+  // Prevents double-posting on social media, double-submitting forms, etc.
+  // Tracks successful click actions on submit-type buttons and blocks repeats.
+
+  private static SUBMIT_PATTERNS = /^(post|tweet|send|submit|publish|reply|comment|confirm|pay|place order|checkout|sign up|subscribe)$/i
+
+  /** Check if an act tool call is a submit-type click */
+  private isSubmitClick(input: Record<string, unknown>): string | null {
+    if (typeof input !== 'object' || !input) return null
+    const action = String(input.action || '')
+    if (action !== 'click' && action !== 'doubleClick') return null
+    const target = String(input.text || input.label || input.name || input.ref || input.selector || '')
+    if (!target) return null
+    // Check if the target text matches a submit-type pattern
+    const cleanTarget = target.replace(/^#\d+\s*/, '').trim() // strip ref numbers like "#3 Post"
+    if (AgentController.SUBMIT_PATTERNS.test(cleanTarget)) {
+      return `${action}:${cleanTarget.toLowerCase()}`
+    }
+    return null
+  }
+
+  /** If this is a repeat submit click, return a blocking message. Otherwise return null. */
+  private checkSubmitGuard(
+    input: Record<string, unknown>,
+    completedSubmits: Set<string>
+  ): string | null {
+    const sig = this.isSubmitClick(input)
+    if (!sig) return null
+    if (completedSubmits.has(sig)) {
+      console.log(`[Oculo] Blocked duplicate submit action: "${sig}" — already succeeded earlier.`)
+      return `Already clicked "${sig.split(':')[1]}" successfully in a previous step. The action was completed — do NOT click it again. Move on to the next task or confirm completion to the user.`
+    }
+    return null
+  }
+
+  /** Record a successful submit click */
+  private recordSubmit(
+    input: Record<string, unknown>,
+    result: string,
+    completedSubmits: Set<string>
+  ): void {
+    if (result.startsWith('Error')) return
+    const sig = this.isSubmitClick(input)
+    if (sig) {
+      completedSubmits.add(sig)
+      console.log(`[Oculo] Recorded successful submit: "${sig}"`)
+    }
+  }
+
   /** Execute a list of tool calls, emit events, cap results, return tool_result blocks. */
   private async executeToolCalls(
-    toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>
+    toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>,
+    completedSubmits?: Set<string>
   ): Promise<ToolResultBlock[]> {
     const toolResults: ToolResultBlock[] = []
     for (const tool of toolCalls) {
       this.emit({ type: 'tool_use_start', toolCall: { id: tool.id, name: tool.name, input: tool.args, status: 'running' } })
 
-      const result = await this.callMcpTool(tool.name, tool.args)
+      let result: string
+
+      // Guard: block duplicate submit-type clicks
+      const submitBlock = (tool.name === 'act' && completedSubmits) ? this.checkSubmitGuard(tool.args, completedSubmits) : null
+      if (submitBlock) {
+        result = submitBlock
+      } else {
+        result = await this.callMcpTool(tool.name, tool.args)
+        // Record successful submit clicks
+        if (tool.name === 'act' && completedSubmits) this.recordSubmit(tool.args, result, completedSubmits)
+      }
 
       this.emit({ type: 'tool_use_result', toolCallId: tool.id, result, isError: result.startsWith('Error') })
 
@@ -1009,6 +1077,7 @@ export class AgentController {
     try {
       let fullAssistantText = ''
       const loopState = { lastSig: '', dupes: 0 }
+      const completedSubmits = new Set<string>()
 
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         this.pruneHistory()
@@ -1035,7 +1104,8 @@ export class AgentController {
         }
 
         const toolResults = await this.executeToolCalls(
-          response.toolCalls.map(t => ({ id: t.id, name: t.name, args: t.args || {} }))
+          response.toolCalls.map(t => ({ id: t.id, name: t.name, args: t.args || {} })),
+          completedSubmits
         )
         this.conversationHistory.push({ role: 'user', content: toolResults })
       }
