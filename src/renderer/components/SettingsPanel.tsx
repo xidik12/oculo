@@ -339,7 +339,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
         Configure API keys for AI providers. Keys are stored securely and never leave your device.
       </p>
 
-      {AI_PROVIDERS.map(provider => {
+      {AI_PROVIDERS.filter(p => p.id !== 'claude' || __ENABLE_CLAUDE_OAUTH__).map(provider => {
         const status = statuses[provider.id]
         const isReady = status?.ready
         const authMode = status?.authMode

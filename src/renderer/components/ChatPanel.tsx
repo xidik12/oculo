@@ -108,7 +108,7 @@ function ProviderSelector({ activeProvider, activeModel, onSelect }: {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute top-full left-0 mt-1 w-[320px] bg-surface-dark-1 border border-surface-dark-3 rounded-lg shadow-xl z-50 py-1 max-h-[400px] overflow-y-auto">
-            {AI_PROVIDERS.map(provider => {
+            {AI_PROVIDERS.filter(p => p.id !== 'claude' || __ENABLE_CLAUDE_OAUTH__).map(provider => {
               const status = statuses[provider.id]
               const isActive = provider.id === activeProvider
               const isReady = status?.ready
@@ -837,6 +837,7 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
       </div>
 
       <div className="w-full max-w-[280px] space-y-2 mt-1">
+          {__ENABLE_CLAUDE_OAUTH__ && (
           <button
             onClick={() => handleLogin('claude')}
             disabled={loading !== null}
@@ -850,6 +851,7 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
             </div>
             {loading === 'claude' && <span className="w-3 h-3 border-2 border-[#d97706] border-t-transparent rounded-full animate-spin flex-shrink-0" />}
           </button>
+          )}
 
           <button
             onClick={() => handleLogin('codex')}
