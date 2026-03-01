@@ -9,13 +9,14 @@ import BookmarksBar from './components/bookmarks/BookmarksBar'
 import AddBookmarkPopover from './components/bookmarks/AddBookmarkPopover'
 import HistoryPanel from './components/history/HistoryPanel'
 import DownloadsPanel from './components/downloads/DownloadsPanel'
+import PipelinesPanel from './components/pipelines/PipelinesPanel'
 import CommandPalette from './components/common/CommandPalette'
 import ContextMenu, { ContextMenuItem, useContextMenu } from './components/common/ContextMenu'
 import { ToastContainer, useToasts } from './components/common/Toast'
 import ReaderMode from './components/common/ReaderMode'
 import SettingsPanel from './components/SettingsPanel'
 import { useSidebarState } from './hooks/useSidebarState'
-import { Tab, TabGroup, TAB_GROUP_COLORS, PinnedApp } from '../shared/types'
+import { Tab, TabGroup, TAB_GROUP_COLORS, PinnedApp, PatternSuggestion } from '../shared/types'
 
 let tabCounter = 0
 function newId(): string {
@@ -55,6 +56,7 @@ export default function App() {
   const [highlightPopup, setHighlightPopup] = useState<{ text: string; x: number; y: number } | null>(null)
   const [tabSuspended, setTabSuspended] = useState<Set<string>>(new Set())
   const [pinnedApps, setPinnedApps] = useState<PinnedApp[]>([])
+  const [pipelineSuggestions, setPipelineSuggestions] = useState<PatternSuggestion[]>([])
   const tabLastActive = useRef<Map<string, number>>(new Map())
   const closedTabs = useRef<{ url: string; title: string }[]>([])
   const lastPageSnapshot = useRef('')
@@ -86,24 +88,37 @@ export default function App() {
     }).catch(() => {})
   }, [])
 
+  // Pipeline suggestion listener
+  useEffect(() => {
+    const api = oculoApi()
+    if (!api?.onPipelineSuggest) return
+    return api.onPipelineSuggest((suggestion: PatternSuggestion) => {
+      setPipelineSuggestions(prev => {
+        if (prev.some(s => s.id === suggestion.id)) return prev
+        return [...prev, suggestion]
+      })
+      addToast(`Pattern detected on ${suggestion.domain}. Open Pipelines to save.`, 'info')
+    })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // IPC event listeners
   useEffect(() => {
     const api = oculoApi()
     if (!api) return
     const cleanups = [
       api.onNewTab((url?: string, openerId?: number) => handleNewTab(url, openerId)),
-      api.onCloseActiveTab(() => handleCloseTab(activeTabId)),
+      api.onCloseActiveTab(() => handleCloseTab(activeTabIdRef.current)),
       api.onToggleChat?.(() => setChatOpen(prev => !prev)),
       api.onFindInPage?.(() => setFindOpen(true)),
-      api.onToggleDevTools?.(() => api.openWebviewDevTools(activeTabId)),
-      api.onInspectElement?.(() => api.inspectElement?.(activeTabId)),
+      api.onToggleDevTools?.(() => api.openWebviewDevTools(activeTabIdRef.current)),
+      api.onInspectElement?.(() => api.inspectElement?.(activeTabIdRef.current)),
       api.onViewPageSource?.(() => handleViewSource()),
       api.onToggleDevToolsMode?.((mode: string) => api.toggleDevToolsWithMode?.(mode)),
       api.onCommandPalette?.(() => setCommandPaletteOpen(prev => !prev)),
       api.onAddBookmark?.(() => handleToggleBookmark()),
       api.onReopenClosedTab?.(() => handleReopenClosedTab()),
-      api.onNavBack?.(() => api.goBack(activeTabId)),
-      api.onNavForward?.(() => api.goForward(activeTabId)),
+      api.onNavBack?.(() => api.goBack(activeTabIdRef.current)),
+      api.onNavForward?.(() => api.goForward(activeTabIdRef.current)),
       api.onReaderMode?.(() => setReaderModeOpen(prev => !prev)),
       api.onSplitView?.(() => {}),
       api.onToggleBookmarksBar?.(() => setBookmarksBarOpen(prev => !prev)),
@@ -2952,13 +2967,17 @@ export default function App() {
   const handleTabSwitch = useCallback((tabId: string) => {
     setActiveTabId(tabId)
     setReaderModeOpen(false)
+    // Clear stale snapshots so the next page/a11y call gets fresh data for the new tab
+    lastPageSnapshot.current = ''
+    lastA11ySnapshot.current = ''
   }, [])
 
   const handleNavigate = useCallback((url: string) => {
     const isInternal = url.startsWith('oculo://')
-    setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, url, isLoading: !isInternal } : t))
+    const currentTabId = activeTabIdRef.current
+    setTabs(prev => prev.map(t => t.id === currentTabId ? { ...t, url, isLoading: !isInternal } : t))
     setReaderModeOpen(false)
-  }, [activeTabId])
+  }, [])
 
   const handleWebViewUpdate = useCallback((tabId: string, updates: Partial<Tab>): void => {
     setTabs(prev => prev.map(t => t.id === tabId ? { ...t, ...updates } : t))
@@ -3228,6 +3247,23 @@ export default function App() {
           <BookmarksSidebar isOpen={sidebar.activePanel === 'bookmarks'} onClose={sidebar.closePanel} onNavigate={handleNavigate} />
           <HistoryPanel isOpen={sidebar.activePanel === 'history'} onClose={sidebar.closePanel} onNavigate={handleNavigate} />
           <DownloadsPanel isOpen={sidebar.activePanel === 'downloads'} onClose={sidebar.closePanel} />
+          <PipelinesPanel
+            isOpen={sidebar.activePanel === 'pipelines'}
+            onClose={sidebar.closePanel}
+            suggestions={pipelineSuggestions}
+            onDismissSuggestion={(id) => {
+              oculoApi()?.pipelineDismiss(id)
+              setPipelineSuggestions(prev => prev.filter(s => s.id !== id))
+            }}
+            onSaveSuggestion={(suggestion) => {
+              oculoApi()?.macroCreate(suggestion.suggestedName, suggestion.steps, undefined, `Auto-detected on ${suggestion.domain}`)
+              setPipelineSuggestions(prev => prev.filter(s => s.id !== suggestion.id))
+              addToast(`Saved pipeline: ${suggestion.suggestedName}`, 'success')
+            }}
+            onExecuteMacro={(id) => {
+              oculoApi()?.macroExecute(id)
+            }}
+          />
 
           {/* Main content */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0">

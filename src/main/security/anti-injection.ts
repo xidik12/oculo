@@ -61,6 +61,7 @@ export class AntiInjection {
                 return cs.display !== 'none' && cs.visibility !== 'hidden';
               });
               if (!hasVisibleChildren) {
+                el.textContent = '';
                 removed++;
               }
             }

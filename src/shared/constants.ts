@@ -46,13 +46,14 @@ export const PERMISSION_MAP: Record<string, import('./types').PermissionLevel> =
   'type': 'notify',
   'fill': 'notify',
   'select': 'notify',
-  'login': 'notify',
+  'login': 'confirm',
   'press': 'notify',
   'submit': 'notify',
   'upload': 'notify',
   'generate': 'notify',
 
   // Confirm - require explicit approval
+  'evaluate': 'confirm',
   'payment': 'confirm',
   'delete_account': 'confirm',
   'change_password': 'confirm',

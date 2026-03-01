@@ -1,58 +1,135 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import path from 'path'
 
-// IPC channel constants (duplicated here to avoid import issues in preload)
+// IPC channel constants — synced from src/shared/ipc-channels.ts
+// This is a copy because preload cannot import from shared in all build configs.
 const IPC = {
+  // Tab management
   TAB_CREATE: 'tab:create',
   TAB_CLOSE: 'tab:close',
   TAB_SWITCH: 'tab:switch',
+  TAB_UPDATE: 'tab:update',
+  TAB_LIST: 'tab:list',
+
+  // Navigation
+  NAV_GO: 'nav:go',
   NAV_BACK: 'nav:back',
   NAV_FORWARD: 'nav:forward',
   NAV_RELOAD: 'nav:reload',
-  PERMISSION_REQUEST: 'permission:request',
-  PERMISSION_RESPONSE: 'permission:response',
-  SETTINGS_GET: 'settings:get',
-  SETTINGS_SET: 'settings:set',
+  NAV_STOP: 'nav:stop',
+
+  // MCP Server
   MCP_STATUS: 'mcp:status',
+  MCP_TOOL_CALL: 'mcp:tool-call',
+  MCP_CONNECTED: 'mcp:connected',
+  MCP_DISCONNECTED: 'mcp:disconnected',
+
+  // Security
   VAULT_LIST: 'vault:list',
   VAULT_ADD: 'vault:add',
   VAULT_DELETE: 'vault:delete',
+  VAULT_GET: 'vault:get',
+  VAULT_TOTP: 'vault:totp',
+  VAULT_SET_TOTP: 'vault:set-totp',
+  PERMISSION_REQUEST: 'permission:request',
+  PERMISSION_RESPONSE: 'permission:response',
   AUDIT_QUERY: 'audit:query',
+
+  // CAPTCHA
+  CAPTCHA_DETECTED: 'captcha:detected',
+  CAPTCHA_SOLVED: 'captcha:solved',
+  CAPTCHA_FAILED: 'captcha:failed',
+  CAPTCHA_SOLVE: 'captcha:solve',
+
+  // Settings
+  SETTINGS_GET: 'settings:get',
+  SETTINGS_SET: 'settings:set',
+
+  // Chat Panel
   CHAT_SEND: 'chat:send',
   CHAT_STREAM: 'chat:stream',
   CHAT_CLEAR: 'chat:clear',
   CHAT_ABORT: 'chat:abort',
   CHAT_GET_STATUS: 'chat:get-status',
-  ZOOM_GET: 'zoom:get',
-  ZOOM_SET: 'zoom:set',
-  ZOOM_RESET: 'zoom:reset',
+
+  // AI Provider Management
   AI_SET_PROVIDER: 'ai:set-provider',
   AI_SET_CONFIG: 'ai:set-config',
   AI_GET_PROVIDER_STATUS: 'ai:get-provider-status',
   AI_GET_ACTIVE: 'ai:get-active',
+
+  // Bookmarks
   BOOKMARKS_LIST: 'bookmarks:list',
   BOOKMARKS_ADD: 'bookmarks:add',
   BOOKMARKS_UPDATE: 'bookmarks:update',
   BOOKMARKS_DELETE: 'bookmarks:delete',
   BOOKMARKS_FIND_URL: 'bookmarks:find-url',
+
+  // History
   HISTORY_ADD: 'history:add',
   HISTORY_LIST: 'history:list',
   HISTORY_CLEAR: 'history:clear',
   HISTORY_DELETE_URL: 'history:delete-url',
+
+  // Downloads
   DOWNLOADS_LIST: 'downloads:list',
   DOWNLOADS_CANCEL: 'downloads:cancel',
   DOWNLOADS_OPEN: 'downloads:open',
+
+  // Zoom
+  ZOOM_GET: 'zoom:get',
+  ZOOM_SET: 'zoom:set',
+  ZOOM_RESET: 'zoom:reset',
+
+  // Find in page
+  FIND_IN_PAGE: 'find-in-page',
+  FIND_CLOSE: 'find:close',
+
+  // Command palette
+  COMMAND_PALETTE: 'command-palette',
+
+  // Dev tools
+  DEV_TOOLS: 'dev-tools',
+
+  // Auth
+  AUTH_LOGIN: 'auth:login',
+  AUTH_LOGOUT: 'auth:logout',
+  AUTH_STATUS: 'auth:status',
+
+  // App
+  APP_READY: 'app:ready',
+  APP_QUIT: 'app:quit',
   NAVIGATE_TO: 'navigate-to',
   OPEN_EXTERNAL: 'open-external',
+
+  // Screenshot
   SCREENSHOT_SAVE: 'screenshot:save',
+
+  // File Upload via CDP
   FILE_UPLOAD: 'file:upload',
+
+  // Media Generation
+  MEDIA_GENERATE: 'media:generate',
+
+  // Downloads & File Access
   DOWNLOAD_TRIGGER: 'download:trigger',
   FILE_READ_SAFE: 'file:read-safe',
   FILE_WRITE_SAFE: 'file:write-safe',
+
+  // Clipboard
   CLIPBOARD_WRITE_IMAGE: 'clipboard:write-image',
+
+  // Accessibility Tree (CDP)
   A11Y_SNAPSHOT: 'a11y:snapshot',
+
+  // Print to PDF
+  PRINT_TO_PDF: 'print:to-pdf',
+
+  // File Operations
   OPEN_FILE: 'file:open',
   FILE_DIALOG_OPEN: 'file:dialog-open',
+
+  // MCP Client (Connected Apps)
   MCP_CLIENT_LIST: 'mcp-client:list',
   MCP_CLIENT_ADD: 'mcp-client:add',
   MCP_CLIENT_REMOVE: 'mcp-client:remove',
@@ -60,17 +137,82 @@ const IPC = {
   MCP_CLIENT_STATUS: 'mcp-client:status',
   MCP_CLIENT_TOOLS: 'mcp-client:tools',
   MCP_CLIENT_CALL: 'mcp-client:call',
+
+  // PTY Terminal
   PTY_SPAWN: 'pty:spawn',
   PTY_DATA: 'pty:data',
   PTY_RESIZE: 'pty:resize',
   PTY_EXIT: 'pty:exit',
   PTY_KILL: 'pty:kill',
-  AUTH_LOGIN: 'auth:login',
-  AUTH_LOGOUT: 'auth:logout',
-  AUTH_STATUS: 'auth:status',
+
+  // Session Memory
+  MEMORY_LIST: 'memory:list',
+  MEMORY_ADD: 'memory:add',
+  MEMORY_CLEAR: 'memory:clear',
+
+  // Containers
+  CONTAINER_LIST: 'container:list',
+  CONTAINER_CREATE: 'container:create',
+  CONTAINER_UPDATE: 'container:update',
+  CONTAINER_DELETE: 'container:delete',
+
+  // Cards / AI Skills
+  CARD_LIST: 'card:list',
+  CARD_CREATE: 'card:create',
+  CARD_UPDATE: 'card:update',
+  CARD_DELETE: 'card:delete',
+  CARD_ACTIVATE: 'card:activate',
+
+  // Workspaces
+  WORKSPACE_LIST: 'workspace:list',
+  WORKSPACE_CREATE: 'workspace:create',
+  WORKSPACE_SWITCH: 'workspace:switch',
+  WORKSPACE_DELETE: 'workspace:delete',
+  WORKSPACE_SAVE: 'workspace:save',
+
+  // Macros
+  MACRO_LIST: 'macro:list',
+  MACRO_CREATE: 'macro:create',
+  MACRO_UPDATE: 'macro:update',
+  MACRO_DELETE: 'macro:delete',
+  MACRO_EXECUTE: 'macro:execute',
+
+  // Pipelines / Run Cache
+  RUN_CACHE_LIST: 'run-cache:list',
+  RUN_CACHE_DELETE: 'run-cache:delete',
+  RUN_CACHE_SAVE: 'run-cache:save',
+  RUN_CACHE_FIND: 'run-cache:find',
+  RUN_CACHE_GET: 'run-cache:get',
+  RUN_CACHE_MARK_FAILED: 'run-cache:mark-failed',
+  RUN_CACHE_MARK_SUCCESS: 'run-cache:mark-success',
+  RUN_CACHE_SUMMARY: 'run-cache:summary',
+  RUN_CACHE_SKILLS: 'run-cache:skills',
+  PIPELINE_SUGGEST: 'pipeline:suggest',
+  PIPELINE_DISMISS: 'pipeline:dismiss',
+
+  // Lessons
+  LESSONS_FOR_DOMAIN: 'lessons:for-domain',
+
+  // Network Interception (CDP)
+  NETWORK_INTERCEPT: 'network:intercept',
+  NETWORK_GET_BODY: 'network:get-body',
+
+  // Text Selection
+  TEXT_SELECTED: 'text:selected',
+
+  // Focus Mode
+  FOCUS_MODE: 'focus-mode',
+
+  // Session Cookies
   COOKIES_EXPORT: 'cookies:export',
   COOKIES_IMPORT: 'cookies:import',
-  CAPTCHA_SOLVE: 'captcha:solve',
+
+  // Pinned Sidebar Apps
+  PINNED_APP_LIST: 'pinned-app:list',
+  PINNED_APP_ADD: 'pinned-app:add',
+  PINNED_APP_REMOVE: 'pinned-app:remove',
+  PINNED_APP_UPDATE: 'pinned-app:update',
+  PINNED_APP_SAVE: 'pinned-app:save',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -178,13 +320,13 @@ const api = {
   deleteCredential: (id: string) => ipcRenderer.invoke(IPC.VAULT_DELETE, id),
 
   // === Vault Get (for auto-login) ===
-  vaultGet: (domain: string) => ipcRenderer.invoke('vault:get', domain),
+  vaultGet: (domain: string) => ipcRenderer.invoke(IPC.VAULT_GET, domain),
 
   // === TOTP ===
   vaultTotp: (domain: string): Promise<{ code: string; remainingSeconds: number } | null> =>
-    ipcRenderer.invoke('vault:totp', domain),
+    ipcRenderer.invoke(IPC.VAULT_TOTP, domain),
   vaultSetTotp: (domain: string, secret: string): Promise<boolean> =>
-    ipcRenderer.invoke('vault:set-totp', domain, secret),
+    ipcRenderer.invoke(IPC.VAULT_SET_TOTP, domain, secret),
 
   // === Audit ===
   getAuditLog: (limit?: number) => ipcRenderer.invoke(IPC.AUDIT_QUERY, limit),
@@ -290,8 +432,8 @@ const api = {
   // === Menu events ===
   onFindInPage: (callback: () => void) => {
     const handler = () => callback()
-    ipcRenderer.on('find-in-page', handler)
-    return () => { ipcRenderer.removeListener('find-in-page', handler) }
+    ipcRenderer.on(IPC.FIND_IN_PAGE, handler)
+    return () => { ipcRenderer.removeListener(IPC.FIND_IN_PAGE, handler) }
   },
   onToggleDevTools: (callback: () => void) => {
     const handler = () => callback()
@@ -318,8 +460,8 @@ const api = {
   },
   onCommandPalette: (callback: () => void) => {
     const handler = () => callback()
-    ipcRenderer.on('command-palette', handler)
-    return () => { ipcRenderer.removeListener('command-palette', handler) }
+    ipcRenderer.on(IPC.COMMAND_PALETTE, handler)
+    return () => { ipcRenderer.removeListener(IPC.COMMAND_PALETTE, handler) }
   },
   onAddBookmark: (callback: () => void) => {
     const handler = () => callback()
@@ -352,8 +494,8 @@ const api = {
   // === MCP Tool Execution (AI-triggered, runs in renderer where webview is accessible) ===
   onMcpToolCall: (callback: (callId: string, toolName: string, args: any) => void) => {
     const handler = (_: any, callId: string, toolName: string, args: any) => callback(callId, toolName, args)
-    ipcRenderer.on('mcp:tool-call', handler)
-    return () => { ipcRenderer.removeListener('mcp:tool-call', handler) }
+    ipcRenderer.on(IPC.MCP_TOOL_CALL, handler)
+    return () => { ipcRenderer.removeListener(IPC.MCP_TOOL_CALL, handler) }
   },
   sendMcpToolResult: (callId: string, result: string) => {
     ipcRenderer.send('mcp:tool-result', callId, result)
@@ -460,35 +602,35 @@ const api = {
 
   // === Run Cache (Compile-to-Code) ===
   runCacheSave: (url: string, steps: any[], description?: string): Promise<string | null> =>
-    ipcRenderer.invoke('run-cache:save', url, steps, description),
+    ipcRenderer.invoke(IPC.RUN_CACHE_SAVE, url, steps, description),
   runCacheFind: (url: string): Promise<any[]> =>
-    ipcRenderer.invoke('run-cache:find', url),
+    ipcRenderer.invoke(IPC.RUN_CACHE_FIND, url),
   runCacheGet: (id: string): Promise<any> =>
-    ipcRenderer.invoke('run-cache:get', id),
+    ipcRenderer.invoke(IPC.RUN_CACHE_GET, id),
   runCacheMarkFailed: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('run-cache:mark-failed', id),
+    ipcRenderer.invoke(IPC.RUN_CACHE_MARK_FAILED, id),
   runCacheMarkSuccess: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('run-cache:mark-success', id),
+    ipcRenderer.invoke(IPC.RUN_CACHE_MARK_SUCCESS, id),
   runCacheSummary: (domain: string): Promise<string> =>
-    ipcRenderer.invoke('run-cache:summary', domain),
+    ipcRenderer.invoke(IPC.RUN_CACHE_SUMMARY, domain),
 
   // === Skills (tested workflows) ===
   runCacheSkills: (domain?: string): Promise<any> =>
-    ipcRenderer.invoke('run-cache:skills', domain),
+    ipcRenderer.invoke(IPC.RUN_CACHE_SKILLS, domain),
 
   // === Lessons for MCP ===
   lessonsForDomain: (domain: string): Promise<string> =>
-    ipcRenderer.invoke('lessons:for-domain', domain),
+    ipcRenderer.invoke(IPC.LESSONS_FOR_DOMAIN, domain),
 
   // === Network Interception (CDP) ===
   networkIntercept: (webContentsId: number, enable: boolean): Promise<string> =>
-    ipcRenderer.invoke('network:intercept', webContentsId, enable),
+    ipcRenderer.invoke(IPC.NETWORK_INTERCEPT, webContentsId, enable),
   networkGetBody: (webContentsId: number, requestId: string): Promise<string> =>
-    ipcRenderer.invoke('network:get-body', webContentsId, requestId),
+    ipcRenderer.invoke(IPC.NETWORK_GET_BODY, webContentsId, requestId),
 
   // === Print to PDF ===
   printToPDF: (webContentsId: number): Promise<string> =>
-    ipcRenderer.invoke('print:to-pdf', webContentsId),
+    ipcRenderer.invoke(IPC.PRINT_TO_PDF, webContentsId),
 
   // === PTY Terminal ===
   ptySpawn: (cols: number, rows: number): void =>
@@ -527,81 +669,81 @@ const api = {
     ipcRenderer.invoke(IPC.MCP_CLIENT_CALL, name, args),
 
   // === Session Memory ===
-  memoryList: (): Promise<any[]> => ipcRenderer.invoke('memory:list'),
+  memoryList: (): Promise<any[]> => ipcRenderer.invoke(IPC.MEMORY_LIST),
   memoryAdd: (summary: string, urls: string[], tags?: string[]): Promise<any> =>
-    ipcRenderer.invoke('memory:add', summary, urls, tags),
-  memoryClear: (): Promise<boolean> => ipcRenderer.invoke('memory:clear'),
+    ipcRenderer.invoke(IPC.MEMORY_ADD, summary, urls, tags),
+  memoryClear: (): Promise<boolean> => ipcRenderer.invoke(IPC.MEMORY_CLEAR),
 
   // === Containers ===
-  containerList: (): Promise<any[]> => ipcRenderer.invoke('container:list'),
+  containerList: (): Promise<any[]> => ipcRenderer.invoke(IPC.CONTAINER_LIST),
   containerCreate: (name: string, color: string, icon: string): Promise<any> =>
-    ipcRenderer.invoke('container:create', name, color, icon),
+    ipcRenderer.invoke(IPC.CONTAINER_CREATE, name, color, icon),
   containerUpdate: (id: string, updates: any): Promise<any> =>
-    ipcRenderer.invoke('container:update', id, updates),
+    ipcRenderer.invoke(IPC.CONTAINER_UPDATE, id, updates),
   containerDelete: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('container:delete', id),
+    ipcRenderer.invoke(IPC.CONTAINER_DELETE, id),
 
   // === Cards / AI Skills ===
-  cardList: (): Promise<any[]> => ipcRenderer.invoke('card:list'),
+  cardList: (): Promise<any[]> => ipcRenderer.invoke(IPC.CARD_LIST),
   cardCreate: (name: string, icon: string, systemInstruction: string, triggerDomains?: string[]): Promise<any> =>
-    ipcRenderer.invoke('card:create', name, icon, systemInstruction, triggerDomains),
+    ipcRenderer.invoke(IPC.CARD_CREATE, name, icon, systemInstruction, triggerDomains),
   cardUpdate: (id: string, updates: any): Promise<any> =>
-    ipcRenderer.invoke('card:update', id, updates),
+    ipcRenderer.invoke(IPC.CARD_UPDATE, id, updates),
   cardDelete: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('card:delete', id),
+    ipcRenderer.invoke(IPC.CARD_DELETE, id),
   cardActivate: (id: string): Promise<any> =>
-    ipcRenderer.invoke('card:activate', id),
+    ipcRenderer.invoke(IPC.CARD_ACTIVATE, id),
 
   // === Workspaces ===
-  workspaceList: (): Promise<any[]> => ipcRenderer.invoke('workspace:list'),
+  workspaceList: (): Promise<any[]> => ipcRenderer.invoke(IPC.WORKSPACE_LIST),
   workspaceCreate: (name: string, color: string): Promise<any> =>
-    ipcRenderer.invoke('workspace:create', name, color),
+    ipcRenderer.invoke(IPC.WORKSPACE_CREATE, name, color),
   workspaceSwitch: (id: string): Promise<any> =>
-    ipcRenderer.invoke('workspace:switch', id),
+    ipcRenderer.invoke(IPC.WORKSPACE_SWITCH, id),
   workspaceDelete: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('workspace:delete', id),
+    ipcRenderer.invoke(IPC.WORKSPACE_DELETE, id),
   workspaceSave: (id: string, tabIds: string[], tabUrls: string[], aiHistory: any[]): Promise<boolean> =>
-    ipcRenderer.invoke('workspace:save', id, tabIds, tabUrls, aiHistory),
+    ipcRenderer.invoke(IPC.WORKSPACE_SAVE, id, tabIds, tabUrls, aiHistory),
 
   // === Macros ===
-  macroList: (): Promise<any[]> => ipcRenderer.invoke('macro:list'),
+  macroList: (): Promise<any[]> => ipcRenderer.invoke(IPC.MACRO_LIST),
   macroCreate: (name: string, steps: any[], shortcut?: string, description?: string): Promise<any> =>
-    ipcRenderer.invoke('macro:create', name, steps, shortcut, description),
+    ipcRenderer.invoke(IPC.MACRO_CREATE, name, steps, shortcut, description),
   macroUpdate: (id: string, updates: any): Promise<any> =>
-    ipcRenderer.invoke('macro:update', id, updates),
+    ipcRenderer.invoke(IPC.MACRO_UPDATE, id, updates),
   macroDelete: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('macro:delete', id),
+    ipcRenderer.invoke(IPC.MACRO_DELETE, id),
   macroExecute: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('macro:execute', id),
+    ipcRenderer.invoke(IPC.MACRO_EXECUTE, id),
 
   // === Run Cache (Pipelines Panel) ===
-  runCacheList: (): Promise<any[]> => ipcRenderer.invoke('run-cache:list'),
-  runCacheDelete: (id: string): Promise<boolean> => ipcRenderer.invoke('run-cache:delete', id),
+  runCacheList: (): Promise<any[]> => ipcRenderer.invoke(IPC.RUN_CACHE_LIST),
+  runCacheDelete: (id: string): Promise<boolean> => ipcRenderer.invoke(IPC.RUN_CACHE_DELETE, id),
 
   // === Pipeline Pattern Detection ===
   onPipelineSuggest: (callback: (suggestion: any) => void): (() => void) => {
     const handler = (_: any, suggestion: any) => callback(suggestion)
-    ipcRenderer.on('pipeline:suggest', handler)
-    return () => ipcRenderer.removeListener('pipeline:suggest', handler)
+    ipcRenderer.on(IPC.PIPELINE_SUGGEST, handler)
+    return () => ipcRenderer.removeListener(IPC.PIPELINE_SUGGEST, handler)
   },
   pipelineDismiss: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('pipeline:dismiss', id),
+    ipcRenderer.invoke(IPC.PIPELINE_DISMISS, id),
   onMacroExecute: (callback: (macro: any) => void): (() => void) => {
     const handler = (_: any, macro: any) => callback(macro)
-    ipcRenderer.on('macro:execute', handler)
-    return () => ipcRenderer.removeListener('macro:execute', handler)
+    ipcRenderer.on(IPC.MACRO_EXECUTE, handler)
+    return () => ipcRenderer.removeListener(IPC.MACRO_EXECUTE, handler)
   },
 
   // === Pinned Sidebar Apps ===
-  pinnedAppList: (): Promise<any[]> => ipcRenderer.invoke('pinned-app:list'),
+  pinnedAppList: (): Promise<any[]> => ipcRenderer.invoke(IPC.PINNED_APP_LIST),
   pinnedAppAdd: (url: string, title: string, favicon?: string, width?: number): Promise<any> =>
-    ipcRenderer.invoke('pinned-app:add', url, title, favicon, width),
+    ipcRenderer.invoke(IPC.PINNED_APP_ADD, url, title, favicon, width),
   pinnedAppRemove: (id: string): Promise<boolean> =>
-    ipcRenderer.invoke('pinned-app:remove', id),
+    ipcRenderer.invoke(IPC.PINNED_APP_REMOVE, id),
   pinnedAppUpdate: (id: string, updates: any): Promise<any> =>
-    ipcRenderer.invoke('pinned-app:update', id, updates),
+    ipcRenderer.invoke(IPC.PINNED_APP_UPDATE, id, updates),
   pinnedAppSave: (apps: any[]): Promise<boolean> =>
-    ipcRenderer.invoke('pinned-app:save', apps),
+    ipcRenderer.invoke(IPC.PINNED_APP_SAVE, apps),
 
   // === Session Cookies ===
   cookiesExport: (url?: string): Promise<any[]> =>
@@ -616,8 +758,8 @@ const api = {
   // === Focus Mode ===
   onFocusMode: (callback: () => void) => {
     const handler = () => callback()
-    ipcRenderer.on('focus-mode', handler)
-    return () => { ipcRenderer.removeListener('focus-mode', handler) }
+    ipcRenderer.on(IPC.FOCUS_MODE, handler)
+    return () => { ipcRenderer.removeListener(IPC.FOCUS_MODE, handler) }
   },
 
   // === Webview preload script path (for <webview preload="..."> attribute) ===

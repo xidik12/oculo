@@ -342,8 +342,8 @@ export class AgentController {
   private shellEnv: Record<string, string> | null = null
   private oauth = new OAuthManager()
   private lessons = new LessonStore()
-  private sessionMemory = new SessionMemoryStore()
-  private cardStore = new CardStore()
+  private sessionMemory: SessionMemoryStore
+  private cardStore: CardStore
   private messageCount = 0
   private activeProvider: AIProviderId = 'claude'
   private activeModel: string = 'claude-sonnet-4-6'
@@ -353,8 +353,10 @@ export class AgentController {
   private persistFn: ((configs: Record<string, any>) => void) | null = null
   private mcpClientManager: McpClientManager | null = null
 
-  constructor(mainWindow: BrowserWindow) {
+  constructor(mainWindow: BrowserWindow, sessionMemory?: SessionMemoryStore, cardStore?: CardStore) {
     this.mainWindow = mainWindow
+    this.sessionMemory = sessionMemory || new SessionMemoryStore()
+    this.cardStore = cardStore || new CardStore()
     this.oauth.setMainWindow(mainWindow)
     this.initShellEnv()
     this.oauth.loadOAuthToken()

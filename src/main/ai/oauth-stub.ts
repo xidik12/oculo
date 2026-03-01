@@ -10,7 +10,7 @@ import http from 'http'
 import https from 'https'
 import path from 'path'
 import os from 'os'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, session } from 'electron'
 import { AIProviderConfig, AIProviderId } from '../../shared/ai-types'
 
 /** Escape HTML special characters to prevent XSS in OAuth callback pages */
@@ -149,7 +149,7 @@ export class OAuthManager {
                 if (result.refresh_token) existing.tokens.refresh_token = result.refresh_token
                 if (result.id_token) existing.tokens.id_token = result.id_token
                 existing.last_refresh = new Date().toISOString()
-                writeFileSync(authPath, JSON.stringify(existing, null, 2))
+                writeFileSync(authPath, JSON.stringify(existing, null, 2), { mode: 0o600 })
               } catch { /* disk write failed */ }
               resolve(true)
             } else {
@@ -209,7 +209,7 @@ export class OAuthManager {
             const { mkdirSync } = require('fs')
             mkdirSync(dir, { recursive: true })
           }
-          writeFileSync(path.join(dir, 'auth.json'), JSON.stringify(authData, null, 2))
+          writeFileSync(path.join(dir, 'auth.json'), JSON.stringify(authData, null, 2), { mode: 0o600 })
         } catch { /* disk write failed */ }
 
         this.codexToken = tokens.access_token
@@ -250,7 +250,8 @@ export class OAuthManager {
     return new Promise((resolve) => {
       const server = http.createServer((req, res) => {
         const url = new URL(req.url || '/', `http://localhost`)
-        if (!url.pathname.endsWith(opts.callbackPath.replace(/^\//, '').split('/').pop() || 'callback')) {
+        const pathname = url.pathname.replace(/\/+$/, '') // strip trailing slashes
+        if (pathname !== opts.callbackPath) {
           res.writeHead(404); res.end('Not found'); return
         }
 
@@ -351,28 +352,41 @@ export class OAuthManager {
           state
         }).toString()
 
-        // Standalone window (no parent) with full web capabilities for Auth0
+        // Spoof user-agent to real Chrome — Cloudflare/Auth0 block Electron UA as bot
+        const CHROME_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36'
+        const oauthSession = session.fromPartition(`persist:oauth-${opts.provider}`)
+        oauthSession.setUserAgent(CHROME_UA)
+
         authWindow = new BrowserWindow({
           width: 500,
           height: 700,
-          title: 'Sign in to OpenAI',
+          title: `Sign in to ${opts.provider === 'claude' ? 'Claude' : 'OpenAI'}`,
           show: false,
           webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
             sandbox: false,
-            partition: `persist:oauth-openai`
+            partition: `persist:oauth-${opts.provider}`
           }
         })
 
-        authWindow.webContents.once('did-finish-load', () => {
+        // Mask Electron-specific globals before page scripts run (bot detection)
+        authWindow.webContents.on('did-start-loading', () => {
+          authWindow?.webContents.executeJavaScript(`
+            try {
+              Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined, configurable: true
+              });
+            } catch(e) {}
+          `).catch(() => {})
+        })
+
+        // Show after DOM is ready (handles Auth0's multi-redirect chain)
+        authWindow.webContents.once('dom-ready', () => {
           authWindow?.show()
         })
 
-        authWindow.webContents.once('did-navigate', () => {
-          setTimeout(() => authWindow?.show(), 500)
-        })
-
+        // Handle Auth0 popups — open in same window instead
         authWindow.webContents.setWindowOpenHandler(({ url }) => {
           authWindow?.loadURL(url)
           return { action: 'deny' }

@@ -558,7 +558,7 @@ app.whenReady().then(async () => {
   }
 
   // Initialize AI agent (lazy — only connects when user sends a message)
-  agentController = new AgentController(window)
+  agentController = new AgentController(window, sessionMemoryStore!, cardStore!)
 
   // Wire up persistence — save API keys to settings.json, restore on startup
   const allSettings = securityManager!.getSettings()

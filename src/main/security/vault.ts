@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS } from '../../shared/constants'
 const DATA_DIR = join(app.getPath('userData'), 'oculo-data')
 const VAULT_FILE = join(DATA_DIR, 'vault.enc')
 const SETTINGS_FILE = join(DATA_DIR, 'settings.json')
+const API_KEYS_FILE = join(DATA_DIR, 'api-keys.enc')
 
 function ensureDir() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
@@ -62,7 +63,7 @@ export class SecurityManager {
     }
 
     const entry: VaultEntry = {
-      id: `vault-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: crypto.randomUUID(),
       domain,
       username,
       password,
@@ -159,16 +160,58 @@ export class SecurityManager {
     return true
   }
 
+  // === API Key Encryption ===
+
+  private loadApiKeys(): Record<string, any> {
+    try {
+      if (existsSync(API_KEYS_FILE) && safeStorage.isEncryptionAvailable()) {
+        const encrypted = readFileSync(API_KEYS_FILE)
+        const decrypted = safeStorage.decryptString(encrypted)
+        return JSON.parse(decrypted)
+      }
+    } catch { /* api-keys.enc not available or corrupt */ }
+    return {}
+  }
+
+  private saveApiKeys(providers: Record<string, any>): void {
+    try {
+      if (safeStorage.isEncryptionAvailable()) {
+        const json = JSON.stringify(providers, null, 2)
+        const encrypted = safeStorage.encryptString(json)
+        writeFileSync(API_KEYS_FILE, encrypted)
+      }
+    } catch (err) {
+      console.error('Failed to save encrypted API keys:', err)
+    }
+  }
+
   // === Settings ===
 
   private loadSettings(): void {
     try {
       if (existsSync(SETTINGS_FILE)) {
         const data = readFileSync(SETTINGS_FILE, 'utf-8')
-        this.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(data) }
+        const parsed = JSON.parse(data)
+        // Migrate: if aiProviders are in settings.json (plaintext), move to encrypted storage
+        if (parsed.aiProviders) {
+          const hasKeys = Object.values(parsed.aiProviders as Record<string, any>).some(
+            (p: any) => p.apiKey && p.apiKey.length > 0
+          )
+          if (hasKeys) {
+            this.saveApiKeys(parsed.aiProviders)
+            delete parsed.aiProviders
+            writeFileSync(SETTINGS_FILE, JSON.stringify(parsed, null, 2))
+          }
+        }
+        this.settings = { ...DEFAULT_SETTINGS, ...parsed }
       }
     } catch {
       this.settings = { ...DEFAULT_SETTINGS }
+    }
+    // Merge encrypted API keys into settings
+    const encryptedProviders = this.loadApiKeys()
+    if (Object.keys(encryptedProviders).length > 0) {
+      (this.settings as any).aiProviders = encryptedProviders
     }
   }
 
@@ -177,9 +220,18 @@ export class SecurityManager {
   }
 
   saveSettings(settings: Partial<AppSettings>): AppSettings {
-    this.settings = { ...this.settings, ...settings }
+    // Extract aiProviders for encrypted storage
+    const { aiProviders, ...rest } = settings as any
+    if (aiProviders) {
+      this.saveApiKeys(aiProviders)
+      ;(this.settings as any).aiProviders = aiProviders
+    }
+    this.settings = { ...this.settings, ...rest }
     try {
-      writeFileSync(SETTINGS_FILE, JSON.stringify(this.settings, null, 2))
+      // Save non-sensitive settings to plaintext JSON (without apiProviders)
+      const toSave = { ...this.settings }
+      delete (toSave as any).aiProviders
+      writeFileSync(SETTINGS_FILE, JSON.stringify(toSave, null, 2))
     } catch (err) {
       console.error('Failed to save settings:', err)
     }

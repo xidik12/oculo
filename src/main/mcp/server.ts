@@ -505,7 +505,7 @@ export class McpServerManager {
     this.httpServer = http.createServer(async (req, res) => {
       if (req.method === 'GET' && req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ status: 'ok', name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION }))
+        res.end(JSON.stringify({ status: 'ok', name: MCP_SERVER_NAME }))
         return
       }
 

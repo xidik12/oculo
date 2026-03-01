@@ -3,6 +3,7 @@ import fs from 'fs'
 import os from 'os'
 import path from 'path'
 import { IPC } from '../shared/ipc-channels'
+import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../shared/constants'
 import { AIProviderConfig } from '../shared/ai-types'
 import { SecurityManager } from './security/vault'
 import { AuditLog } from './security/audit'
@@ -145,7 +146,7 @@ export function setupIPC(
 
   // MCP status
   ipcMain.handle(IPC.MCP_STATUS, async () => {
-    return { connected: true, serverName: 'oculo', version: '0.1.0' }
+    return { connected: true, serverName: MCP_SERVER_NAME, version: MCP_SERVER_VERSION }
   })
 
   // Chat Panel
@@ -645,7 +646,12 @@ export function setupIPC(
           (wc as any).__oculo_network = []
         }
 
-        wc.debugger.on('message', (_event: any, method: string, params: any) => {
+        // Remove previous listener if any to prevent leaks
+        if ((wc as any).__oculo_network_listener) {
+          wc.debugger.removeListener('message', (wc as any).__oculo_network_listener)
+        }
+
+        const listener = (_event: any, method: string, params: any) => {
           if (method === 'Network.responseReceived') {
             const entry = {
               url: params.response?.url || '',
@@ -661,12 +667,19 @@ export function setupIPC(
               (wc as any).__oculo_network = (wc as any).__oculo_network.slice(-50)
             }
           }
-        })
+        }
+        ;(wc as any).__oculo_network_listener = listener
+        wc.debugger.on('message', listener)
 
         return 'Network interception started via CDP'
       } else {
         // Return captured data and stop
         const data = (wc as any).__oculo_network || []
+        // Remove the listener before detaching
+        if ((wc as any).__oculo_network_listener) {
+          wc.debugger.removeListener('message', (wc as any).__oculo_network_listener)
+          ;(wc as any).__oculo_network_listener = null
+        }
         try { wc.debugger.detach() } catch { /* not attached */ }
         ;(wc as any).__oculo_network = []
         return JSON.stringify(data.slice(-20))
@@ -919,7 +932,15 @@ export function setupIPC(
     try {
       const { session } = require('electron')
       let imported = 0
+      let skipped = 0
       for (const cookie of cookies) {
+        // Validate required fields
+        if (typeof cookie.name !== 'string' || !cookie.name ||
+            typeof cookie.value !== 'string' ||
+            typeof cookie.domain !== 'string' || !cookie.domain) {
+          skipped++
+          continue
+        }
         const url = `http${cookie.secure ? 's' : ''}://${cookie.domain?.replace(/^\./, '')}${cookie.path || '/'}`
         await session.defaultSession.cookies.set({
           url,
@@ -934,7 +955,7 @@ export function setupIPC(
         })
         imported++
       }
-      return { success: true, imported }
+      return { success: true, imported, skipped }
     } catch (e: any) {
       return { error: e.message }
     }

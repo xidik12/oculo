@@ -173,11 +173,25 @@ export const IPC = {
   MACRO_DELETE: 'macro:delete',
   MACRO_EXECUTE: 'macro:execute',
 
-  // Pipelines / Pattern Detection (Feature 11)
+  // Pipelines / Run Cache (Feature 11)
   RUN_CACHE_LIST: 'run-cache:list',
   RUN_CACHE_DELETE: 'run-cache:delete',
+  RUN_CACHE_SAVE: 'run-cache:save',
+  RUN_CACHE_FIND: 'run-cache:find',
+  RUN_CACHE_GET: 'run-cache:get',
+  RUN_CACHE_MARK_FAILED: 'run-cache:mark-failed',
+  RUN_CACHE_MARK_SUCCESS: 'run-cache:mark-success',
+  RUN_CACHE_SUMMARY: 'run-cache:summary',
+  RUN_CACHE_SKILLS: 'run-cache:skills',
   PIPELINE_SUGGEST: 'pipeline:suggest',
   PIPELINE_DISMISS: 'pipeline:dismiss',
+
+  // Lessons
+  LESSONS_FOR_DOMAIN: 'lessons:for-domain',
+
+  // Network Interception (CDP)
+  NETWORK_INTERCEPT: 'network:intercept',
+  NETWORK_GET_BODY: 'network:get-body',
 
   // Text Selection (Feature 3)
   TEXT_SELECTED: 'text:selected',
