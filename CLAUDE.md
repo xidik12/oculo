@@ -5,10 +5,11 @@
 ## Quick Reference
 
 - **App ID:** `com.oculo.browser`
+- **Version:** 0.4.0
 - **Stack:** Electron 34, TypeScript, React 19, Tailwind CSS 3, electron-vite
 - **Package manager:** npm (not pnpm)
 - **Dev:** `npm run dev` (electron-vite hot reload)
-- **Build:** `npm run build` → `npm run dist:mac`
+- **Build:** `npm run build` → `npm run dist:mac` / `npm run dist:win` / `npm run dist:linux`
 - **Typecheck:** `npm run typecheck`
 - **Lint:** `npm run lint`
 - **Clean:** `npm run clean`
@@ -36,7 +37,7 @@ claude mcp add oculo -- node ~/Desktop/oculo/bin/oculo-mcp.mjs
 
 Tools are always discoverable (static definitions in bridge), but Oculo must be running for tool calls to succeed.
 
-### 6 MCP Tools
+### 12 MCP Tools
 
 | Tool | What it does | Token cost |
 |------|-------------|------------|
@@ -46,6 +47,12 @@ Tools are always discoverable (static definitions in bridge), but Oculo must be 
 | `read` | Extract structured data (lists, tables, cards) | compact |
 | `run` | Multi-step pipeline with conditionals (page/act/fill/read/wait/if) | header + last |
 | `media` | Generate images (Nano Banana / DALL-E 3) or videos (Veo 3.1) | file path |
+| `shell` | Execute shell commands non-interactively | stdout+stderr |
+| `tabs` | List all open browser tabs | compact |
+| `research` | Deep web research across multiple tabs | synthesized |
+| `preview` | Pre-fetch URL without navigating | page description |
+| `translate` | Translate page or text to any language | translated text |
+| `lens` | Visual analysis via screenshot | description |
 
 ### Directory Structure
 
@@ -55,19 +62,26 @@ src/
 │   ├── index.ts           # App entry, initializes all subsystems
 │   ├── ipc.ts             # All IPC handlers (main ↔ renderer)
 │   ├── menu.ts            # Native app menu
+│   ├── headless.ts        # Headless mode configuration
 │   ├── ai/
 │   │   └── agent.ts       # AgentController — multi-provider AI (largest file, ~71KB)
 │   ├── captcha/           # CAPTCHA detection + solvers (audio, text, slider)
 │   ├── data/              # bookmarks, downloads, history, zoom stores
+│   │   └── session-recorder.ts  # MCP action recording/replay
 │   ├── engine/
 │   │   ├── describer.ts   # Page describer (JS-in-webview, powers `page` tool)
 │   │   ├── extractor.ts   # Structured data extractor (powers `read` tool)
 │   │   ├── form-detector.ts # Form field detection + filling (powers `fill` tool)
 │   │   ├── pipeline.ts    # Multi-step pipeline runner (powers `run` tool)
-│   │   └── resolver.ts    # Element resolver by text/role/label/placeholder (powers `act` tool)
+│   │   ├── resolver.ts    # Element resolver by text/role/label/placeholder (powers `act` tool)
+│   │   ├── selector-cache.ts  # Self-healing selector cache
+│   │   ├── dom-differ.ts      # DOM structural comparison
+│   │   └── tab-manager.ts     # Multi-tab utilities
 │   ├── mcp/
 │   │   ├── server.ts      # HTTP MCP server (port 19516-19520, auth token)
 │   │   └── tools/         # act.ts, fill.ts, page.ts, read.ts, run.ts
+│   ├── network/
+│   │   └── proxy.ts       # HTTP/SOCKS proxy manager
 │   └── security/
 │       ├── anti-injection.ts  # MCP content boundary markers + injection detection
 │       ├── audit.ts           # Action audit log (in-memory, TODO: SQLite)
@@ -92,6 +106,15 @@ src/
     ├── constants.ts       # Permission map, redaction patterns, app constants
     ├── ipc-channels.ts    # All typed IPC channel names
     └── types.ts           # All TypeScript types
+
+bin/
+└── oculo-headless.mjs     # Headless mode launcher
+
+sdk/
+└── python/                # Python SDK (`pip install oculo`)
+
+Dockerfile                 # Container deployment
+docker-compose.yml         # Docker Compose for headless mode
 ```
 
 ### Path Aliases
@@ -114,9 +137,9 @@ The `AgentController` (`src/main/ai/agent.ts`) handles streaming, tool calls, an
 ## Security Model
 
 ### Permission Levels (PERMISSION_MAP in constants.ts)
-- **AUTO:** navigate, page, read, scroll, screenshot, back, forward, reload, hover
-- **NOTIFY:** click, type, fill, select, login, press, submit (OS notification)
-- **CONFIRM:** payment, delete_account, change_password, send_email, download, oauth (native dialog)
+- **AUTO:** navigate, page, read, scroll, screenshot, back, forward, reload, hover, listTabs, switchTab, preview, translate, lens
+- **NOTIFY:** click, type, fill, select, login, press, submit, newTab, closeTab (OS notification)
+- **CONFIRM:** payment, delete_account, change_password, send_email, download, oauth, setProxy, clearProxy, startRecording, evaluate, shell (native dialog)
 - **BLOCKED:** read_vault, export_cookies, export_tokens, disable_security
 
 ### Vault
@@ -132,11 +155,59 @@ The `AgentController` (`src/main/ai/agent.ts`) handles streaming, tool calls, an
 - MCP content wrapped in boundary markers
 - Regex-based injection pattern detection
 
+## Headless Mode
+
+- `--headless` flag or `OCULO_HEADLESS=1` env var
+- Window created but hidden (`show: false`)
+- `--headless-auto-approve` for unattended CONFIRM actions (BLOCKED still blocked)
+- Console logging via `headlessLog()`
+- `bin/oculo-headless.mjs` convenience wrapper
+- Docker: `docker compose up` for containerized headless
+
+## Self-Healing / Selector Cache
+
+- After successful `act`/`fill`, element selectors cached (id, css, xpath, text, role, testId, ariaLabel)
+- Stability scoring: id=10, testId=10, ariaLabel=9, role+name=8, text=7, css=5
+- DOM diffing: >80% similarity = replay from cache, 50-80% = fallback, <50% = re-engage AI
+- Reduces redundant LLM calls, 44%+ faster for repeated workflows
+
+## Proxy Support
+
+- HTTP/HTTPS/SOCKS4/SOCKS5 proxy per session
+- Credentials encrypted via safeStorage
+- `act({action:"setProxy", proxy:{type,host,port,username,password}})` (CONFIRM level)
+
+## Session Recording
+
+- `act({action:"startRecording"})` / `act({action:"stopRecording"})` (CONFIRM level)
+- Records tool calls, results, screenshots, page snapshots
+- Max 5000 entries/session, 500MB total disk limit
+- Stored as JSON in `userData/sessions/`
+
+## Python SDK
+
+- `pip install oculo` (from `sdk/python/`)
+- `OculoClient` (sync) and `AsyncOculoClient` (async)
+- Auto-discovers port from `~/.oculo-port`
+
+## Enhanced Stealth (19 patches)
+
+- **Navigator:** webdriver, languages, plugins, mimeTypes, connection, hardwareConcurrency, deviceMemory
+- **Window:** chrome API, outerWidth/outerHeight
+- **WebGL:** vendor/renderer spoofing
+- **Canvas:** fingerprint randomization (per-call, multi-pixel)
+- **WebRTC:** IP leak prevention
+- **AudioContext:** fingerprint randomization
+- **Font:** enumeration blocking
+- **Battery API:** spoofing
+- **Screen:** resolution randomization
+
 ## Data Storage
 
 All persisted in `~/Library/Application Support/oculo/oculo-data/`:
 - `vault.enc` — encrypted credentials
 - `settings.json` — app settings
+- `sessions/` — recorded MCP sessions (JSON)
 - Bookmarks, history, downloads — JSON files via data stores
 
 ## Coding Conventions
@@ -148,6 +219,13 @@ All persisted in `~/Library/Application Support/oculo/oculo-data/`:
 - Types centralized in `src/shared/types.ts`
 - Security-first: all MCP outputs go through redactor, all actions go through permission gate
 - Page intelligence runs entirely via `webview.executeJavaScript()` — no external dependencies
+
+## Build & CI
+
+- `npm run dist:mac` — macOS DMG
+- `npm run dist:win` — Windows NSIS + portable
+- `npm run dist:linux` — Linux AppImage + deb
+- CI/CD: `.github/workflows/build.yml` — auto-builds all platforms
 
 ## Key Design Decisions
 
@@ -165,6 +243,5 @@ All persisted in `~/Library/Application Support/oculo/oculo-data/`:
 - Audit log should migrate to SQLite
 - Touch ID for confirm-level permissions
 - TOTP / 2FA vault support
-- Windows/Linux builds
 - Auto-updater integration
 - npm package publication

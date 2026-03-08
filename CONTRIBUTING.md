@@ -68,8 +68,12 @@ Claude Code → stdio → oculo-mcp.mjs → HTTP → Main → IPC → Renderer �
 | `src/main/ai/agent.ts` | AI controller — provider routing, streaming, tool-use loops |
 | `src/main/mcp/server.ts` | HTTP MCP server (port discovery, auth) |
 | `src/main/mcp/tools/` | MCP tool handlers (act, fill, page, read, run) |
-| `src/main/engine/` | Browser intelligence (describer, extractor, resolver, pipeline) |
+| `src/main/engine/` | Browser intelligence (describer, extractor, resolver, pipeline, selector-cache, dom-differ) |
 | `src/main/security/` | Permission gate, vault, redactor, audit |
+| `src/main/network/proxy.ts` | HTTP/SOCKS proxy manager |
+| `src/main/data/session-recorder.ts` | MCP action recording/replay |
+| `src/main/headless.ts` | Headless mode configuration |
+| `sdk/python/oculo/` | Python SDK |
 | `src/renderer/App.tsx` | Main browser UI |
 | `src/renderer/components/ChatPanel.tsx` | AI chat sidebar |
 | `bin/oculo-mcp.mjs` | stdio-to-HTTP MCP bridge for Claude Code |

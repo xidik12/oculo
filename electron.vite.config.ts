@@ -1,13 +1,15 @@
-import { defineConfig, externalizeDepsPlugin, bytecodePlugin } from 'electron-vite'
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 
 export default defineConfig({
   main: {
     plugins: [
-      externalizeDepsPlugin({ exclude: ['@modelcontextprotocol/sdk', '@anthropic-ai/sdk', 'zod', 'turndown', '@mozilla/readability'] }),
-      bytecodePlugin()
+      externalizeDepsPlugin({ exclude: ['@modelcontextprotocol/sdk', '@anthropic-ai/sdk', 'zod', 'turndown', '@mozilla/readability'] })
     ],
+    build: {
+      sourcemap: true
+    },
     resolve: {
       alias: {
         '@shared': resolve('src/shared')
@@ -15,13 +17,14 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin(), bytecodePlugin()],
+    plugins: [externalizeDepsPlugin()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared')
       }
     },
     build: {
+      sourcemap: true,
       rollupOptions: {
         input: {
           index: resolve('src/preload/index.ts'),
@@ -39,11 +42,7 @@ export default defineConfig({
       }
     },
     build: {
-      minify: 'terser',
-      terserOptions: {
-        mangle: { toplevel: true },
-        compress: { dead_code: true }
-      }
+      sourcemap: true
     },
   }
 })

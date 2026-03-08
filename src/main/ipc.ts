@@ -24,6 +24,8 @@ import { MacroStore } from './data/macros'
 import { PinnedAppStore } from './data/pinned-apps'
 import { PatternDetector } from './data/pattern-detector'
 import { WatcherStore } from './data/watchers'
+import { ProxyManager } from './network/proxy'
+import { SessionRecorder } from './data/session-recorder'
 
 export function setupIPC(
   mainWindow: BrowserWindow,
@@ -45,7 +47,9 @@ export function setupIPC(
   macroStore?: MacroStore,
   pinnedAppStore?: PinnedAppStore,
   patternDetector?: PatternDetector,
-  watcherStore?: WatcherStore
+  watcherStore?: WatcherStore,
+  proxyManager?: ProxyManager,
+  sessionRecorder?: SessionRecorder
 ): void {
   // Tab management - forwarded to renderer
   ipcMain.handle(IPC.TAB_CREATE, async (_, url?: string) => {
@@ -1167,6 +1171,46 @@ export function setupIPC(
 
     ipcMain.on(IPC.PTY_KILL, () => {
       ptyManager.kill()
+    })
+  }
+
+  // === Proxy Management ===
+  if (proxyManager) {
+    ipcMain.handle(IPC.PROXY_SET, async (_, config) => {
+      await proxyManager.setProxy(config)
+      return { success: true }
+    })
+
+    ipcMain.handle(IPC.PROXY_CLEAR, async () => {
+      await proxyManager.clearProxy()
+      return { success: true }
+    })
+
+    ipcMain.handle(IPC.PROXY_GET, () => {
+      return proxyManager.getProxy()
+    })
+
+    ipcMain.handle(IPC.PROXY_TEST, async () => {
+      return proxyManager.testProxy()
+    })
+  }
+
+  // === Session Recording ===
+  if (sessionRecorder) {
+    ipcMain.handle(IPC.SESSION_START_RECORDING, () => {
+      return sessionRecorder.start()
+    })
+
+    ipcMain.handle(IPC.SESSION_STOP_RECORDING, () => {
+      return sessionRecorder.stop()
+    })
+
+    ipcMain.handle(IPC.SESSION_LIST, () => {
+      return sessionRecorder.listSessions()
+    })
+
+    ipcMain.handle(IPC.SESSION_EXPORT, (_, id: string) => {
+      return sessionRecorder.exportSession(id)
     })
   }
 }

@@ -1,0 +1,37 @@
+services:
+  oculo:
+    build: .
+    image: oculo:latest
+    container_name: oculo
+    ports:
+      - "19516:19516"
+    environment:
+      - OCULO_HEADLESS=1
+      - ELECTRON_DISABLE_GPU=1
+    volumes:
+      # Persist browser data (bookmarks, history, vault, settings)
+      - oculo-data:/home/oculo/.config/oculo
+    restart: unless-stopped
+    # Electron needs /dev/shm for shared memory (default 64MB is too small)
+    shm_size: "2gb"
+    # Security: drop all caps, add back only what Electron needs
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN   # Required for Chromium's sandbox namespace (clone/unshare syscalls)
+                     # Alternative: use --no-sandbox in CMD (already configured in Dockerfile)
+                     # This cap can be removed if --no-sandbox is used, but kept for
+                     # future sandbox-enabled builds
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+          cpus: "2.0"
+        reservations:
+          memory: 512m
+          cpus: "0.5"
+
+volumes:
+  oculo-data:
+    driver: local

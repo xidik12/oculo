@@ -179,6 +179,7 @@ export const IPC = {
   MACRO_EXECUTE: 'macro:execute',
 
   // Pipelines / Run Cache (Feature 11)
+  // NOTE: Used by renderer App.tsx, PipelinesPanel.tsx, preload/index.ts, and main/ipc.ts
   RUN_CACHE_LIST: 'run-cache:list',
   RUN_CACHE_DELETE: 'run-cache:delete',
   RUN_CACHE_SAVE: 'run-cache:save',
@@ -226,6 +227,18 @@ export const IPC = {
   WATCHER_ADD: 'watcher:add',
   WATCHER_REMOVE: 'watcher:remove',
   WATCHER_CHANGED: 'watcher:changed',
+
+  // Proxy Management
+  PROXY_SET: 'proxy:set',
+  PROXY_CLEAR: 'proxy:clear',
+  PROXY_GET: 'proxy:get',
+  PROXY_TEST: 'proxy:test',
+
+  // Session Recording
+  SESSION_START_RECORDING: 'session:start-recording',
+  SESSION_STOP_RECORDING: 'session:stop-recording',
+  SESSION_LIST: 'session:list',
+  SESSION_EXPORT: 'session:export',
 } as const
 
 export type IPCChannel = typeof IPC[keyof typeof IPC]

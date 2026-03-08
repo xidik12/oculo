@@ -1,0 +1,48 @@
+# Dependencies (rebuilt in container)
+node_modules
+
+# Build output (rebuilt in container)
+out
+dist
+
+# Git
+.git
+.gitignore
+
+# IDE / editor
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docs / non-runtime
+docs
+README.md
+CONTRIBUTING.md
+CLAUDE.md
+LICENSE
+tasks
+
+# Tests
+tests
+vitest.config.ts
+__tests__
+
+# Dev configs
+.eslintrc*
+.prettierrc*
+tsconfig*.json
+electron.vite.config.ts
+postcss.config.js
+tailwind.config.js
+
+# SDK (not needed at runtime)
+sdk
+
+# CI/CD
+.github

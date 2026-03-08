@@ -1,0 +1,39 @@
+{
+  "name": "oculo-mcp",
+  "version": "0.4.0",
+  "description": "MCP server bridge for Oculo — AI-powered browser automation",
+  "type": "module",
+  "bin": {
+    "oculo-mcp": "./bin/oculo-mcp.mjs"
+  },
+  "files": [
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "browser-automation",
+    "ai",
+    "claude",
+    "electron",
+    "oculo",
+    "model-context-protocol"
+  ],
+  "author": "Salakhitdinov Khidayotullo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xidik12/oculo.git"
+  },
+  "homepage": "https://getoculo.com",
+  "bugs": {
+    "url": "https://github.com/xidik12/oculo/issues"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import os from 'os'
 import { BrowserWindow, ipcMain } from 'electron'
+import { isHeadless, headlessLog } from '../headless'
 import { SecurityManager } from '../security/vault'
 import { AuditLog } from '../security/audit'
 import { Redactor } from '../security/redactor'
@@ -15,10 +16,18 @@ import { AIProviderConfig } from '../../shared/ai-types'
 import { PtyManager } from '../terminal/pty-manager'
 import { Previewer } from '../engine/previewer'
 import { PatternDetector } from '../data/pattern-detector'
+import { ProxyManager, ProxyConfig } from '../network/proxy'
+import { SessionRecorder } from '../data/session-recorder'
+import { SelectorCache, SelectorBundle } from '../engine/selector-cache'
+import { takeSnapshot, compare, StructuralSnapshot } from '../engine/dom-differ'
 
 const PORT_FILE = path.join(os.homedir(), '.oculo-port')
 const BASE_PORT = 19516
 const MAX_PORT = 19520
+
+const debugLog = process.env.NODE_ENV !== 'production'
+  ? (...args: unknown[]) => console.log('[MCP]', ...args)
+  : () => {}
 
 /**
  * MCP Server Manager — HTTP-based.
@@ -56,6 +65,18 @@ export class McpServerManager {
   /** Pattern detector for learning action sequences */
   private patternDetector: PatternDetector | null = null
 
+  /** Proxy manager for configuring HTTP/SOCKS proxies */
+  private proxyManager: ProxyManager
+
+  /** Session recorder for recording MCP actions */
+  private sessionRecorder: SessionRecorder
+
+  /** Selector cache — self-healing selector stability engine */
+  private selectorCache: SelectorCache
+
+  /** DOM snapshots per domain for structural comparison */
+  private domSnapshots: Map<string, StructuralSnapshot> = new Map()
+
   /** Tool definitions served on `tools/list` */
   private readonly tools = [
     {
@@ -80,7 +101,7 @@ export class McpServerManager {
       inputSchema: {
         type: 'object' as const,
         properties: {
-          action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'writeFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork', 'drag', 'clickAtPoint', 'doubleClick', 'rightClick', 'tripleClick', 'selectAll', 'scrollIntoView', 'waitForElement', 'wait', 'copy', 'paste', 'evaluate', 'getAttribute', 'solveCaptcha', 'exportCookies', 'importCookies'], description: 'Action to perform' },
+          action: { type: 'string', enum: ['click', 'navigate', 'back', 'forward', 'scroll', 'press', 'hover', 'select', 'login', 'reload', 'screenshot', 'screenshotSoM', 'upload', 'type', 'focus', 'clear', 'newTab', 'switchTab', 'closeTab', 'download', 'listDownloads', 'readFile', 'writeFile', 'clipboardImage', 'smartScroll', 'waitForText', 'waitForNetworkIdle', 'screenshotElement', 'listTabs', 'autoLogin', 'monitorNetwork', 'visualDiff', 'detectAPIs', 'iframeNavigate', 'recordStart', 'recordStop', 'dragAndDrop', 'extractPDF', 'monitorWebSocket', 'checkDialogs', 'printToPDF', 'getCookies', 'setCookie', 'deleteCookie', 'getStorage', 'setStorage', 'clearStorage', 'interceptNetwork', 'drag', 'clickAtPoint', 'doubleClick', 'rightClick', 'tripleClick', 'selectAll', 'scrollIntoView', 'waitForElement', 'wait', 'copy', 'paste', 'evaluate', 'getAttribute', 'solveCaptcha', 'exportCookies', 'importCookies', 'setProxy', 'clearProxy', 'startRecording', 'stopRecording'], description: 'Action to perform' },
           ref: { type: 'string', description: 'Element ref from a11y snapshot (e.g. "e5"). Preferred over text/selector — use page({detail:"a11y"}) first.' },
           text: { type: 'string', description: 'Visible text on the element to interact with' },
           role: { type: 'string', description: 'ARIA role (button, link, textbox, etc.)' },
@@ -107,7 +128,9 @@ export class McpServerManager {
           attribute: { type: 'string', description: 'Attribute name for getAttribute action' },
           cookies: { type: 'array', description: 'Cookies array for importCookies action' },
           autoSubmit: { type: 'boolean', description: 'Auto-submit after login (default: true)' },
-          tabId: { type: 'string', description: 'Target a specific tab by ID (for background execution). Omit for active tab.' }
+          tabId: { type: 'string', description: 'Target a specific tab by ID (for background execution). Omit for active tab.' },
+          background: { type: 'boolean', description: 'For newTab: open in background without switching to it (default: false). Returns tab ID for parallel execution.' },
+          proxy: { type: 'object', description: 'Proxy config for setProxy action: {type, host, port, username?, password?, bypass?}', properties: { type: { type: 'string', enum: ['http', 'https', 'socks4', 'socks5', 'direct'] }, host: { type: 'string' }, port: { type: 'number' }, username: { type: 'string' }, password: { type: 'string' }, bypass: { type: 'array', items: { type: 'string' } } } }
         },
         required: ['action']
       }
@@ -354,6 +377,9 @@ export class McpServerManager {
     this.antiInjection = new AntiInjection()
     this.permissionGate = new PermissionGate(mainWindow, auditLog)
     this.authToken = crypto.randomBytes(32).toString('hex')
+    this.proxyManager = new ProxyManager()
+    this.sessionRecorder = new SessionRecorder()
+    this.selectorCache = new SelectorCache()
 
     // Initialize media generator with API key lookup
     this.mediaGenerator = new MediaGenerator((provider: string) => {
@@ -425,6 +451,57 @@ export class McpServerManager {
         return {
           content: [{ type: 'text', text: `Action "${actionDesc}" was denied by permission gate.` }]
         }
+      }
+
+      // Handle proxy and recording actions directly in main process
+      if (name === 'act') {
+        const actAction = (args as any)?.action
+        if (actAction === 'setProxy') {
+          const pc = (args as any)?.proxy as ProxyConfig | undefined
+          if (!pc || !pc.host || !pc.port || !pc.type) {
+            return { content: [{ type: 'text', text: 'Error: proxy requires type, host, port. Pass proxy: {type, host, port, username?, password?, bypass?}' }], isError: true }
+          }
+          const proxyAllowed = await this.permissionGate.check('setProxy', `Route traffic through ${pc.host}:${pc.port}?`)
+          if (!proxyAllowed) {
+            return { content: [{ type: 'text', text: 'Action "setProxy" was denied by permission gate.' }] }
+          }
+          await this.proxyManager.setProxy(pc)
+          const tr = await this.proxyManager.testProxy()
+          const msg = tr.success
+            ? `Proxy set: ${pc.type}://${pc.host}:${pc.port} — visible IP: ${tr.ip}`
+            : `Proxy set: ${pc.type}://${pc.host}:${pc.port} — test failed: ${tr.error}`
+          this.auditLog.log('setProxy', `${pc.host}:${pc.port}`, 'success', msg, 'act')
+          return { content: [{ type: 'text', text: msg }] }
+        }
+        if (actAction === 'clearProxy') {
+          const clearAllowed = await this.permissionGate.check('clearProxy', 'Stop using proxy?')
+          if (!clearAllowed) {
+            return { content: [{ type: 'text', text: 'Action "clearProxy" was denied by permission gate.' }] }
+          }
+          await this.proxyManager.clearProxy()
+          this.auditLog.log('clearProxy', 'direct', 'success', 'Proxy cleared', 'act')
+          return { content: [{ type: 'text', text: 'Proxy cleared — direct connection.' }] }
+        }
+        if (actAction === 'startRecording') {
+          const recAllowed = await this.permissionGate.check('startRecording', 'Start recording all actions and screenshots?')
+          if (!recAllowed) {
+            return { content: [{ type: 'text', text: 'Action "startRecording" was denied by permission gate.' }] }
+          }
+          const sid = this.sessionRecorder.start()
+          this.auditLog.log('startRecording', sid, 'success', 'Recording started', 'act')
+          return { content: [{ type: 'text', text: `Recording started. Session ID: ${sid}` }] }
+        }
+        if (actAction === 'stopRecording') {
+          const sess = this.sessionRecorder.stop()
+          if (!sess) return { content: [{ type: 'text', text: 'No active recording to stop.' }] }
+          this.auditLog.log('stopRecording', sess.id, 'success', `${sess.entries.length} entries`, 'act')
+          return { content: [{ type: 'text', text: `Recording stopped. Session: ${sess.id} (${sess.entries.length} entries).` }] }
+        }
+      }
+
+      // Auto-record tool calls when session recording is active
+      if (this.sessionRecorder.isRecording()) {
+        this.sessionRecorder.recordToolCall(name, args)
       }
 
       // Handle shell tool directly in main process
@@ -549,8 +626,52 @@ export class McpServerManager {
         return { content: [{ type: 'text', text: result }], isError: !mediaResult.success }
       }
 
+      // --- Selector Cache: try cached selectors before executing ---
+      let cacheUsed = false
+      let cacheKey: string | null = null
+      const isCacheable = (name === 'act' || name === 'fill') &&
+        (name !== 'act' || !['navigate', 'back', 'forward', 'reload', 'scroll', 'press', 'screenshot', 'newTab', 'switchTab', 'closeTab', 'listTabs', 'evaluate', 'wait'].includes(String(args.action)))
+
+      if (isCacheable) {
+        try {
+          const cacheResult = await this.trySelectorCache(name, args)
+          if (cacheResult) {
+            cacheUsed = true
+            cacheKey = cacheResult.cacheKey
+            // Use the cached selector — modify args to use the resolved CSS selector directly
+            if (cacheResult.selector && name === 'act') {
+              args = { ...args, selector: cacheResult.selector, _originalArgs: args }
+            }
+            debugLog(`[SelectorCache] HIT: ${cacheResult.cacheKey} → ${cacheResult.selector}`)
+          } else {
+            debugLog(`[SelectorCache] MISS: ${name} ${targetDesc}`)
+          }
+        } catch (err) {
+          debugLog(`[SelectorCache] Error during cache lookup: ${(err as Error).message}`)
+        }
+      }
+
       // Execute tool via renderer IPC
       let result = await this.executeToolViaRenderer(name, args)
+
+      // --- Selector Cache: record successful actions ---
+      const isError = result.startsWith('Error:') || result.includes('not found') || result.includes('Element disappeared')
+      if (isCacheable && !isError) {
+        try {
+          if (cacheUsed && cacheKey) {
+            // Cache hit succeeded — reinforce
+            this.selectorCache.markSuccess(cacheKey)
+          }
+          // Record selectors for this successful action
+          await this.recordToSelectorCache(name, args, result)
+        } catch (err) {
+          debugLog(`[SelectorCache] Error recording: ${(err as Error).message}`)
+        }
+      } else if (isCacheable && isError && cacheUsed && cacheKey) {
+        // Cache hit failed — mark failure
+        this.selectorCache.markFailed(cacheKey)
+        debugLog(`[SelectorCache] Cache selector failed, marked: ${cacheKey}`)
+      }
 
       // Redact sensitive data
       result = this.redactor.redact(result)
@@ -559,16 +680,37 @@ export class McpServerManager {
       result = this.antiInjection.sanitize(result)
       result = this.antiInjection.wrapContent(result)
 
+      // Append cache metadata if cache was used
+      if (cacheUsed) {
+        result += '\n_cached: true'
+      }
+
       // Audit log
       this.auditLog.log(actionDesc, targetDesc, 'success', result.substring(0, 200), name)
 
       // Record for pattern detection (pass full args for accurate step reconstruction)
       this.patternDetector?.recordToolCall(name, args, String(targetDesc))
 
+      // Auto-record tool result when session recording is active
+      if (this.sessionRecorder.isRecording()) {
+        this.sessionRecorder.recordToolResult(name, result)
+        // Record navigation events
+        if (name === 'act' && (args as any)?.action === 'navigate' && (args as any)?.url) {
+          this.sessionRecorder.recordNavigation(String((args as any).url))
+        }
+      }
+
+      if (isHeadless) {
+        headlessLog(`${name}: ${result.substring(0, 200)}`)
+      }
+
       return { content: [{ type: 'text', text: result }] }
     } catch (err) {
       const errMsg = (err as Error).message
       this.auditLog.log(name, JSON.stringify(args).substring(0, 200), 'failed', errMsg, name)
+      if (isHeadless) {
+        headlessLog(`${name}: ERROR — ${errMsg}`)
+      }
       return {
         content: [{ type: 'text', text: `Error: ${errMsg}` }],
         isError: true
@@ -667,7 +809,251 @@ export class McpServerManager {
     console.log(`[MCP] setProviderConfigs called — size=${configs.size} keys=[${[...configs.keys()]}] hasGeminiKey=${!!(configs.get('gemini')?.apiKey)}`)
   }
 
+  /** Get proxy manager for IPC handler wiring */
+  getProxyManager(): ProxyManager {
+    return this.proxyManager
+  }
+
+  /** Get session recorder for IPC handler wiring */
+  getSessionRecorder(): SessionRecorder {
+    return this.sessionRecorder
+  }
+
+  // --- Selector Cache helpers ---
+
+  /** Extract domain from a URL */
+  private getDomainFromUrl(url: string): string {
+    try { return new URL(url).hostname } catch { return 'unknown' }
+  }
+
+  /**
+   * Try to resolve an element using cached selectors.
+   * Returns the resolved CSS selector if found, or null if no cache hit.
+   */
+  private async trySelectorCache(
+    toolName: string,
+    args: Record<string, unknown>
+  ): Promise<{ selector: string; cacheKey: string } | null> {
+    // Get the current page URL to determine domain
+    let currentUrl: string
+    try {
+      currentUrl = await this.executeToolViaRenderer('_getUrl', {})
+      if (!currentUrl || currentUrl.startsWith('Error:')) return null
+    } catch { return null }
+
+    const domain = this.getDomainFromUrl(currentUrl)
+    const action = toolName === 'act' ? String(args.action || 'click') : 'fill'
+
+    // Build hints from the tool args
+    const hints = {
+      text: args.text as string | undefined,
+      role: args.role as string | undefined,
+      name: args.name as string | undefined,
+      label: args.label as string | undefined,
+      placeholder: args.placeholder as string | undefined,
+      selector: args.selector as string | undefined,
+      ariaLabel: args.label as string | undefined
+    }
+
+    // Check if we have any hint to search by
+    const hasHints = Object.values(hints).some(v => !!v)
+    if (!hasHints) return null
+
+    // Find cached entries
+    const entries = this.selectorCache.resolve(domain, action, hints)
+    if (!entries.length) return null
+
+    // Take a DOM snapshot to check if page structure is similar enough
+    try {
+      const currentSnapshot = await this.takeDomSnapshot()
+      if (currentSnapshot) {
+        const cachedSnapshot = this.domSnapshots.get(domain)
+        if (cachedSnapshot) {
+          const diff = compare(cachedSnapshot, currentSnapshot)
+          if (diff.strategy === 'recompute') {
+            debugLog(`[SelectorCache] DOM changed significantly (${diff.similarity}%), skipping cache`)
+            return null
+          }
+        }
+        // Update stored snapshot (evict oldest if map is too large)
+        if (this.domSnapshots.size > 100) {
+          const oldest = this.domSnapshots.keys().next().value
+          if (oldest) this.domSnapshots.delete(oldest)
+        }
+        this.domSnapshots.set(domain, currentSnapshot)
+      }
+    } catch { /* snapshot failed, still try cache */ }
+
+    // Try each cached entry's resolution script
+    for (const entry of entries.slice(0, 3)) { // Try top 3 matches
+      try {
+        const script = this.selectorCache.buildResolutionScript(entry)
+        const resolution = await this.executeToolViaRenderer('_evalScript', { script })
+
+        if (resolution && !resolution.startsWith('Error:')) {
+          try {
+            const parsed = JSON.parse(resolution)
+            if (parsed.found && parsed.selector) {
+              return { selector: parsed.selector, cacheKey: entry.key }
+            }
+          } catch { /* parse failed */ }
+        }
+      } catch { /* resolution failed, try next */ }
+    }
+
+    return null
+  }
+
+  /**
+   * Record selectors from a successful action into the cache.
+   * Extracts all possible selectors for the element that was just interacted with.
+   */
+  private async recordToSelectorCache(
+    toolName: string,
+    args: Record<string, unknown>,
+    _result: string
+  ): Promise<void> {
+    let currentUrl: string
+    try {
+      currentUrl = await this.executeToolViaRenderer('_getUrl', {})
+      if (!currentUrl || currentUrl.startsWith('Error:')) return
+    } catch { return }
+
+    const domain = this.getDomainFromUrl(currentUrl)
+    const urlPattern = currentUrl.replace(/[?#].*$/, '*')
+    const action = toolName === 'act' ? String(args.action || 'click') : 'fill'
+    const actionDesc = `${action} ${args.text || args.label || args.placeholder || args.selector || ''}`
+
+    // Build the selector bundle from what we know in args
+    const bundle: SelectorBundle = {}
+    if (args.text) bundle.textContent = String(args.text)
+    if (args.role) bundle.role = String(args.role)
+    if (args.name) bundle.name = String(args.name)
+    if (args.label) bundle.ariaLabel = String(args.label)
+    if (args.placeholder) bundle.placeholder = String(args.placeholder)
+    if (args.selector) bundle.cssSelector = String(args.selector)
+    if (args.ref) bundle.ref = String(args.ref)
+
+    // Try to extract additional selectors from the page for the element we just acted on
+    const originalArgs = (args._originalArgs || args) as Record<string, unknown>
+    try {
+      const enrichScript = this.buildEnrichScript(originalArgs)
+      if (enrichScript) {
+        const enrichResult = await this.executeToolViaRenderer('_evalScript', { script: enrichScript })
+        if (enrichResult && !enrichResult.startsWith('Error:')) {
+          try {
+            const enriched = JSON.parse(enrichResult)
+            if (enriched.id) bundle.id = enriched.id
+            if (enriched.testId) bundle.testId = enriched.testId
+            if (enriched.ariaLabel) bundle.ariaLabel = enriched.ariaLabel
+            if (enriched.cssSelector) bundle.cssSelector = enriched.cssSelector
+            if (enriched.tagName) bundle.tagName = enriched.tagName
+            if (enriched.textContent) bundle.textContent = enriched.textContent
+            if (enriched.placeholder) bundle.placeholder = enriched.placeholder
+            if (enriched.role) bundle.role = enriched.role
+            if (enriched.name) bundle.name = enriched.name
+          } catch { /* parse failed */ }
+        }
+      }
+    } catch { /* enrichment failed, record what we have */ }
+
+    // Record it
+    this.selectorCache.record(domain, urlPattern, action, actionDesc.trim(), bundle)
+
+    // Update DOM snapshot for this domain
+    try {
+      const snapshot = await this.takeDomSnapshot()
+      if (snapshot) {
+        if (this.domSnapshots.size > 100) {
+          const oldest = this.domSnapshots.keys().next().value
+          if (oldest) this.domSnapshots.delete(oldest)
+        }
+        this.domSnapshots.set(domain, snapshot)
+      }
+    } catch { /* snapshot failed */ }
+  }
+
+  /**
+   * Build a JS snippet that extracts all possible selectors for the last interacted element.
+   * Returns null if no useful args to locate the element.
+   */
+  private buildEnrichScript(args: Record<string, unknown>): string | null {
+    let locatorExpr: string | null = null
+
+    if (args.selector) {
+      locatorExpr = `document.querySelector(${JSON.stringify(String(args.selector))})`
+    } else if (args.text) {
+      const text = String(args.text).toLowerCase()
+      locatorExpr = `(function(){var els=document.querySelectorAll('button,a,[role="button"],[role="link"],label,input[type="submit"],span,div,h1,h2,h3,h4,h5,h6,li,p');for(var i=0;i<els.length;i++){var t=(els[i].textContent||'').trim().toLowerCase();if(t===${JSON.stringify(text)}||t.includes(${JSON.stringify(text)}))return els[i]}return null})()`
+    } else if (args.label) {
+      const label = String(args.label).toLowerCase()
+      locatorExpr = `document.querySelector('[aria-label=${JSON.stringify(label)}]')`
+    } else if (args.placeholder) {
+      locatorExpr = `document.querySelector('[placeholder*=${JSON.stringify(String(args.placeholder))}]')`
+    } else {
+      return null
+    }
+
+    return `(function(){
+      var el = ${locatorExpr};
+      if (!el) return JSON.stringify({});
+      function getUniqueSelector(el){
+        if(el.id)return'#'+CSS.escape(el.id);
+        var path=[];var c=el;
+        while(c&&c!==document.body){
+          var s=c.tagName.toLowerCase();
+          if(c.id){path.unshift('#'+CSS.escape(c.id));break}
+          var p=c.parentElement;
+          if(p){var sibs=Array.from(p.children).filter(function(x){return x.tagName===c.tagName});
+          if(sibs.length>1)s+=':nth-of-type('+(sibs.indexOf(c)+1)+')'}
+          path.unshift(s);c=c.parentElement
+        }
+        return path.join(' > ')
+      }
+      return JSON.stringify({
+        id: el.id || null,
+        testId: el.getAttribute('data-testid') || null,
+        ariaLabel: el.getAttribute('aria-label') || null,
+        cssSelector: getUniqueSelector(el),
+        tagName: el.tagName.toLowerCase(),
+        textContent: (el.textContent||'').trim().substring(0,60) || null,
+        placeholder: el.getAttribute('placeholder') || null,
+        role: el.getAttribute('role') || null,
+        name: el.getAttribute('name') || null
+      })
+    })()`
+  }
+
+  /** Take a structural DOM snapshot via the renderer */
+  private async takeDomSnapshot(): Promise<StructuralSnapshot | null> {
+    try {
+      const script = `(function(){
+        function vis(el){if(!el)return false;var s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'&&parseFloat(s.opacity)>0}
+        function txt(el){return(el.textContent||'').trim().substring(0,40)}
+        var headings=[];document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]').forEach(function(el){if(vis(el)){var t=txt(el);if(t)headings.push(t)}});
+        var formLabels=[];document.querySelectorAll('label,[aria-label]').forEach(function(el){if(!vis(el))return;var t=el.getAttribute('aria-label')||txt(el);if(t&&t.length>1)formLabels.push(t.substring(0,30))});
+        document.querySelectorAll('input[placeholder],textarea[placeholder]').forEach(function(el){if(vis(el)){var p=el.getAttribute('placeholder');if(p)formLabels.push(p.substring(0,30))}});
+        var buttonTexts=[];document.querySelectorAll('button,[role="button"],input[type="submit"],input[type="button"]').forEach(function(el){if(!vis(el))return;var t=txt(el)||el.getAttribute('value')||el.getAttribute('aria-label')||'';t=t.substring(0,30);if(t&&t.length>1)buttonTexts.push(t)});
+        var linkTexts=[];document.querySelectorAll('a,[role="link"]').forEach(function(el){if(!vis(el))return;var t=txt(el);if(t&&t.length>1)linkTexts.push(t.substring(0,25))});linkTexts=linkTexts.slice(0,20);
+        var interactiveCount=document.querySelectorAll('button,a,input:not([type="hidden"]),textarea,select,[role="button"],[role="link"],[role="textbox"],[contenteditable="true"]').length;
+        return JSON.stringify({url:location.href,headings:headings.slice(0,10),formLabels:formLabels.slice(0,15),buttonTexts:buttonTexts.slice(0,15),linkTexts:linkTexts,interactiveCount:interactiveCount,timestamp:Date.now()})
+      })()`
+      const resultStr = await this.executeToolViaRenderer('_evalScript', { script })
+      if (resultStr && !resultStr.startsWith('Error:')) {
+        return JSON.parse(resultStr) as StructuralSnapshot
+      }
+    } catch { /* snapshot failed */ }
+    return null
+  }
+
+  /** Get selector cache statistics */
+  getSelectorCacheStats(): { total: number; active: number; invalidated: number; hitRate: string } {
+    return this.selectorCache.stats()
+  }
+
   stop(): void {
+    // Flush selector cache on shutdown
+    this.selectorCache.flush()
     if (this.httpServer) { this.httpServer.close(); this.httpServer = null }
     try { if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE) } catch { /* best-effort */ }
     this.actualPort = null

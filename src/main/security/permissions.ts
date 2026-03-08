@@ -2,6 +2,7 @@ import { BrowserWindow, dialog, Notification } from 'electron'
 import { PERMISSION_MAP } from '../../shared/constants'
 import { PermissionLevel } from '../../shared/types'
 import { AuditLog } from './audit'
+import { isHeadless, headlessAutoApprove, headlessLog } from '../headless'
 
 export class PermissionGate {
   private mainWindow: BrowserWindow
@@ -65,6 +66,13 @@ export class PermissionGate {
   }
 
   private async confirm(action: string, details: string): Promise<boolean> {
+    // Headless auto-approve: skip native dialog, log to console instead
+    if (isHeadless && headlessAutoApprove) {
+      headlessLog(`auto-approved CONFIRM action: ${action} — ${details.substring(0, 200)}`)
+      this.auditLog.log(action, details, 'confirmed')
+      return true
+    }
+
     const result = await dialog.showMessageBox(this.mainWindow, {
       type: 'question',
       title: 'Oculo: Confirm Action',

@@ -13,6 +13,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 app.commandLine.appendSwitch('disable-gpu-sandbox')
 app.commandLine.appendSwitch('ignore-gpu-blocklist')
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
+import { isHeadless, headlessLog } from './headless'
 import { setupIPC } from './ipc'
 import { createMenu } from './menu'
 import { McpServerManager } from './mcp/server'
@@ -114,7 +115,11 @@ function createWindow(): BrowserWindow {
   })
 
   mainWindow.on('ready-to-show', () => {
-    mainWindow?.show()
+    if (!isHeadless) {
+      mainWindow?.show()
+    } else {
+      headlessLog('Window created (hidden)')
+    }
   })
 
   // Null out reference when window is closed to prevent "Object has been destroyed"
@@ -164,12 +169,15 @@ app.whenReady().then(async () => {
 
   // Set app name and Dock icon for dev mode
   app.setName('Oculo')
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' && !isHeadless) {
     const dockIconPath = join(__dirname, '../../resources/icon.png')
     try {
       const dockIcon = nativeImage.createFromPath(dockIconPath)
       if (!dockIcon.isEmpty()) app.dock?.setIcon(dockIcon)
     } catch { /* icon not found in dev, that's ok */ }
+  }
+  if (isHeadless && process.platform === 'darwin') {
+    app.dock?.hide()
   }
 
   app.on('browser-window-created', (_, window) => {
@@ -253,7 +261,7 @@ app.whenReady().then(async () => {
       const headers = { ...details.requestHeaders }
       headers['Sec-CH-UA'] = '"Not A(Brand";v="8", "Chromium";v="132", "Google Chrome";v="132"'
       headers['Sec-CH-UA-Mobile'] = '?0'
-      headers['Sec-CH-UA-Platform'] = '"macOS"'
+      headers['Sec-CH-UA-Platform'] = process.platform === 'win32' ? '"Windows"' : process.platform === 'linux' ? '"Linux"' : '"macOS"'
       headers['Sec-CH-UA-Full-Version-List'] = '"Not A(Brand";v="8.0.0.0", "Chromium";v="132.0.6834.210", "Google Chrome";v="132.0.6834.210"'
       // Consistent Accept-Language (match spoofed navigator.languages)
       headers['Accept-Language'] = 'en-US,en;q=0.9'
@@ -639,7 +647,7 @@ app.whenReady().then(async () => {
   downloadManager = new DownloadManager(window)
 
   // Create app menu
-  createMenu(window)
+  createMenu(() => mainWindow)
 
   // Initialize pattern detector
   patternDetector = new PatternDetector(window)
@@ -651,6 +659,9 @@ app.whenReady().then(async () => {
   mcpServer = new McpServerManager(window, securityManager, auditLog, redactor, patternDetector)
   try {
     await mcpServer.start()
+    if (isHeadless) {
+      headlessLog('MCP server started — ready for tool calls')
+    }
   } catch (err) {
     console.error('MCP server start failed:', err)
   }
@@ -709,7 +720,7 @@ app.whenReady().then(async () => {
   downloadManager!.setAgent(agentController)
 
   // Setup IPC handlers (after agent init so chat handlers are wired)
-  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache, ptyManager, mcpClientManager, sessionMemoryStore, containerStore, cardStore, workspaceStore, macroStore, pinnedAppStore, patternDetector, watcherStore)
+  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache, ptyManager, mcpClientManager, sessionMemoryStore, containerStore, cardStore, workspaceStore, macroStore, pinnedAppStore, patternDetector, watcherStore, mcpServer!.getProxyManager(), mcpServer!.getSessionRecorder())
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -721,7 +732,11 @@ app.on('window-all-closed', () => {
   agentController?.abort()
   ptyManager?.kill()
   mcpClientManager?.disconnectAll().catch(() => {})
-  mcpServer?.stop()
+  try {
+    mcpServer?.stop()
+  } catch (err) {
+    console.error('[Oculo] MCP server stop error during cleanup:', err)
+  }
   auditLog?.close()
   if (process.platform !== 'darwin') {
     app.quit()

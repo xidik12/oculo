@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "oculo"
+version = "0.1.0"
+description = "Python SDK for controlling the Oculo AI Browser"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Oculo", email = "hello@getoculo.com" },
+]
+keywords = ["browser", "automation", "ai", "mcp", "oculo"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Browsers",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "httpx>=0.25.0",
+    "pydantic>=2.0.0",
+]
+
+[project.urls]
+Homepage = "https://getoculo.com"
+Repository = "https://github.com/xidik12/oculo"
+Documentation = "https://github.com/xidik12/oculo/tree/main/sdk/python"
+
+[tool.hatch.build.targets.wheel]
+packages = ["oculo"]

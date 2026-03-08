@@ -1,8 +1,16 @@
 import { Menu, BrowserWindow, app, shell } from 'electron'
 import { IPC } from '../shared/ipc-channels'
 
-export function createMenu(mainWindow: BrowserWindow): void {
+export function createMenu(getMainWindow: () => BrowserWindow | null): void {
   const isMac = process.platform === 'darwin'
+
+  /** Safely send IPC to main window, recreating it if destroyed */
+  const sendToWindow = (...args: [string, ...unknown[]]): void => {
+    const win = getMainWindow()
+    if (win && !win.isDestroyed()) {
+      win.webContents.send(...args)
+    }
+  }
 
   const template: Electron.MenuItemConstructorOptions[] = [
     ...(isMac
@@ -13,7 +21,7 @@ export function createMenu(mainWindow: BrowserWindow): void {
               {
                 label: 'About Oculo',
                 click: (): void => {
-                  mainWindow.webContents.send(IPC.NAVIGATE_TO, 'oculo://about')
+                  sendToWindow(IPC.NAVIGATE_TO, 'oculo://about')
                 }
               } as Electron.MenuItemConstructorOptions,
               { type: 'separator' as const },
@@ -21,7 +29,7 @@ export function createMenu(mainWindow: BrowserWindow): void {
                 label: 'Settings...',
                 accelerator: 'Cmd+,',
                 click: (): void => {
-                  mainWindow.webContents.send('open-settings')
+                  sendToWindow('open-settings')
                 }
               },
               { type: 'separator' as const },
@@ -42,23 +50,23 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'New Tab',
           accelerator: 'CmdOrCtrl+T',
-          click: (): void => { mainWindow.webContents.send(IPC.TAB_CREATE) }
+          click: (): void => { sendToWindow(IPC.TAB_CREATE) }
         },
         {
           label: 'Close Tab',
           accelerator: 'CmdOrCtrl+W',
-          click: (): void => { mainWindow.webContents.send('close-active-tab') }
+          click: (): void => { sendToWindow('close-active-tab') }
         },
         {
           label: 'Reopen Closed Tab',
           accelerator: 'CmdOrCtrl+Shift+T',
-          click: (): void => { mainWindow.webContents.send('reopen-closed-tab') }
+          click: (): void => { sendToWindow('reopen-closed-tab') }
         },
         { type: 'separator' },
         {
           label: 'Focus Address Bar',
           accelerator: 'CmdOrCtrl+L',
-          click: (): void => { mainWindow.webContents.send('focus-address-bar') }
+          click: (): void => { sendToWindow('focus-address-bar') }
         },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }
@@ -78,7 +86,7 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Find in Page',
           accelerator: 'CmdOrCtrl+F',
-          click: (): void => { mainWindow.webContents.send('find-in-page') }
+          click: (): void => { sendToWindow('find-in-page') }
         }
       ]
     },
@@ -88,12 +96,12 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Back',
           accelerator: 'CmdOrCtrl+[',
-          click: (): void => { mainWindow.webContents.send('nav-back') }
+          click: (): void => { sendToWindow('nav-back') }
         },
         {
           label: 'Forward',
           accelerator: 'CmdOrCtrl+]',
-          click: (): void => { mainWindow.webContents.send('nav-forward') }
+          click: (): void => { sendToWindow('nav-forward') }
         }
       ]
     },
@@ -106,17 +114,17 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Page Zoom In',
           accelerator: 'CmdOrCtrl+=',
-          click: (): void => { mainWindow.webContents.send('zoom-in') }
+          click: (): void => { sendToWindow('zoom-in') }
         },
         {
           label: 'Page Zoom Out',
           accelerator: 'CmdOrCtrl+-',
-          click: (): void => { mainWindow.webContents.send('zoom-out') }
+          click: (): void => { sendToWindow('zoom-out') }
         },
         {
           label: 'Reset Page Zoom',
           accelerator: 'CmdOrCtrl+0',
-          click: (): void => { mainWindow.webContents.send('zoom-reset') }
+          click: (): void => { sendToWindow('zoom-reset') }
         },
         { type: 'separator' },
         { role: 'togglefullscreen' },
@@ -124,59 +132,59 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Reader Mode',
           accelerator: 'CmdOrCtrl+Shift+R',
-          click: (): void => { mainWindow.webContents.send('reader-mode') }
+          click: (): void => { sendToWindow('reader-mode') }
         },
         {
           label: 'Focus Mode',
           accelerator: 'CmdOrCtrl+Shift+F',
-          click: (): void => { mainWindow.webContents.send('focus-mode') }
+          click: (): void => { sendToWindow('focus-mode') }
         },
         {
           label: 'Translate Page',
-          click: (): void => { mainWindow.webContents.send('translate-page') }
+          click: (): void => { sendToWindow('translate-page') }
         },
         {
           label: 'Split View',
           accelerator: 'CmdOrCtrl+Shift+S',
-          click: (): void => { mainWindow.webContents.send('split-view') }
+          click: (): void => { sendToWindow('split-view') }
         },
         { type: 'separator' },
         {
           label: 'Developer Tools',
           accelerator: 'CmdOrCtrl+Option+I',
-          click: (): void => { mainWindow.webContents.send('toggle-page-devtools') }
+          click: (): void => { sendToWindow('toggle-page-devtools') }
         },
         {
           label: 'JavaScript Console',
           accelerator: 'CmdOrCtrl+Option+J',
-          click: (): void => { mainWindow.webContents.send('toggle-page-devtools') }
+          click: (): void => { sendToWindow('toggle-page-devtools') }
         },
         {
           label: 'View Page Source',
           accelerator: 'CmdOrCtrl+Option+U',
-          click: (): void => { mainWindow.webContents.send('view-page-source') }
+          click: (): void => { sendToWindow('view-page-source') }
         },
         {
           label: 'Inspect Element',
           accelerator: 'CmdOrCtrl+Shift+C',
-          click: (): void => { mainWindow.webContents.send('inspect-element') }
+          click: (): void => { sendToWindow('inspect-element') }
         },
         { type: 'separator' },
         {
           label: 'Dock DevTools Left',
-          click: (): void => { mainWindow.webContents.send('toggle-page-devtools-mode', 'left') }
+          click: (): void => { sendToWindow('toggle-page-devtools-mode', 'left') }
         },
         {
           label: 'Dock DevTools Right',
-          click: (): void => { mainWindow.webContents.send('toggle-page-devtools-mode', 'right') }
+          click: (): void => { sendToWindow('toggle-page-devtools-mode', 'right') }
         },
         {
           label: 'Dock DevTools Bottom',
-          click: (): void => { mainWindow.webContents.send('toggle-page-devtools-mode', 'bottom') }
+          click: (): void => { sendToWindow('toggle-page-devtools-mode', 'bottom') }
         },
         {
           label: 'Undock DevTools',
-          click: (): void => { mainWindow.webContents.send('toggle-page-devtools-mode', 'undocked') }
+          click: (): void => { sendToWindow('toggle-page-devtools-mode', 'undocked') }
         },
         { type: 'separator' },
         { role: 'toggleDevTools', label: 'Oculo Internal DevTools', accelerator: 'CmdOrCtrl+Option+Shift+I' },
@@ -184,12 +192,12 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Toggle AI Chat',
           accelerator: 'CmdOrCtrl+Shift+I',
-          click: (): void => { mainWindow.webContents.send('toggle-chat') }
+          click: (): void => { sendToWindow('toggle-chat') }
         },
         {
           label: 'Command Palette',
           accelerator: 'CmdOrCtrl+K',
-          click: (): void => { mainWindow.webContents.send('command-palette') }
+          click: (): void => { sendToWindow('command-palette') }
         }
       ]
     },
@@ -199,12 +207,12 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Add Bookmark',
           accelerator: 'CmdOrCtrl+D',
-          click: (): void => { mainWindow.webContents.send('add-bookmark') }
+          click: (): void => { sendToWindow('add-bookmark') }
         },
         {
           label: 'Toggle Bookmarks Bar',
           accelerator: 'CmdOrCtrl+Shift+B',
-          click: (): void => { mainWindow.webContents.send('toggle-bookmarks-bar') }
+          click: (): void => { sendToWindow('toggle-bookmarks-bar') }
         }
       ]
     },
@@ -233,7 +241,7 @@ export function createMenu(mainWindow: BrowserWindow): void {
         {
           label: 'Setup Guide',
           click: (): void => {
-            mainWindow.webContents.send(IPC.NAVIGATE_TO, 'oculo://guide')
+            sendToWindow(IPC.NAVIGATE_TO, 'oculo://guide')
           }
         }
       ]

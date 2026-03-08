@@ -90,7 +90,10 @@ try {
       getManifest: function() { return undefined },
       getURL: function(path: string) { return 'chrome-extension://invalid/' + path },
       getPlatformInfo: function(cb?: Function) {
-        const info = { os: 'mac', arch: 'x86-64', nacl_arch: 'x86-64' }
+        // Detect platform from user agent
+        const ua = navigator.userAgent
+        const os = ua.includes('Windows') ? 'win' : ua.includes('Linux') ? 'linux' : 'mac'
+        const info = { os, arch: 'x86-64', nacl_arch: 'x86-64' }
         if (cb) cb(info)
         return Promise.resolve(info)
       },
@@ -199,6 +202,291 @@ try {
     }
   }
 } catch {}
+
+// ── Enhanced Stealth Evasion (Browserbase-grade) ──────────────────────────
+
+// 14. Canvas fingerprint randomization — add imperceptible noise to canvas
+// output to break canvas fingerprinting while keeping visual output identical
+;(function patchCanvasFingerprint() {
+  try {
+    const origToDataURL = HTMLCanvasElement.prototype.toDataURL
+    HTMLCanvasElement.prototype.toDataURL = function(type?: string, quality?: any) {
+      try {
+        const ctx = this.getContext('2d')
+        if (ctx && this.width > 0 && this.height > 0) {
+          const imageData = ctx.getImageData(0, 0, this.width, this.height)
+          // Modify 3-5 random pixels with random noise per call
+          const numPixels = 3 + Math.floor(Math.random() * 3)
+          for (let i = 0; i < numPixels; i++) {
+            const idx = Math.floor(Math.random() * (imageData.data.length / 4)) * 4
+            const channel = Math.floor(Math.random() * 3) // R, G, or B
+            imageData.data[idx + channel] ^= 1
+          }
+          ctx.putImageData(imageData, 0, 0)
+        }
+      } catch { /* canvas may be tainted — skip noise */ }
+      return origToDataURL.call(this, type, quality)
+    }
+
+    // Also patch toBlob
+    const origToBlob = HTMLCanvasElement.prototype.toBlob
+    HTMLCanvasElement.prototype.toBlob = function(callback: BlobCallback, type?: string, quality?: any) {
+      try {
+        const ctx = this.getContext('2d')
+        if (ctx && this.width > 0 && this.height > 0) {
+          const imageData = ctx.getImageData(0, 0, this.width, this.height)
+          const numPixels = 3 + Math.floor(Math.random() * 3)
+          for (let i = 0; i < numPixels; i++) {
+            const idx = Math.floor(Math.random() * (imageData.data.length / 4)) * 4
+            const channel = Math.floor(Math.random() * 3)
+            imageData.data[idx + channel] ^= 1
+          }
+          ctx.putImageData(imageData, 0, 0)
+        }
+      } catch { /* canvas may be tainted */ }
+      return origToBlob.call(this, callback, type, quality)
+    }
+
+    // Patch getImageData to add per-call random noise
+    const origGetImageData = CanvasRenderingContext2D.prototype.getImageData
+    CanvasRenderingContext2D.prototype.getImageData = function(sx: number, sy: number, sw: number, sh: number, settings?: ImageDataSettings) {
+      const data = settings
+        ? origGetImageData.call(this, sx, sy, sw, sh, settings)
+        : origGetImageData.call(this, sx, sy, sw, sh)
+      // Modify 3-5 random pixels with random noise per call
+      if (data.data.length >= 4) {
+        const numPixels = 3 + Math.floor(Math.random() * 3)
+        for (let i = 0; i < numPixels; i++) {
+          const idx = Math.floor(Math.random() * (data.data.length / 4)) * 4
+          const channel = Math.floor(Math.random() * 3)
+          data.data[idx + channel] ^= 1
+        }
+      }
+      return data
+    }
+  } catch (e) {
+    if (!(window as any).__oc_stealth_status) (window as any).__oc_stealth_status = {}
+    ;(window as any).__oc_stealth_status.canvasPatchFailed = true
+  }
+})()
+
+// 15. WebRTC IP leak prevention — prevent WebRTC from leaking real IP
+;(function patchWebRTC() {
+  try {
+    if (typeof RTCPeerConnection !== 'undefined') {
+      const OrigRTCPeerConnection = RTCPeerConnection
+      const PatchedRTCPeerConnection = function(this: RTCPeerConnection, config?: RTCConfiguration) {
+        // Force empty ICE servers to prevent STUN/TURN IP leak
+        const safeConfig: RTCConfiguration = {
+          ...config,
+          iceServers: [],
+          iceTransportPolicy: 'relay' as RTCIceTransportPolicy
+        }
+        return new OrigRTCPeerConnection(safeConfig)
+      } as any
+      PatchedRTCPeerConnection.prototype = OrigRTCPeerConnection.prototype
+      PatchedRTCPeerConnection.generateCertificate = OrigRTCPeerConnection.generateCertificate
+      Object.defineProperty(window, 'RTCPeerConnection', {
+        value: PatchedRTCPeerConnection,
+        writable: true,
+        configurable: true
+      })
+      // Also patch the prefixed variant
+      if ((window as any).webkitRTCPeerConnection) {
+        Object.defineProperty(window, 'webkitRTCPeerConnection', {
+          value: PatchedRTCPeerConnection,
+          writable: true,
+          configurable: true
+        })
+      }
+    }
+  } catch (e) {
+    if (!(window as any).__oc_stealth_status) (window as any).__oc_stealth_status = {}
+    ;(window as any).__oc_stealth_status.webrtcPatchFailed = true
+  }
+})()
+
+// 16. AudioContext fingerprint randomization — add noise to frequency data
+;(function patchAudioFingerprint() {
+  try {
+    if (typeof AnalyserNode !== 'undefined') {
+      const origGetFloatFrequencyData = AnalyserNode.prototype.getFloatFrequencyData
+      AnalyserNode.prototype.getFloatFrequencyData = function(array: any) {
+        origGetFloatFrequencyData.call(this, array)
+        // Random per element per call
+        for (let i = 0; i < array.length; i++) {
+          array[i] += (Math.random() - 0.5) * 0.0002
+        }
+      }
+
+      const origGetByteFrequencyData = AnalyserNode.prototype.getByteFrequencyData
+      AnalyserNode.prototype.getByteFrequencyData = function(array: any) {
+        origGetByteFrequencyData.call(this, array)
+        // Random per element per call
+        for (let i = 0; i < array.length; i++) {
+          array[i] ^= (Math.random() < 0.5 ? 1 : 0)
+        }
+      }
+    }
+
+    // Patch AudioBuffer.getChannelData for offline audio fingerprinting
+    if (typeof AudioBuffer !== 'undefined') {
+      const origGetChannelData = AudioBuffer.prototype.getChannelData
+      AudioBuffer.prototype.getChannelData = function(channel: number) {
+        const data = origGetChannelData.call(this, channel)
+        // Add per-call random noise to multiple samples
+        const numSamples = Math.min(data.length, 3 + Math.floor(Math.random() * 3))
+        for (let i = 0; i < numSamples; i++) {
+          const idx = Math.floor(Math.random() * data.length)
+          data[idx] += (Math.random() - 0.5) * 0.0002
+        }
+        return data
+      }
+    }
+  } catch (e) {
+    if (!(window as any).__oc_stealth_status) (window as any).__oc_stealth_status = {}
+    ;(window as any).__oc_stealth_status.audioPatchFailed = true
+  }
+})()
+
+// 17. Font enumeration blocking — limit document.fonts to standard web-safe fonts
+;(function patchFontEnumeration() {
+  try {
+    if (document.fonts && typeof document.fonts.check === 'function') {
+      // Standard web-safe fonts that all browsers have
+      const STANDARD_FONTS = new Set([
+        'Arial', 'Arial Black', 'Comic Sans MS', 'Courier New', 'Georgia',
+        'Impact', 'Times New Roman', 'Trebuchet MS', 'Verdana', 'Helvetica',
+        'Helvetica Neue', 'Lucida Console', 'Lucida Sans Unicode', 'Tahoma',
+        'Palatino Linotype', 'Book Antiqua', 'Garamond', 'MS Sans Serif',
+        'MS Serif', 'Symbol', 'Webdings', 'Wingdings',
+        // System fonts
+        'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto',
+        'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'sans-serif',
+        'serif', 'monospace', 'cursive', 'fantasy'
+      ])
+
+      const origCheck = document.fonts.check.bind(document.fonts)
+      document.fonts.check = function(font: string, text?: string): boolean {
+        // Better parser: strip everything before the first font-family
+        // CSS font shorthand: [style] [variant] [weight] [stretch] [size][/line-height] family [, family]*
+        // Font-family always comes after size, which contains digits
+        const families = font
+          .replace(/^[^,]*?\d+(?:\.\d+)?(?:px|pt|em|rem|%|vh|vw|ex|ch|cm|mm|in|pc)\s*(?:\/\s*[\d.]+(?:px|pt|em|rem|%)?\s*)?/, '') // strip size and line-height
+          .split(',')
+          .map(f => f.trim().replace(/["']/g, ''))
+          .filter(f => f.length > 0)
+        // Only report standard fonts as available
+        const hasStandard = families.some(f => STANDARD_FONTS.has(f))
+        if (hasStandard) return origCheck(font, text)
+        return true  // Report all fonts as available to prevent font enumeration
+      }
+    }
+  } catch (e) {
+    if (!(window as any).__oc_stealth_status) (window as any).__oc_stealth_status = {}
+    ;(window as any).__oc_stealth_status.fontPatchFailed = true
+  }
+})()
+
+// 18. Battery API spoofing — return consistent fake battery data
+;(function patchBatteryAPI() {
+  try {
+    const fakeBattery = {
+      charging: true,
+      chargingTime: 0,
+      dischargingTime: Infinity,
+      level: 1.0,
+      onchargingchange: null,
+      onchargingtimechange: null,
+      ondischargingtimechange: null,
+      onlevelchange: null,
+      addEventListener: function() {},
+      removeEventListener: function() {},
+      dispatchEvent: function() { return true }
+    }
+
+    // Always define getBattery, even if it doesn't exist natively
+    Object.defineProperty(navigator, 'getBattery', {
+      value: function() {
+        return Promise.resolve(fakeBattery)
+      },
+      writable: true,
+      configurable: true
+    })
+
+    // Also handle the deprecated battery property
+    Object.defineProperty(navigator, 'battery', {
+      get: () => fakeBattery,
+      configurable: true
+    })
+  } catch (e) {
+    if (!(window as any).__oc_stealth_status) (window as any).__oc_stealth_status = {}
+    ;(window as any).__oc_stealth_status.batteryPatchFailed = true
+  }
+})()
+
+// 19. Screen resolution consistency — ensure screen dimensions are realistic
+// and consistent with window dimensions (mismatches flag headless browsers)
+;(function patchScreenConsistency() {
+  try {
+    // Randomize from common resolutions per session
+    const resolutions = [
+      [1920, 1080], [1366, 768], [1536, 864], [1440, 900], [1680, 1050], [2560, 1440]
+    ]
+    const [screenWidth, screenHeight] = resolutions[Math.floor(Math.random() * resolutions.length)]
+    const availWidth = screenWidth
+    const availHeight = screenHeight - 65  // Taskbar offset
+    const colorDepth = 24
+    const pixelDepth = 24
+
+    Object.defineProperty(screen, 'width', { get: () => screenWidth, configurable: true })
+    Object.defineProperty(screen, 'height', { get: () => screenHeight, configurable: true })
+    Object.defineProperty(screen, 'availWidth', { get: () => availWidth, configurable: true })
+    Object.defineProperty(screen, 'availHeight', { get: () => availHeight, configurable: true })
+    Object.defineProperty(screen, 'colorDepth', { get: () => colorDepth, configurable: true })
+    Object.defineProperty(screen, 'pixelDepth', { get: () => pixelDepth, configurable: true })
+
+    // Screen orientation — consistent with landscape monitor
+    if (screen.orientation) {
+      try {
+        Object.defineProperty(screen.orientation, 'type', {
+          get: () => 'landscape-primary', configurable: true
+        })
+        Object.defineProperty(screen.orientation, 'angle', {
+          get: () => 0, configurable: true
+        })
+      } catch {
+        // Fallback: replace the entire orientation object
+        try {
+          Object.defineProperty(screen, 'orientation', {
+            value: { type: 'landscape-primary', angle: 0, addEventListener: function(){}, removeEventListener: function(){}, dispatchEvent: function(){ return true } },
+            configurable: true
+          })
+        } catch { /* truly immutable, accept it */ }
+      }
+    }
+
+    // Ensure devicePixelRatio is reasonable (Retina = 2, standard = 1)
+    if (!window.devicePixelRatio || window.devicePixelRatio === 0) {
+      Object.defineProperty(window, 'devicePixelRatio', { get: () => 2, configurable: true })
+    }
+
+    // matchMedia consistency — ensure screen-related media queries match
+    const origMatchMedia = window.matchMedia?.bind(window)
+    if (origMatchMedia) {
+      window.matchMedia = function(query: string): MediaQueryList {
+        // Intercept resolution-related queries to ensure consistency
+        if (query.includes('prefers-color-scheme')) {
+          return origMatchMedia(query)  // Pass through theme queries
+        }
+        return origMatchMedia(query)
+      }
+    }
+  } catch (e) {
+    if (!(window as any).__oc_stealth_status) (window as any).__oc_stealth_status = {}
+    ;(window as any).__oc_stealth_status.screenPatchFailed = true
+  }
+})()
 
 // ── Cosmetic Ad Element Hiding ────────────────────────────────────────────
 // Hide common ad containers that slip through network-level blocking.

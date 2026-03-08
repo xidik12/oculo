@@ -167,7 +167,14 @@ export default function App() {
           return {
             executeJavaScript: (code: string) => oculo.executeInWebview(tabId, code),
             getWebContentsId: () => oculo.getWebContentsId?.(tabId),
-            isLoading: () => false
+            isLoading: () => {
+              try {
+                const tab = tabsRef.current.find(t => t.id === tabId)
+                return tab?.isLoading ?? false
+              } catch {
+                return false
+              }
+            }
           }
         }
       } catch { /* not found */ }
@@ -1626,43 +1633,56 @@ export default function App() {
                 'return JSON.stringify(attrs);})()'
               result = await (wv as any).executeJavaScript(attrCode)
             } else if (action === 'newTab') {
-              // Open a new tab directly via React state
+              // Open a new tab directly via React state — returns tab ID for parallel execution
               const tabUrl = args.url || NEW_TAB_URL
               const tabTitle = tabUrl === NEW_TAB_URL ? 'New Tab' : (() => { try { return new URL(tabUrl).hostname.replace('www.', '') } catch { return 'New Tab' } })()
               const newTabObj: Tab = { id: newId(), url: tabUrl, title: tabTitle, isLoading: false, canGoBack: false, canGoForward: false }
               setTabs(prev => [...prev, newTabObj])
-              setActiveTabId(newTabObj.id)
-              result = 'Opened new tab' + (args.url ? ' with ' + args.url : '')
+              // Only switch to new tab if background flag is not set
+              if (!args.background) {
+                setActiveTabId(newTabObj.id)
+              }
+              result = `New tab opened | id="${newTabObj.id}" | ${tabUrl}\n\nUse tabId="${newTabObj.id}" in page/act/fill/read/run tools to execute on this tab without switching.`
             } else if (action === 'closeTab') {
-              // Close the active tab
+              // Close a tab by ID or the active tab
+              const closeTargetId = args.tabId || args.value || activeTabIdRef.current
               setTabs(prev => {
                 if (prev.length <= 1) return prev
-                const tabId = activeTabIdRef.current
-                const newTabs = prev.filter(t => t.id !== tabId)
+                const newTabs = prev.filter(t => t.id !== closeTargetId)
+                if (newTabs.length === prev.length) return prev // tab not found
                 setActiveTabId(cur => {
-                  if (cur !== tabId) return cur
-                  const idx = prev.findIndex(t => t.id === tabId)
+                  if (cur !== closeTargetId) return cur
+                  const idx = prev.findIndex(t => t.id === closeTargetId)
                   return newTabs[Math.min(idx, newTabs.length - 1)].id
                 })
                 return newTabs
               })
-              result = 'Tab closed'
+              result = `Tab closed | id="${closeTargetId}"`
             } else if (action === 'switchTab') {
-              // Switch to tab by text (title/URL match) or numeric index
-              const target = args.text || args.value || ''
-              const numIdx = parseInt(target, 10)
+              // Switch to tab by tabId, text (title/URL match), or numeric index
+              const target = args.tabId || args.text || args.value || ''
               const currentTabs = tabsRef.current
-              const tab = !isNaN(numIdx) && numIdx >= 0 && numIdx < currentTabs.length
-                ? currentTabs[numIdx]
-                : currentTabs.find(t =>
-                    t.title?.toLowerCase().includes(target.toLowerCase()) ||
-                    t.url.toLowerCase().includes(target.toLowerCase())
-                  )
+              // First try exact tab ID match
+              let tab = currentTabs.find(t => t.id === target)
+              if (!tab) {
+                // Try numeric index
+                const numIdx = parseInt(target, 10)
+                if (!isNaN(numIdx) && numIdx >= 0 && numIdx < currentTabs.length) {
+                  tab = currentTabs[numIdx]
+                }
+              }
+              if (!tab) {
+                // Try text match on title/URL
+                tab = currentTabs.find(t =>
+                  t.title?.toLowerCase().includes(target.toLowerCase()) ||
+                  t.url.toLowerCase().includes(target.toLowerCase())
+                )
+              }
               if (tab) {
                 setActiveTabId(tab.id)
-                result = 'Switched to tab: ' + (tab.title || tab.url.substring(0, 60))
+                result = `Switched to tab | id="${tab.id}" | ${tab.title || tab.url.substring(0, 60)}`
               } else {
-                result = 'Tab not found: ' + target + '. Use listTabs to see available tabs.'
+                result = 'Tab not found: ' + target + '. Use act({action:"listTabs"}) to see available tabs with IDs.'
               }
             } else if (action === 'upload') {
               // Programmatic file upload via CDP — no OS dialog
@@ -1832,14 +1852,16 @@ export default function App() {
                 result = 'Error capturing screenshot: ' + e.message
               }
             } else if (action === 'listTabs') {
-              // List all open tabs from React state
+              // List all open tabs from React state — includes tab IDs for parallel execution
               const currentTabs = tabsRef.current
               const activeId = activeTabIdRef.current
-              const tabInfo = currentTabs.map((t, i) =>
-                `${t.id === activeId ? '→ ' : '  '}[${i}] ${t.title || 'Loading...'} — ${t.url.substring(0, 80)}`
-              )
+              const tabInfo = currentTabs.map((t, i) => {
+                const marker = t.id === activeId ? '→ ' : '  '
+                const loading = t.isLoading ? ' [loading]' : ''
+                return `${marker}[${i}] id="${t.id}" ${t.title || 'Loading...'} — ${t.url.substring(0, 80)}${loading}`
+              })
               result = tabInfo.length ? `Tabs (${tabInfo.length}):\n` + tabInfo.join('\n') : 'No tabs found'
-              if (tabInfo.length > 1) result += '\n\nTip: Switch between tabs with act({action:"switchTab", text:"tab title or index"})'
+              if (tabInfo.length > 0) result += '\n\nUse tabId parameter in page/act/fill/read/run tools to execute on a specific tab without switching.'
             } else if (action === 'monitorNetwork') {
               // Start/read network request monitoring (XHR + fetch)
               const monitorCode = '(function(){' +
@@ -2920,9 +2942,11 @@ export default function App() {
             } else {
               const lines = currentTabs.map((t, i) => {
                 const active = t.id === activeTabIdRef.current ? ' (active)' : ''
-                return `Tab ${i}: ${t.title || 'Loading...'} | ${t.url}${active}`
+                const loading = t.isLoading ? ' [loading]' : ''
+                return `Tab ${i}: id="${t.id}" | ${t.title || 'Loading...'} | ${t.url}${active}${loading}`
               })
               result = lines.join('\n') || 'No tabs open'
+              if (lines.length > 0) result += '\n\nUse tabId parameter in page/act/fill/read tools to target a specific tab for parallel execution.'
             }
             break
           }
@@ -2966,6 +2990,27 @@ export default function App() {
               result = `[LENS_IMAGE:${base64.substring(0, 100)}...]\nQuestion: ${question}\n(Screenshot captured — ${base64.length} chars base64)`
             } catch (err: any) {
               result = 'Error capturing screenshot: ' + (err.message || 'unknown')
+            }
+            break
+          }
+
+          // Internal tools for selector cache (not exposed to MCP clients)
+          case '_getUrl': {
+            try {
+              result = await (wv as any).executeJavaScript('location.href')
+            } catch {
+              result = 'Error: could not get URL'
+            }
+            break
+          }
+
+          case '_evalScript': {
+            try {
+              const script = args.script || ''
+              const evalResult = await (wv as any).executeJavaScript(script)
+              result = typeof evalResult === 'string' ? evalResult : JSON.stringify(evalResult)
+            } catch (err: any) {
+              result = 'Error: ' + (err.message || 'eval failed')
             }
             break
           }

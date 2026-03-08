@@ -366,6 +366,36 @@ export interface ElementFingerprint {
   required?: boolean
 }
 
+// === Proxy Support ===
+export interface ProxyConfig {
+  type: 'http' | 'https' | 'socks4' | 'socks5' | 'direct'
+  host: string
+  port: number
+  username?: string
+  password?: string
+  /** Bypass list — domains that should NOT use proxy */
+  bypass?: string[]
+}
+
+// === Session Recording ===
+export interface SessionEntry {
+  timestamp: number
+  type: 'tool_call' | 'tool_result' | 'screenshot' | 'navigation' | 'page_snapshot'
+  toolName?: string
+  args?: Record<string, unknown>
+  result?: string
+  url?: string
+  screenshot?: string   // file path to screenshot
+  snapshot?: string     // page description at that moment
+}
+
+export interface SessionRecord {
+  id: string
+  startedAt: number
+  entries: SessionEntry[]
+  status: 'recording' | 'stopped'
+}
+
 // === Feature 15: Pinned Sidebar Apps ===
 export interface PinnedApp {
   id: string

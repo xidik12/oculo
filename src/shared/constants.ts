@@ -64,6 +64,17 @@ export const PERMISSION_MAP: Record<string, import('./types').PermissionLevel> =
   'oauth': 'confirm',
   'shell': 'confirm',
 
+  // Tab actions
+  'listTabs': 'auto',
+  'switchTab': 'auto',
+  'newTab': 'notify',
+  'closeTab': 'notify',
+
+  // Proxy & recording
+  'setProxy': 'confirm',
+  'clearProxy': 'confirm',
+  'startRecording': 'confirm',
+
   // New MCP tools (auto)
   'tabs': 'auto',
   'preview': 'auto',
