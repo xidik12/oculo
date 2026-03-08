@@ -1,13 +1,32 @@
-# Oculo
+<p align="center">
+  <img src="docs/logo.png" alt="Oculo" width="120">
+</p>
 
-**AI-Powered Native Browser** — giving AI vision to see and interact with the web.
+<h1 align="center">Oculo</h1>
+
+<p align="center">
+  <strong>AI-Powered Native Browser</strong> — giving AI vision to see and interact with the web.
+</p>
+
+<p align="center">
+  <a href="https://getoculo.com">Website</a> ·
+  <a href="https://github.com/xidik12/oculo/releases">Download</a> ·
+  <a href="#use-with-claude-code-mcp">MCP Setup</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/xidik12/oculo/stargazers"><img src="https://img.shields.io/github/stars/xidik12/oculo?style=flat" alt="Stars"></a>
+  <a href="https://github.com/xidik12/oculo/releases"><img src="https://img.shields.io/github/v/release/xidik12/oculo" alt="Release"></a>
+  <img src="https://img.shields.io/badge/Electron-34-47848F?logo=electron&logoColor=white" alt="Electron">
+  <img src="https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black" alt="React">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="License"></a>
+</p>
+
+---
 
 > *Latin: "to see, to give sight"* — Cursor is to VS Code what Oculo is to Chrome.
-
-![Electron](https://img.shields.io/badge/Electron-34-47848F?logo=electron&logoColor=white)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6?logo=typescript&logoColor=white)
-![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)
-![License](https://img.shields.io/badge/License-MIT-green)
 
 ## What is Oculo?
 
@@ -36,6 +55,19 @@ npm install
 
 # Run
 npm run dev
+```
+
+### Download
+
+Pre-built binaries are available on the [Releases page](https://github.com/xidik12/oculo/releases):
+
+- **macOS** — `.dmg` (Apple Silicon)
+- **Windows** — `.exe` installer
+
+Or install the MCP bridge globally:
+
+```bash
+npm install -g oculo
 ```
 
 ## Architecture
@@ -81,14 +113,6 @@ Electron's `<webview>` elements are only accessible from the renderer process. T
 
 Oculo includes an open-source MCP bridge (`bin/oculo-mcp.mjs`) that lets Claude Code in your terminal control the browser remotely. All 7 browser tools become available to Claude Code as MCP tools.
 
-### How It Works
-
-When Oculo is running, it starts a local HTTP server on port 19516. The MCP bridge script translates between Claude Code's stdio protocol and Oculo's HTTP server:
-
-```
-Terminal: Claude Code ↔ stdio ↔ oculo-mcp.mjs ↔ HTTP ↔ Oculo browser
-```
-
 ### Setup (One-Time)
 
 **Step 1:** Make sure Oculo is installed and can run (`npm run dev` or the built app).
@@ -96,7 +120,7 @@ Terminal: Claude Code ↔ stdio ↔ oculo-mcp.mjs ↔ HTTP ↔ Oculo browser
 **Step 2:** Register the MCP server with Claude Code:
 
 ```bash
-claude mcp add oculo -- node ~/Desktop/oculo/bin/oculo-mcp.mjs
+claude mcp add oculo -- node /path/to/oculo/bin/oculo-mcp.mjs
 ```
 
 **Step 3:** That's it. Now when you start a Claude Code session, it will have access to Oculo's browser tools — as long as Oculo is open.
@@ -114,7 +138,7 @@ Claude: I'll use Oculo to navigate and search.
 
 ### MCP Bridge Source
 
-The bridge is fully open-source at [`bin/oculo-mcp.mjs`](bin/oculo-mcp.mjs). It's a simple Node.js script (~170 lines) that:
+The bridge is at [`bin/oculo-mcp.mjs`](bin/oculo-mcp.mjs). It's a simple Node.js script (~170 lines) that:
 - Reads `~/.oculo-port` to find Oculo's port and auth token
 - Forwards `tools/list` and `tools/call` requests over HTTP
 - Returns results back to Claude Code via stdio
@@ -194,9 +218,13 @@ npm run clean        # Remove build artifacts
 - **@anthropic-ai/sdk** — Claude API
 - **@modelcontextprotocol/sdk** — MCP protocol
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture overview, and contribution guidelines.
+
 ## License
 
-MIT
+[MIT](LICENSE)
 
 ## Author
 

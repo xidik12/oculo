@@ -3,6 +3,7 @@ export interface Tab {
   id: string
   url: string
   title: string
+  originalTitle?: string  // v0.3.0: pre-tidy title for tooltip
   favicon?: string
   isLoading: boolean
   isActive?: boolean
@@ -330,6 +331,39 @@ export interface Macro {
   steps: PipelineStep[]
   description?: string
   createdAt: number
+}
+
+// === Feature 11: Pattern Detection ===
+export interface PatternSuggestion {
+  id: string
+  domain: string
+  sequenceLength: number
+  occurrences: number
+  suggestedName: string
+  steps: PipelineStep[]
+}
+
+// === Adaptive Element Resolution (fingerprint for 3-tier ref resolution) ===
+export interface ElementFingerprint {
+  name: string
+  role: string
+  backendDOMNodeId?: number
+  tagName?: string
+  inputType?: string
+  href?: string
+  innerText?: string
+  ariaLabel?: string
+  placeholder?: string
+  classes?: string[]       // top 3 classes
+  boundingBox?: { x: number; y: number; w: number; h: number }
+  parentRole?: string
+  parentName?: string
+  siblingIndex?: number
+  domDepth?: number
+  checked?: boolean
+  disabled?: boolean
+  expanded?: boolean
+  required?: boolean
 }
 
 // === Feature 15: Pinned Sidebar Apps ===

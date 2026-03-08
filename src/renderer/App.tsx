@@ -41,7 +41,6 @@ export default function App() {
   useEffect(() => { activeTabIdRef.current = activeTabId }, [activeTabId])
   const tabsRef = useRef(tabs)
   useEffect(() => { tabsRef.current = tabs }, [tabs])
-  const [darkMode, setDarkMode] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches)
   const [chatOpen, setChatOpen] = useState(false)
   const [findOpen, setFindOpen] = useState(false)
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false)
@@ -57,27 +56,23 @@ export default function App() {
   const [tabSuspended, setTabSuspended] = useState<Set<string>>(new Set())
   const [pinnedApps, setPinnedApps] = useState<PinnedApp[]>([])
   const [pipelineSuggestions, setPipelineSuggestions] = useState<PatternSuggestion[]>([])
+  const [aiActing, setAiActing] = useState(false)  // v0.3.0: transparent action overlay
+  const [linkPreview, setLinkPreview] = useState<{ x: number; y: number; url: string; summary: string } | null>(null)  // v0.3.0: hover link preview
+  const linkPreviewCache = useRef<Map<string, string>>(new Map())  // v0.3.0: URL → summary cache
   const tabLastActive = useRef<Map<string, number>>(new Map())
   const closedTabs = useRef<{ url: string; title: string }[]>([])
   const lastPageSnapshot = useRef('')
   const lastA11ySnapshot = useRef('')
-  const currentRefMap = useRef<Record<string, { name: string; role: string; backendDOMNodeId?: number }>>({})
+  const currentRefMap = useRef<Record<string, import('@shared/types').ElementFingerprint>>({})
 
   const sidebar = useSidebarState()
   const contextMenu = useContextMenu()
   const { toasts, addToast, dismissToast } = useToasts()
 
-  // Dark mode
+  // Dark mode — always on (light mode not yet implemented)
   useEffect(() => {
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = (e: MediaQueryListEvent) => setDarkMode(e.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
+    document.documentElement.classList.add('dark')
   }, [])
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', darkMode)
-  }, [darkMode])
 
   // Load pinned sidebar apps on mount
   useEffect(() => {
@@ -108,15 +103,6 @@ export default function App() {
     const cleanups = [
       api.onNewTab((url?: string, openerId?: number) => handleNewTab(url, openerId)),
       api.onCloseActiveTab(() => handleCloseTab(activeTabIdRef.current)),
-      api.onCloseTabByUrl?.((urlPrefix: string) => {
-        setTabs(prev => {
-          const tab = prev.find(t => t.url.startsWith(urlPrefix) || t.url.includes('auth.openai.com') || t.url.includes('auth0.openai.com'))
-          if (tab) {
-            setTimeout(() => handleCloseTab(tab.id), 500)
-          }
-          return prev
-        })
-      }),
       api.onToggleChat?.(() => setChatOpen(prev => !prev)),
       api.onFindInPage?.(() => setFindOpen(true)),
       api.onToggleDevTools?.(() => api.openWebviewDevTools(activeTabIdRef.current)),
@@ -170,6 +156,24 @@ export default function App() {
       return null
     }
 
+    // Helper: find webview by tab ID (v0.3.0 — background task execution)
+    function findWebviewByTabId(tabId: string): any {
+      const oculo = (window as any).oculo
+      if (!oculo) return null
+      try {
+        const info = oculo.getWebviewInfo?.(tabId)
+        if (info) {
+          // Found in preload webview registry — wrap in webview-like interface
+          return {
+            executeJavaScript: (code: string) => oculo.executeInWebview(tabId, code),
+            getWebContentsId: () => oculo.getWebContentsId?.(tabId),
+            isLoading: () => false
+          }
+        }
+      } catch { /* not found */ }
+      return null
+    }
+
     // Helper: wait for a webview to finish loading
     async function waitForWebviewReady(wv: any, maxAttempts = 20): Promise<boolean> {
       for (let i = 0; i < maxAttempts; i++) {
@@ -198,6 +202,8 @@ export default function App() {
         'var text=' + JSON.stringify(text) + ';' +
         'var sel=' + JSON.stringify(selector) + ';' +
         'var nth=' + nth + ';' +
+        // Shared fuzzy match function
+        fuzzyMatchCode() +
         // Click by ref number: text="#3" → click window.__oculoRefs[2]
         'if(text.match(/^#\\d+$/)&&window.__oculoRefs){' +
         'var idx=parseInt(text.substring(1))-1;' +
@@ -230,6 +236,13 @@ export default function App() {
         'var t=(el.textContent||"").trim().toLowerCase();' +
         'var aria=(el.getAttribute("aria-label")||"").toLowerCase();' +
         'return t.includes(text.toLowerCase())||aria.includes(text.toLowerCase());' +
+        '});}' +
+        // Fuzzy tier: token overlap matching (e.g. "Sign Up" matches "Sign Up Now")
+        'if(!els.length){' +
+        'els=all.filter(function(el){' +
+        'var t=(el.textContent||"").trim();' +
+        'var aria=el.getAttribute("aria-label")||"";' +
+        'return fuzzyMatch(t,text)||fuzzyMatch(aria,text);' +
         '});}' +
         '}' +
         // Search inside iframes if not found in main document
@@ -345,16 +358,8 @@ export default function App() {
         'var descId=el.getAttribute("aria-describedby");' +
         'if(descId){var dEl=document.getElementById(descId);if(dEl)texts.push(dEl.textContent.trim());}' +
         'return texts;}' +
-        // Helper: fuzzy match — checks if strings share significant tokens
-        'function fuzzyMatch(a,b){' +
-        'a=a.toLowerCase();b=b.toLowerCase();' +
-        'if(a===b||a.includes(b)||b.includes(a))return true;' +
-        // Token overlap: split by spaces/punctuation, check overlap
-        'var ta=a.split(/[\\s\\-_\\/]+/).filter(function(t){return t.length>2;});' +
-        'var tb=b.split(/[\\s\\-_\\/]+/).filter(function(t){return t.length>2;});' +
-        'if(!ta.length||!tb.length)return false;' +
-        'var matches=0;for(var i=0;i<ta.length;i++){for(var j=0;j<tb.length;j++){if(ta[i]===tb[j])matches++;}}' +
-        'return matches>=Math.min(ta.length,tb.length)*0.5;}' +
+        // Helper: fuzzy match (shared)
+        fuzzyMatchCode() +
         // Main loop
         'for(var i=0;i<entries.length;i++){' +
         'var label=entries[i][0],value=entries[i][1];' +
@@ -511,9 +516,98 @@ export default function App() {
       return btoa(binary)
     }
 
+    // Shared fuzzyMatch JS code — injectable into any in-page script.
+    // Returns JS function declaration string for fuzzyMatch(a,b) → boolean.
+    function fuzzyMatchCode(): string {
+      return 'function fuzzyMatch(a,b){' +
+        'a=a.toLowerCase();b=b.toLowerCase();' +
+        'if(a===b||a.includes(b)||b.includes(a))return true;' +
+        'var ta=a.split(/[\\s\\-_\\/]+/).filter(function(t){return t.length>2;});' +
+        'var tb=b.split(/[\\s\\-_\\/]+/).filter(function(t){return t.length>2;});' +
+        'if(!ta.length||!tb.length)return false;' +
+        'var matches=0;for(var i=0;i<ta.length;i++){for(var j=0;j<tb.length;j++){if(ta[i]===tb[j])matches++;}}' +
+        'return matches>=Math.min(ta.length,tb.length)*0.5;}'
+    }
+
+    // Build in-page JS that scores all interactive elements against a stored fingerprint.
+    // Returns the best-matching element's unique CSS selector if score > 30% threshold.
+    // Weights: name 25, role 20, innerText 15, tagName 10, href 10, ariaLabel 10, classes 8, placeholder 8, inputType 7, position 5, parentRole 5 = 123 max
+    function buildFingerprintMatchCode(fp: import('@shared/types').ElementFingerprint): string {
+      return '(function(){' +
+        'var fp=' + JSON.stringify(fp) + ';' +
+        fuzzyMatchCode() +
+        'function tokenScore(a,b,max){' +
+        'if(!a||!b)return 0;' +
+        'a=a.toLowerCase();b=b.toLowerCase();' +
+        'if(a===b)return max;' +
+        'if(a.includes(b)||b.includes(a))return max*0.8;' +
+        'var ta=a.split(/[\\s\\-_\\/]+/).filter(function(t){return t.length>2;});' +
+        'var tb=b.split(/[\\s\\-_\\/]+/).filter(function(t){return t.length>2;});' +
+        'if(!ta.length||!tb.length)return 0;' +
+        'var m=0;for(var i=0;i<ta.length;i++){for(var j=0;j<tb.length;j++){if(ta[i]===tb[j])m++;}}' +
+        'return Math.round(max*(m/Math.max(ta.length,tb.length)));}' +
+        // getUniqueSelector helper
+        'function getUniqueSelector(el){' +
+        'if(el.id)return"#"+CSS.escape(el.id);' +
+        'var path=[];var c=el;' +
+        'while(c&&c!==document.body&&c!==document.documentElement){' +
+        'var tag=c.tagName.toLowerCase();' +
+        'if(c.id){path.unshift("#"+CSS.escape(c.id));break;}' +
+        'var par=c.parentElement;' +
+        'if(par){var sibs=Array.from(par.children).filter(function(s){return s.tagName===c.tagName;});' +
+        'if(sibs.length>1){tag+=":nth-of-type("+(sibs.indexOf(c)+1)+")";}}' +
+        'path.unshift(tag);c=c.parentElement;}' +
+        'return path.join(" > ");}' +
+        // Score each interactive element
+        'var allEls=document.querySelectorAll("a,button,input,textarea,select,[role=button],[role=link],[role=textbox],[role=checkbox],[role=radio],[role=combobox],[role=tab],[role=menuitem],[role=switch],[role=option],[contenteditable=true]");' +
+        'var best=null;var bestScore=0;' +
+        'for(var i=0;i<allEls.length;i++){' +
+        'var el=allEls[i];var score=0;' +
+        // name (25)
+        'var elName=(el.textContent||"").trim().substring(0,80);' +
+        'score+=tokenScore(elName,fp.name,25);' +
+        // role (20) — compare tag-implied role
+        'var elRole=el.getAttribute("role")||"";' +
+        'if(!elRole){var tag=el.tagName.toLowerCase();' +
+        'if(tag==="a")elRole="link";else if(tag==="button"||el.type==="submit"||el.type==="button")elRole="button";' +
+        'else if(tag==="input"){var t=el.type||"text";if(t==="checkbox")elRole="checkbox";else if(t==="radio")elRole="radio";else elRole="textbox";}' +
+        'else if(tag==="textarea")elRole="textbox";else if(tag==="select")elRole="combobox";}' +
+        'if(elRole===fp.role)score+=20;' +
+        // innerText (15)
+        'if(fp.innerText)score+=tokenScore((el.innerText||"").trim().substring(0,80),fp.innerText,15);' +
+        // tagName (10)
+        'if(fp.tagName&&el.tagName.toLowerCase()===fp.tagName)score+=10;' +
+        // href (10)
+        'if(fp.href&&el.href===fp.href)score+=10;' +
+        // ariaLabel (10)
+        'var elAria=el.getAttribute("aria-label")||"";' +
+        'if(fp.ariaLabel)score+=tokenScore(elAria,fp.ariaLabel,10);' +
+        // classes (8)
+        'if(fp.classes&&fp.classes.length){var ec=Array.from(el.classList||[]);var cm=0;' +
+        'for(var ci=0;ci<fp.classes.length;ci++){if(ec.indexOf(fp.classes[ci])!==-1)cm++;}' +
+        'score+=Math.round(8*(cm/fp.classes.length));}' +
+        // placeholder (8)
+        'var elPh=el.getAttribute("placeholder")||el.getAttribute("data-placeholder")||"";' +
+        'if(fp.placeholder)score+=tokenScore(elPh,fp.placeholder,8);' +
+        // inputType (7)
+        'if(fp.inputType&&(el.type||"")===(fp.inputType))score+=7;' +
+        // position proximity (5) — within 100px
+        'if(fp.boundingBox){var r=el.getBoundingClientRect();' +
+        'var dx=Math.abs(r.x-fp.boundingBox.x);var dy=Math.abs(r.y-fp.boundingBox.y);' +
+        'if(dx<100&&dy<100)score+=5;else if(dx<300&&dy<300)score+=2;}' +
+        // parentRole (5)
+        'if(fp.parentRole&&el.parentElement){var pr=el.parentElement.getAttribute("role")||"";' +
+        'if(pr===fp.parentRole)score+=5;}' +
+        'if(score>bestScore){bestScore=score;best=el;}}' +
+        // Threshold: 30% of 123 max ≈ 37 points
+        'if(best&&bestScore>=37){return{found:true,selector:getUniqueSelector(best),score:bestScore};}' +
+        'return{found:false,score:bestScore};' +
+        '})()'
+    }
+
     // Helper: parse and strip ---REFMAP--- block from a11y snapshot result.
     // Returns { snapshot, refMap } where snapshot has the block removed.
-    function parseRefMapFromSnapshot(raw: string): { snapshot: string; refMap: Record<string, { name: string; role: string; backendDOMNodeId?: number }> } {
+    function parseRefMapFromSnapshot(raw: string): { snapshot: string; refMap: Record<string, import('@shared/types').ElementFingerprint> } {
       const marker = '\n---REFMAP---\n'
       const idx = raw.indexOf(marker)
       if (idx === -1) return { snapshot: raw, refMap: {} }
@@ -726,8 +820,12 @@ export default function App() {
     }
 
     const cleanup = api.onMcpToolCall(async (callId: string, toolName: string, args: any) => {
+      setAiActing(true)  // v0.3.0: show action overlay
       try {
-        let wv = findActiveWebview()
+        // v0.3.0: Background task execution — use specific tab's webview if tabId is provided
+        let wv = args?.tabId ? findWebviewByTabId(args.tabId) : findActiveWebview()
+        // Fallback to active if tabId webview not found
+        if (!wv && args?.tabId) wv = findActiveWebview()
 
         // No webview exists (newtab) — for navigate, update state to trigger React render,
         // then wait for the webview to mount and the page to load before returning.
@@ -850,19 +948,47 @@ export default function App() {
           }
 
           case 'act': {
-            // Ref-based resolution: if args.ref is provided (e.g. "e5"), look up in refMap
+            // 3-Tier Ref Resolution: CDP Direct → Fingerprint Similarity → Text Fallback
             if (args.ref && !args.text && !args.selector && !args.name) {
               const refId = String(args.ref).startsWith('e') ? args.ref : `e${args.ref}`
               const refEntry = currentRefMap.current[refId]
-              if (refEntry) {
-                // Set name and role for existing resolver
-                args.name = refEntry.name
-                args.role = refEntry.role
-                // Also set text as fallback
-                if (!args.text && refEntry.name) args.text = refEntry.name
-              } else {
+              if (!refEntry) {
                 result = `Error: ref "${refId}" not found in current snapshot. Call page({detail:"a11y"}) first to get fresh refs.`
                 break
+              }
+
+              let resolved = false
+
+              // Tier 1: CDP Direct — O(1), precise. Use backendDOMNodeId to resolve live node.
+              if (refEntry.backendDOMNodeId) {
+                try {
+                  const wcId = (wv as any).getWebContentsId?.()
+                  if (wcId) {
+                    const nodeResult = await api.resolveNode(wcId, refEntry.backendDOMNodeId)
+                    if (nodeResult?.alive && nodeResult.selector) {
+                      args.selector = nodeResult.selector
+                      resolved = true
+                    }
+                  }
+                } catch { /* CDP tier failed, fall through */ }
+              }
+
+              // Tier 2: Fingerprint Similarity — score all interactive elements vs stored fingerprint
+              if (!resolved) {
+                try {
+                  const fpResult = await (wv as any).executeJavaScript(buildFingerprintMatchCode(refEntry))
+                  if (fpResult?.found && fpResult.selector) {
+                    args.selector = fpResult.selector
+                    resolved = true
+                  }
+                } catch { /* fingerprint tier failed, fall through */ }
+              }
+
+              // Tier 3: Text Fallback — original behavior (name + role → text matching)
+              if (!resolved) {
+                args.name = refEntry.name
+                args.role = refEntry.role
+                if (!args.text && refEntry.name) args.text = refEntry.name
               }
             }
             const action = args.action
@@ -2860,11 +2986,79 @@ export default function App() {
         api.sendMcpToolResult(callId, result)
       } catch (err: any) {
         api.sendMcpToolResult(callId, 'Error: ' + (err.message || 'Tool execution failed'))
+      } finally {
+        setAiActing(false)  // v0.3.0: hide action overlay
       }
     })
 
     return cleanup
   }, []) // eslint-disable-line react-hooks/exhaustive-deps — register once, use activeTabIdRef inside
+
+  // === Hover Link Preview (v0.3.0) ===
+  useEffect(() => {
+    const api = oculoApi()
+    if (!api) return
+
+    const injectLinkPreviewListener = () => {
+      setTimeout(() => {
+        const wv = document.querySelector('webview:not([style*="display: none"])')
+        if (!wv) return
+        ;(wv as any).executeJavaScript?.(`
+          if (!window.__oculoLinkPreview) {
+            window.__oculoLinkPreview = true;
+            document.addEventListener('mouseover', function(e) {
+              if (!e.shiftKey) return;
+              var a = e.target.closest('a[href]');
+              if (!a) return;
+              var rect = a.getBoundingClientRect();
+              window.__oculoLinkHover = { url: a.href, x: rect.left + rect.width/2, y: rect.top };
+            });
+            document.addEventListener('mouseout', function(e) {
+              if (e.target.closest('a[href]')) window.__oculoLinkHover = null;
+            });
+          }
+        `).catch(() => {})
+      }, 1000)
+    }
+
+    // Re-inject on every page load (dom-ready fires on navigation)
+    const wv = document.querySelector('webview:not([style*="display: none"])')
+    const domReadyHandler = () => injectLinkPreviewListener()
+    if (wv) {
+      wv.addEventListener('dom-ready', domReadyHandler)
+      injectLinkPreviewListener() // inject for current page too
+    }
+
+    // Set up polling for link hover events from webview
+    const pollInterval = setInterval(async () => {
+      const currentWv = document.querySelector('webview:not([style*="display: none"])') as any
+      if (!currentWv) { setLinkPreview(null); return }
+      try {
+        const hover = await currentWv.executeJavaScript('window.__oculoLinkHover || null')
+        if (!hover) { setLinkPreview(null); return }
+        // Translate webview-relative coords to window-relative by adding webview offset
+        const wvRect = currentWv.getBoundingClientRect()
+        const windowX = hover.x + wvRect.left
+        const windowY = hover.y + wvRect.top
+        const cached = linkPreviewCache.current.get(hover.url)
+        if (cached) {
+          setLinkPreview({ x: windowX, y: windowY, url: hover.url, summary: cached })
+        } else {
+          setLinkPreview({ x: windowX, y: windowY, url: hover.url, summary: 'Loading...' })
+          const summary = await api.aiQuickComplete(`Summarize this URL in 10 words: ${hover.url}`, 30)
+          if (summary) {
+            linkPreviewCache.current.set(hover.url, summary)
+            setLinkPreview(prev => prev && prev.url === hover.url ? { x: prev.x, y: prev.y, url: prev.url, summary } : prev)
+          }
+        }
+      } catch { /* webview not ready */ }
+    }, 800)
+
+    return () => {
+      clearInterval(pollInterval)
+      if (wv) wv.removeEventListener('dom-ready', domReadyHandler)
+    }
+  }, [activeTabId])
 
   const activeTab = tabs.find(t => t.id === activeTabId)
 
@@ -3002,10 +3196,17 @@ export default function App() {
   }, [])
 
   const handleWebViewUpdate = useCallback((tabId: string, updates: Partial<Tab>): void => {
-    setTabs(prev => prev.map(t => t.id === tabId ? { ...t, ...updates } : t))
-    if (updates.url && !updates.isLoading) {
-      recordHistory(updates.url, updates.title || updates.url)
-    }
+    setTabs(prev => {
+      const next = prev.map(t => t.id === tabId ? { ...t, ...updates } : t)
+      // Record history when title arrives (not on navigation, where title is still empty)
+      if (updates.title && updates.title !== '[OAuth Complete]') {
+        const tab = next.find(t => t.id === tabId)
+        if (tab && tab.url && !tab.url.startsWith('oculo://')) {
+          recordHistory(tab.url, updates.title)
+        }
+      }
+      return next
+    })
     // Auto-close OAuth popup tabs when flow completes
     if (updates.title === '[OAuth Complete]') {
       setTimeout(() => handleCloseTab(tabId), 500)
@@ -3082,6 +3283,78 @@ export default function App() {
     ))
   }, [])
 
+  // AI Auto Tab Grouping (v0.3.0)
+  const handleAutoGroup = useCallback(async () => {
+    if (tabs.length < 3) return
+    const api = oculoApi()
+    // Group by domain first
+    const domainMap: Record<string, string[]> = {}
+    for (const tab of tabs) {
+      try {
+        const domain = new URL(tab.url).hostname.replace('www.', '')
+        if (!domainMap[domain]) domainMap[domain] = []
+        domainMap[domain].push(tab.id)
+      } catch { /* skip invalid URLs */ }
+    }
+
+    // Auto-create groups for domains with 2+ tabs
+    const newGroups: TabGroup[] = []
+    const grouped = new Set<string>()
+    const colors = TAB_GROUP_COLORS
+    let colorIdx = tabGroups.length
+
+    for (const [domain, tabIds] of Object.entries(domainMap)) {
+      if (tabIds.length >= 2) {
+        newGroups.push({
+          id: `group-${Date.now()}-${domain}`,
+          name: domain.split('.')[0].charAt(0).toUpperCase() + domain.split('.')[0].slice(1),
+          color: colors[colorIdx % colors.length].bg,
+          collapsed: false,
+          tabIds
+        })
+        colorIdx++
+        tabIds.forEach(id => grouped.add(id))
+      }
+    }
+
+    // For remaining ungrouped tabs, try AI categorization
+    const ungrouped = tabs.filter(t => !grouped.has(t.id) && !t.url.startsWith('oculo://'))
+    if (ungrouped.length >= 3 && api) {
+      const tabInfo = ungrouped.map(t => `${t.id}|${t.title}|${t.url}`).join('\n')
+      const aiResult = await api.aiQuickComplete(
+        `Categorize these tabs into 2-3 groups. Reply ONLY as JSON array: [{"name":"GroupName","tabIds":["id1","id2"]}]\n${tabInfo}`,
+        200
+      )
+      if (aiResult) {
+        try {
+          const parsed = JSON.parse(aiResult.replace(/```json?\n?/g, '').replace(/```/g, '').trim())
+          if (Array.isArray(parsed)) {
+            for (const g of parsed) {
+              if (g.name && Array.isArray(g.tabIds) && g.tabIds.length >= 2) {
+                // Validate tab IDs exist
+                const validIds = g.tabIds.filter((id: string) => ungrouped.some(t => t.id === id))
+                if (validIds.length >= 2) {
+                  newGroups.push({
+                    id: `group-${Date.now()}-${g.name}`,
+                    name: g.name.substring(0, 20),
+                    color: colors[colorIdx % colors.length].bg,
+                    collapsed: false,
+                    tabIds: validIds
+                  })
+                  colorIdx++
+                }
+              }
+            }
+          }
+        } catch { /* AI returned invalid JSON */ }
+      }
+    }
+
+    if (newGroups.length > 0) {
+      setTabGroups(prev => [...prev, ...newGroups])
+    }
+  }, [tabs, tabGroups])
+
   const handleRemoveFromGroup = useCallback((tabId: string) => {
     setTabGroups(prev => prev.map(g => ({
       ...g, tabIds: g.tabIds.filter(id => id !== tabId)
@@ -3147,6 +3420,7 @@ export default function App() {
             }))
           ]
       ),
+      ...(tabs.length >= 3 ? [{ label: 'Auto Group All Tabs', action: () => handleAutoGroup() }] : []),
       { label: '', action: () => {}, separator: true },
       ...(!tab.url.startsWith('oculo://') && !pinnedApps.find(p => p.url === tab.url)
         ? [{ label: 'Pin to Sidebar', action: () => handlePinToSidebar(tab) }]
@@ -3233,6 +3507,8 @@ export default function App() {
             pinnedApps={pinnedApps}
             onPinnedAppRemove={handleUnpinFromSidebar}
             onPinnedAppWidthChange={handlePinnedAppWidthChange}
+            aiActing={aiActing}
+            onStopAi={() => { oculoApi()?.abortChat(); setAiActing(false) }}
           />
           {/* Focus mode exit button */}
           <button
@@ -3340,6 +3616,8 @@ export default function App() {
                 pinnedApps={pinnedApps}
                 onPinnedAppRemove={handleUnpinFromSidebar}
                 onPinnedAppWidthChange={handlePinnedAppWidthChange}
+                aiActing={aiActing}
+                onStopAi={() => { oculoApi()?.abortChat(); setAiActing(false) }}
               />
 
               {/* Highlight-to-Ask popup */}
@@ -3375,6 +3653,17 @@ export default function App() {
                   >
                     ✕
                   </button>
+                </div>
+              )}
+
+              {/* Link Preview popup (v0.3.0) */}
+              {linkPreview && (
+                <div
+                  className="fixed z-50 max-w-xs px-3 py-2 rounded-lg shadow-xl bg-surface/95 border border-border/50 backdrop-blur-sm pointer-events-none"
+                  style={{ left: Math.max(10, linkPreview.x - 100), top: Math.max(10, linkPreview.y - 50) }}
+                >
+                  <p className="text-xs text-gray-400 truncate mb-0.5">{linkPreview.url.substring(0, 60)}</p>
+                  <p className="text-sm text-primary">{linkPreview.summary}</p>
                 </div>
               )}
             </div>

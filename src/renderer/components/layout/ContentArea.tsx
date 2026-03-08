@@ -24,6 +24,8 @@ interface ContentAreaProps {
   pinnedApps?: PinnedApp[]
   onPinnedAppRemove?: (id: string) => void
   onPinnedAppWidthChange?: (id: string, width: number) => void
+  aiActing?: boolean  // v0.3.0: AI action overlay
+  onStopAi?: () => void  // v0.3.0: stop AI action
 }
 
 /** A single pinned sidebar panel with webview */
@@ -115,7 +117,7 @@ function PinnedPanel({
   )
 }
 
-export default function ContentArea({ tabs, activeTabId, chatOpen, onWebViewUpdate, onCloseChat, isNewTab, isAbout, isContact, isGuide, onNavigate, onTextSelected, suspendedTabs, onCloseTab, pinnedApps, onPinnedAppRemove, onPinnedAppWidthChange }: ContentAreaProps) {
+export default function ContentArea({ tabs, activeTabId, chatOpen, onWebViewUpdate, onCloseChat, isNewTab, isAbout, isContact, isGuide, onNavigate, onTextSelected, suspendedTabs, onCloseTab, pinnedApps, onPinnedAppRemove, onPinnedAppWidthChange, aiActing, onStopAi }: ContentAreaProps) {
   const isInternalPage = isNewTab || isAbout || isContact || isGuide
 
   return (
@@ -162,6 +164,20 @@ export default function ContentArea({ tabs, activeTabId, chatOpen, onWebViewUpda
             />
           )
         })}
+
+        {/* AI Acting overlay (v0.3.0) */}
+        {aiActing && (
+          <>
+            <div className="absolute inset-0 pointer-events-none ring-2 ring-blue-500/50 ring-inset rounded-sm z-40" />
+            <button
+              onClick={onStopAi}
+              className="absolute top-3 right-3 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-600/90 hover:bg-blue-600 text-white text-xs font-medium shadow-lg backdrop-blur-sm transition-colors"
+            >
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              AI Acting — Stop
+            </button>
+          </>
+        )}
       </div>
 
       {/* Chat panel */}

@@ -66,7 +66,7 @@ export class McpClientManager {
     }
 
     const client = new Client(
-      { name: 'oculo-browser', version: '0.2.0' },
+      { name: 'oculo-browser', version: '0.3.0' },
       { capabilities: {} }
     )
 

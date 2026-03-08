@@ -1,10 +1,18 @@
 {
   "name": "oculo",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI-powered native browser — giving AI vision to see and interact with the web",
   "main": "./out/main/index.js",
   "author": "Salakhitdinov Khidayotullo",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xidik12/oculo.git"
+  },
+  "homepage": "https://getoculo.com",
+  "bugs": {
+    "url": "https://github.com/xidik12/oculo/issues"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -16,9 +24,6 @@
     "dist:mac": "electron-builder --mac",
     "dist:win": "electron-builder --win",
     "dist:linux": "electron-builder --linux",
-    "dist:public": "OCULO_EDITION=public electron-vite build && electron-builder",
-    "dist:private": "OCULO_EDITION=private electron-vite build && electron-builder",
-    "dev:public": "OCULO_EDITION=public electron-vite dev",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "clean": "rm -rf out dist node_modules/.cache",
@@ -91,7 +96,11 @@
     },
     "files": [
       "out/**/*",
-      "!node_modules/**/*"
+      "!node_modules/**/*",
+      "node_modules/node-pty/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
     ]
   }
 }

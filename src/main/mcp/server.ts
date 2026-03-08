@@ -68,7 +68,8 @@ export class McpServerManager {
           scope: { type: 'string', description: 'CSS selector to scope description to a section of the page' },
           detail: { type: 'string', enum: ['compact', 'a11y', 'markdown'], description: 'compact (default ~30-80 tokens), a11y (ref-tagged accessibility tree ~200-500 tokens), or markdown (article extraction via Readability)' },
           include: { type: 'array', items: { type: 'string' }, description: 'What to include: "forms", "buttons", "links", "headings", "text", "images". Default: ["forms","buttons","links","headings"]' },
-          screenshot: { type: 'boolean', description: 'Attach a screenshot (default: false)' }
+          screenshot: { type: 'boolean', description: 'Attach a screenshot (default: false)' },
+          tabId: { type: 'string', description: 'Target a specific tab by ID (for background execution). Omit for active tab.' }
         }
       }
     },
@@ -105,7 +106,8 @@ export class McpServerManager {
           expression: { type: 'string', description: 'JavaScript expression for evaluate action' },
           attribute: { type: 'string', description: 'Attribute name for getAttribute action' },
           cookies: { type: 'array', description: 'Cookies array for importCookies action' },
-          autoSubmit: { type: 'boolean', description: 'Auto-submit after login (default: true)' }
+          autoSubmit: { type: 'boolean', description: 'Auto-submit after login (default: true)' },
+          tabId: { type: 'string', description: 'Target a specific tab by ID (for background execution). Omit for active tab.' }
         },
         required: ['action']
       }
@@ -118,7 +120,8 @@ export class McpServerManager {
         properties: {
           fields: { type: 'object', description: 'Object mapping field label → value. Keys should be the visible label text from the page (e.g. {"Company Name": "Oculo", "Email": "hi@oculo.com"}). Use CSS selectors as keys for unlabeled fields (e.g. {"#field-id": "value"}). Values: string for text/select, boolean for checkboxes.' },
           submit: { description: 'Submit the form. true = first submit button, string = button text' },
-          screenshot: { type: 'boolean', description: 'Attach screenshot after filling' }
+          screenshot: { type: 'boolean', description: 'Attach screenshot after filling' },
+          tabId: { type: 'string', description: 'Target a specific tab by ID (for background execution). Omit for active tab.' }
         },
         required: ['fields']
       }
@@ -133,7 +136,8 @@ export class McpServerManager {
           scope: { type: 'string', description: 'CSS selector to narrow extraction scope' },
           fields: { type: 'array', items: { type: 'string' }, description: 'Specific fields to extract' },
           limit: { type: 'number', description: 'Max items to return (default: 10)' },
-          format: { type: 'string', enum: ['text', 'json'], description: 'Output format (default: text)' }
+          format: { type: 'string', enum: ['text', 'json'], description: 'Output format (default: text)' },
+          tabId: { type: 'string', description: 'Target a specific tab by ID (for background execution). Omit for active tab.' }
         },
         required: ['what']
       }
@@ -218,7 +222,8 @@ export class McpServerManager {
           },
           workflow: { type: 'string', description: 'Replay a cached workflow by ID (shown in page output). Overrides steps.' },
           description: { type: 'string', description: 'Short description of what this pipeline does (for caching)' },
-          returnAll: { type: 'boolean', description: 'Return results from all steps (default: false, returns last only)' }
+          returnAll: { type: 'boolean', description: 'Return results from all steps (default: false, returns last only)' },
+          tabId: { type: 'string', description: 'Target a specific tab by ID (for background execution). Omit for active tab.' }
         }
       }
     },
@@ -238,6 +243,19 @@ export class McpServerManager {
           duration: { type: 'number', description: 'Video duration: 4, 6, or 8 seconds' }
         },
         required: ['type', 'prompt']
+      }
+    },
+    {
+      name: 'research',
+      description: 'Deep research on a topic. Searches the web, opens top results, reads content from each, and synthesizes a markdown report with sources. Use for in-depth research tasks.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          topic: { type: 'string', description: 'The research topic or question' },
+          depth: { type: 'number', description: 'Research depth: 1=quick (3 pages), 2=standard (5 pages), 3=deep (8 pages). Default: 2' },
+          maxPages: { type: 'number', description: 'Maximum pages to read (overrides depth). Default: 5' }
+        },
+        required: ['topic']
       }
     },
     {
@@ -451,6 +469,70 @@ export class McpServerManager {
           return { content: [{ type: 'text', text: result }] }
         } catch (err) {
           return { content: [{ type: 'text', text: `Error previewing ${url}: ${(err as Error).message}` }], isError: true }
+        }
+      }
+
+      // Handle research tool — composite (v0.3.0)
+      if (name === 'research') {
+        const topic = String(args.topic || '')
+        if (!topic) return { content: [{ type: 'text', text: 'Error: topic is required.' }], isError: true }
+        const maxPages = Number(args.maxPages) || (args.depth === 3 ? 8 : args.depth === 1 ? 3 : 5)
+
+        try {
+          // Step 1: Navigate to search
+          const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(topic)}`
+          await this.executeToolViaRenderer('act', { action: 'navigate', url: searchUrl })
+          await new Promise(r => setTimeout(r, 2000))
+
+          // Step 2: Read search results
+          const searchResults = await this.executeToolViaRenderer('read', { what: 'search results', limit: maxPages, format: 'json' })
+
+          // Step 3: Extract URLs from results
+          let urls: string[] = []
+          try {
+            const parsed = JSON.parse(searchResults)
+            if (Array.isArray(parsed)) {
+              urls = parsed.slice(0, maxPages).map((r: any) => r.url || r.link || '').filter((u: string) => u.startsWith('http'))
+            }
+          } catch {
+            // Parse the text format for URLs
+            const urlMatches = searchResults.match(/https?:\/\/[^\s"'<>]+/g) || []
+            urls = urlMatches.slice(0, maxPages)
+          }
+
+          if (urls.length === 0) {
+            return { content: [{ type: 'text', text: `No search results found for "${topic}". Search page content:\n${searchResults.substring(0, 500)}` }] }
+          }
+
+          // Step 4: Read content from each URL
+          const sources: { url: string; title: string; content: string }[] = []
+          for (const url of urls.slice(0, maxPages)) {
+            try {
+              await this.executeToolViaRenderer('act', { action: 'navigate', url })
+              await new Promise(r => setTimeout(r, 1500))
+              const content = await this.executeToolViaRenderer('read', { what: 'article content' })
+              const titleResult = await this.executeToolViaRenderer('page', {})
+              const title = titleResult.split('\n')[0] || url
+              sources.push({ url, title: title.substring(0, 100), content: content.substring(0, 1500) })
+            } catch { /* skip failed pages */ }
+          }
+
+          // Step 5: Compile report
+          let report = `# Research: ${topic}\n\n`
+          report += `*${sources.length} sources analyzed*\n\n`
+          for (let i = 0; i < sources.length; i++) {
+            report += `## ${i + 1}. ${sources[i].title}\n`
+            report += `Source: ${sources[i].url}\n\n`
+            report += sources[i].content + '\n\n---\n\n'
+          }
+
+          let result = this.redactor.redact(report)
+          result = this.antiInjection.sanitize(result)
+          result = this.antiInjection.wrapContent(result)
+          this.auditLog.log('research', topic, 'success', `${sources.length} sources`, 'research')
+          return { content: [{ type: 'text', text: result }] }
+        } catch (err) {
+          return { content: [{ type: 'text', text: `Research error: ${(err as Error).message}` }], isError: true }
         }
       }
 

@@ -3,6 +3,7 @@ export const IPC = {
   // Tab management
   TAB_CREATE: 'tab:create',
   TAB_CLOSE: 'tab:close',
+  TAB_CLOSE_BY_URL: 'tab:close-by-url',
   TAB_SWITCH: 'tab:switch',
   TAB_UPDATE: 'tab:update',
   TAB_LIST: 'tab:list',
@@ -71,6 +72,7 @@ export const IPC = {
   DOWNLOADS_LIST: 'downloads:list',
   DOWNLOADS_CANCEL: 'downloads:cancel',
   DOWNLOADS_OPEN: 'downloads:open',
+  DOWNLOADS_SHOW_IN_FOLDER: 'downloads:show-in-folder',
 
   // Zoom
   ZOOM_GET: 'zoom:get',
@@ -117,6 +119,9 @@ export const IPC = {
 
   // Accessibility Tree (CDP)
   A11Y_SNAPSHOT: 'a11y:snapshot',
+
+  // Adaptive Element Resolution (CDP)
+  RESOLVE_NODE: 'resolve:node',
 
   // Print to PDF
   PRINT_TO_PDF: 'print:to-pdf',
@@ -209,6 +214,18 @@ export const IPC = {
   PINNED_APP_REMOVE: 'pinned-app:remove',
   PINNED_APP_UPDATE: 'pinned-app:update',
   PINNED_APP_SAVE: 'pinned-app:save',
+
+  // AI Quick Complete (v0.3.0)
+  AI_QUICK_COMPLETE: 'ai:quick-complete',
+
+  // Download Updates (v0.3.0)
+  DOWNLOAD_UPDATED: 'download:updated',
+
+  // Webpage Change Monitoring (v0.3.0)
+  WATCHER_LIST: 'watcher:list',
+  WATCHER_ADD: 'watcher:add',
+  WATCHER_REMOVE: 'watcher:remove',
+  WATCHER_CHANGED: 'watcher:changed',
 } as const
 
 export type IPCChannel = typeof IPC[keyof typeof IPC]

@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react'
 
-export type SidebarPanel = 'bookmarks' | 'history' | 'downloads' | null
+export type SidebarPanel = 'bookmarks' | 'history' | 'downloads' | 'pipelines' | null
 
 export interface SidebarState {
   expanded: boolean

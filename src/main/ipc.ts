@@ -23,6 +23,7 @@ import { WorkspaceStore } from './data/workspaces'
 import { MacroStore } from './data/macros'
 import { PinnedAppStore } from './data/pinned-apps'
 import { PatternDetector } from './data/pattern-detector'
+import { WatcherStore } from './data/watchers'
 
 export function setupIPC(
   mainWindow: BrowserWindow,
@@ -43,7 +44,8 @@ export function setupIPC(
   workspaceStore?: WorkspaceStore,
   macroStore?: MacroStore,
   pinnedAppStore?: PinnedAppStore,
-  patternDetector?: PatternDetector
+  patternDetector?: PatternDetector,
+  watcherStore?: WatcherStore
 ): void {
   // Tab management - forwarded to renderer
   ipcMain.handle(IPC.TAB_CREATE, async (_, url?: string) => {
@@ -192,18 +194,27 @@ export function setupIPC(
     return agent?.getActiveProvider() || { providerId: 'claude', modelId: 'claude-sonnet-4-6' }
   })
 
+  // === AI Quick Complete (v0.3.0) ===
+  ipcMain.handle(IPC.AI_QUICK_COMPLETE, async (_, prompt: string, maxTokens?: number) => {
+    return agent?.quickComplete(prompt, maxTokens || 100) || ''
+  })
+
   // === Auth (in-app OAuth) ===
   ipcMain.handle(IPC.AUTH_LOGIN, async (_, providerId: string) => {
     if (!agent) return { success: false, error: 'Agent not initialized' }
     if (providerId === 'claude') return agent.startClaudeAuth()
-    if (providerId === 'openai') return agent.startCodexAuth()
+    if (providerId === 'codex') return agent.startCodexAuth()
     return { success: false, error: `Unknown provider: ${providerId}` }
   })
 
   ipcMain.handle(IPC.AUTH_LOGOUT, async (_, providerId: string) => {
     if (!agent) return { success: false, error: 'Agent not initialized' }
-    if (providerId === 'claude' || providerId === 'openai') {
-      agent.signOut(providerId)
+    if (providerId === 'claude') {
+      agent.signOut('claude')
+      return { success: true }
+    }
+    if (providerId === 'codex') {
+      agent.signOut('openai')
       return { success: true }
     }
     return { success: false, error: `Unknown provider: ${providerId}` }
@@ -267,6 +278,11 @@ export function setupIPC(
 
   ipcMain.handle(IPC.DOWNLOADS_OPEN, async (_, savePath: string) => {
     downloadManager?.openFile(savePath)
+    return true
+  })
+
+  ipcMain.handle(IPC.DOWNLOADS_SHOW_IN_FOLDER, async (_, savePath: string) => {
+    downloadManager?.showInFolder(savePath)
     return true
   })
 
@@ -477,14 +493,17 @@ export function setupIPC(
         const lines: string[] = []
         let refIndex = 0
 
-        // Ref map: ref ID → {name, role, backendDOMNodeId} for element resolution
-        const refMap: Record<string, { name: string; role: string; backendDOMNodeId?: number }> = {}
+        // Ref map: ref ID → full ElementFingerprint for 3-tier resolution
+        const refMap: Record<string, import('../shared/types').ElementFingerprint> = {}
 
         // Map nodeId -> node for parent lookup
         const nodeMap = new Map<string, any>()
         for (const node of nodes) {
           nodeMap.set(node.nodeId, node)
         }
+
+        // Track ref → backendDOMNodeId for bulk CDP enrichment
+        const refsToEnrich: { refId: string; backendDOMNodeId: number }[] = []
 
         for (const node of nodes) {
           const role = node.role?.value || ''
@@ -518,11 +537,51 @@ export function setupIPC(
             refIndex++
             const refId = `e${refIndex}`
             line = `  [ref=${refId}] ${role}`
-            // Store in refMap for element resolution
+
+            // Extract a11y properties for fingerprint
+            let checked: boolean | undefined
+            let disabled: boolean | undefined
+            let expanded: boolean | undefined
+            let required: boolean | undefined
+            if (node.properties) {
+              for (const prop of node.properties) {
+                if (prop.name === 'checked' && prop.value?.value) checked = true
+                if (prop.name === 'disabled' && prop.value?.value) disabled = true
+                if (prop.name === 'expanded' && prop.value?.value !== undefined) expanded = prop.value.value
+                if (prop.name === 'required' && prop.value?.value) required = true
+              }
+            }
+
+            // Find parent a11y node for parentRole/parentName (free — already in nodeMap)
+            let parentRole: string | undefined
+            let parentName: string | undefined
+            if (node.parentId) {
+              const parentNode = nodeMap.get(node.parentId)
+              if (parentNode) {
+                const pr = parentNode.role?.value || ''
+                if (pr && !['none', 'generic', 'GenericContainer'].includes(pr)) {
+                  parentRole = pr
+                  parentName = (parentNode.name?.value || '').substring(0, 40) || undefined
+                }
+              }
+            }
+
+            // Store full fingerprint in refMap
             refMap[refId] = {
               name: name.substring(0, 80),
               role,
-              backendDOMNodeId: node.backendDOMNodeId
+              backendDOMNodeId: node.backendDOMNodeId,
+              parentRole,
+              parentName,
+              checked,
+              disabled,
+              expanded,
+              required,
+            }
+
+            // Queue for CDP bulk enrichment
+            if (node.backendDOMNodeId && refsToEnrich.length < 100) {
+              refsToEnrich.push({ refId, backendDOMNodeId: node.backendDOMNodeId })
             }
           } else {
             line = `  ${role}`
@@ -549,6 +608,58 @@ export function setupIPC(
           lines.push(line)
         }
 
+        // Bulk-enrich fingerprints via CDP (tagName, classes, bbox, domDepth, etc.)
+        // Cap at 100 elements, ~50ms overhead. Graceful degradation if CDP fails.
+        if (refsToEnrich.length > 0) {
+          try {
+            await wc.debugger.sendCommand('DOM.getDocument', {})
+            const enrichPromises = refsToEnrich.map(async ({ refId, backendDOMNodeId }) => {
+              try {
+                const { object } = await wc.debugger.sendCommand('DOM.resolveNode', { backendNodeId: backendDOMNodeId })
+                if (!object?.objectId) return
+                const { result: enrichResult } = await wc.debugger.sendCommand('Runtime.callFunctionOn', {
+                  objectId: object.objectId,
+                  functionDeclaration: `function() {
+                    var el = this;
+                    var rect = el.getBoundingClientRect();
+                    var depth = 0; var p = el; while (p.parentElement) { depth++; p = p.parentElement; }
+                    var idx = 0; if (el.parentElement) { var sibs = Array.from(el.parentElement.children); idx = sibs.indexOf(el); }
+                    return {
+                      tagName: el.tagName?.toLowerCase() || '',
+                      inputType: el.type || '',
+                      href: el.href || '',
+                      innerText: (el.innerText || el.textContent || '').trim().substring(0, 80),
+                      ariaLabel: el.getAttribute('aria-label') || '',
+                      placeholder: el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || '',
+                      classes: Array.from(el.classList || []).slice(0, 3),
+                      boundingBox: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+                      siblingIndex: idx,
+                      domDepth: depth
+                    };
+                  }`,
+                  returnByValue: true
+                })
+                if (enrichResult?.value && refMap[refId]) {
+                  const v = enrichResult.value
+                  refMap[refId].tagName = v.tagName || undefined
+                  refMap[refId].inputType = v.inputType || undefined
+                  refMap[refId].href = v.href || undefined
+                  refMap[refId].innerText = v.innerText || undefined
+                  refMap[refId].ariaLabel = v.ariaLabel || undefined
+                  refMap[refId].placeholder = v.placeholder || undefined
+                  refMap[refId].classes = v.classes?.length ? v.classes : undefined
+                  refMap[refId].boundingBox = v.boundingBox || undefined
+                  refMap[refId].siblingIndex = v.siblingIndex
+                  refMap[refId].domDepth = v.domDepth
+                }
+                // Release the object
+                try { await wc.debugger.sendCommand('Runtime.releaseObject', { objectId: object.objectId }) } catch { /* ok */ }
+              } catch { /* single element enrichment failed, skip */ }
+            })
+            await Promise.all(enrichPromises)
+          } catch { /* bulk enrichment failed entirely, fingerprints still have a11y data */ }
+        }
+
         // Add URL and title at the top
         const url = wc.getURL()
         const title = wc.getTitle()
@@ -562,6 +673,57 @@ export function setupIPC(
       }
     } catch (err) {
       return `Error: Failed to get accessibility tree — ${(err as Error).message}`
+    }
+  })
+
+  // === Adaptive Element Resolution: RESOLVE_NODE via CDP ===
+  // Given a backendNodeId, checks if the DOM node is still alive and returns a unique CSS selector
+  ipcMain.handle(IPC.RESOLVE_NODE, async (_, wcId: number, backendNodeId: number) => {
+    try {
+      const wc = webContents.fromId(wcId)
+      if (!wc || wc.isDestroyed()) return { alive: false }
+
+      wc.debugger.attach('1.3')
+      try {
+        await wc.debugger.sendCommand('DOM.getDocument', {})
+        const { object } = await wc.debugger.sendCommand('DOM.resolveNode', { backendNodeId })
+        if (!object?.objectId) return { alive: false }
+
+        // Check isConnected and build a unique selector
+        const { result } = await wc.debugger.sendCommand('Runtime.callFunctionOn', {
+          objectId: object.objectId,
+          functionDeclaration: `function() {
+            var el = this;
+            if (!el.isConnected) return { alive: false };
+            // Build unique CSS selector
+            if (el.id) return { alive: true, selector: '#' + CSS.escape(el.id) };
+            var path = [];
+            var current = el;
+            while (current && current !== document.body && current !== document.documentElement) {
+              var tag = current.tagName.toLowerCase();
+              if (current.id) { path.unshift('#' + CSS.escape(current.id)); break; }
+              var parent = current.parentElement;
+              if (parent) {
+                var siblings = Array.from(parent.children).filter(function(c) { return c.tagName === current.tagName; });
+                if (siblings.length > 1) {
+                  var index = siblings.indexOf(current) + 1;
+                  tag += ':nth-of-type(' + index + ')';
+                }
+              }
+              path.unshift(tag);
+              current = current.parentElement;
+            }
+            return { alive: true, selector: path.join(' > ') };
+          }`,
+          returnByValue: true
+        })
+        try { await wc.debugger.sendCommand('Runtime.releaseObject', { objectId: object.objectId }) } catch { /* ok */ }
+        return result?.value || { alive: false }
+      } finally {
+        try { wc.debugger.detach() } catch { /* already detached */ }
+      }
+    } catch {
+      return { alive: false }
     }
   })
 
@@ -974,6 +1136,19 @@ export function setupIPC(
     } catch (e: any) {
       return { error: e.message }
     }
+  })
+
+  // === Webpage Change Monitoring (v0.3.0) ===
+  ipcMain.handle(IPC.WATCHER_LIST, async () => {
+    return watcherStore?.list() || []
+  })
+
+  ipcMain.handle(IPC.WATCHER_ADD, async (_, url: string, intervalMs?: number) => {
+    return watcherStore?.add(url, intervalMs) || null
+  })
+
+  ipcMain.handle(IPC.WATCHER_REMOVE, async (_, id: string) => {
+    return watcherStore?.remove(id) || false
   })
 
   // === PTY Terminal ===

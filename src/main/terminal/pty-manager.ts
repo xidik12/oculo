@@ -85,13 +85,22 @@ export class PtyManager {
 
     const home = process.env['HOME'] || process.env['USERPROFILE'] || os.homedir()
 
-    this.session = pty.spawn(this.shellPath, [], {
-      name: 'xterm-256color',
-      cols: cols || 80,
-      rows: rows || 24,
-      cwd: home,
-      env: this.shellEnv
-    })
+    try {
+      this.session = pty.spawn(this.shellPath, [], {
+        name: 'xterm-256color',
+        cols: cols || 80,
+        rows: rows || 24,
+        cwd: home,
+        env: this.shellEnv
+      })
+    } catch (err) {
+      console.error('[PtyManager] Failed to spawn PTY:', err)
+      try {
+        this.mainWindow.webContents.send('pty:data',
+          `\r\n\x1b[31m[Error: Failed to spawn terminal: ${err instanceof Error ? err.message : err}]\x1b[0m\r\n`)
+      } catch { /* window may be destroyed */ }
+      return
+    }
 
     console.log(`[PtyManager] PTY spawned successfully, pid: ${this.session.pid}`)
 
@@ -153,13 +162,19 @@ export class PtyManager {
       const shell = process.platform === 'win32' ? 'powershell.exe' : (process.env['SHELL'] || '/bin/bash')
       const args = process.platform === 'win32' ? ['-Command', command] : ['-c', command]
 
-      const proc = pty.spawn(shell, args, {
-        name: 'xterm-256color',
-        cols: 120,
-        rows: 40,
-        cwd,
-        env: { ...this.shellEnv, FORCE_COLOR: '0' }
-      })
+      let proc: import('node-pty').IPty
+      try {
+        proc = pty.spawn(shell, args, {
+          name: 'xterm-256color',
+          cols: 120,
+          rows: 40,
+          cwd,
+          env: { ...this.shellEnv, FORCE_COLOR: '0' }
+        })
+      } catch (err) {
+        resolve({ output: `Error: Failed to spawn process: ${err instanceof Error ? err.message : err}`, exitCode: 1 })
+        return
+      }
 
       const timer = setTimeout(() => {
         if (!done) {

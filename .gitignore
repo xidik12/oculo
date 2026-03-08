@@ -1,10 +1,12 @@
 node_modules/
 out/
+out-private/
 dist/
 dist-private/
+dist-public/
 releases/
 *.tsbuildinfo
-.DS_Store
+**/.DS_Store
 .env
 models/
 

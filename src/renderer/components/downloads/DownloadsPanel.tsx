@@ -46,6 +46,11 @@ export default function DownloadsPanel({ isOpen, onClose }: DownloadsPanelProps)
     api?.downloadsOpen?.(savePath)
   }
 
+  async function handleShowInFolder(savePath: string) {
+    const api = (window as any).oculo
+    api?.downloadsShowInFolder?.(savePath)
+  }
+
   async function handleCancel(id: string) {
     const api = (window as any).oculo
     api?.downloadsCancel?.(id)
@@ -97,15 +102,20 @@ export default function DownloadsPanel({ isOpen, onClose }: DownloadsPanelProps)
                       <p className="text-[10px] text-red-400 mt-0.5">Failed</p>
                     )}
                   </div>
-                  <div className="flex-shrink-0">
+                  <div className="flex-shrink-0 flex gap-0.5">
                     {dl.state === 'progressing' ? (
                       <button onClick={() => handleCancel(dl.id)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-3 dark:hover:bg-surface-dark-3 text-gray-400" title="Cancel">
                         <svg width="10" height="10" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M1 1l6 6M7 1L1 7" /></svg>
                       </button>
                     ) : dl.state === 'completed' ? (
-                      <button onClick={() => handleOpen(dl.savePath)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-3 dark:hover:bg-surface-dark-3 text-accent" title="Open file">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" /></svg>
-                      </button>
+                      <>
+                        <button onClick={() => handleShowInFolder(dl.savePath)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-3 dark:hover:bg-surface-dark-3 text-gray-400" title="Show in Finder">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z" /></svg>
+                        </button>
+                        <button onClick={() => handleOpen(dl.savePath)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-surface-3 dark:hover:bg-surface-dark-3 text-accent" title="Open file">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" /></svg>
+                        </button>
+                      </>
                     ) : null}
                   </div>
                 </div>

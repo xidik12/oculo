@@ -1,0 +1,1362 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oculo — AI Browser for MCP | Claude Code, Cursor & Windsurf</title>
+  <meta name="description" content="Oculo is the open-source AI browser built for MCP clients. 7 tools, ~30 tokens per page. Works with Claude Code, Cursor & Windsurf. Free download for macOS & Windows.">
+  <meta name="keywords" content="AI browser, MCP browser, Claude Code browser, AI agent browser, browser automation AI, Cursor, Windsurf, open source AI browser, web automation, free AI browser, MCP tools, AI web automation">
+  <meta name="author" content="Salakhitdinov Khidayotullo">
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://getoculo.com">
+  <meta property="og:title" content="Oculo — AI Browser for MCP | Claude Code, Cursor & Windsurf">
+  <meta property="og:description" content="Open-source AI browser with 7 MCP tools. ~30 tokens per page. Give AI eyes to see and hands to interact with any website. Free download.">
+  <meta property="og:image" content="https://getoculo.com/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Oculo — The AI Browser for MCP Clients">
+  <meta property="og:site_name" content="Oculo">
+  <meta property="og:locale" content="en_US">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Oculo — AI Browser for MCP | Claude Code, Cursor & Windsurf">
+  <meta name="twitter:description" content="Open-source AI browser with 7 MCP tools. ~30 tokens per page. Give AI eyes to see and hands to interact with any website. Free download.">
+  <meta name="twitter:image" content="https://getoculo.com/og-image.png">
+  <meta name="twitter:site" content="@getoculo">
+  <meta name="twitter:creator" content="@getoculo">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+  <!-- Canonical -->
+  <link rel="canonical" href="https://getoculo.com">
+
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+            mono: ['SF Mono', 'Fira Code', 'Consolas', 'monospace'],
+          },
+          colors: {
+            primary: '#3b82f6',
+            heading: '#e4e4e7',
+            purple: '#8b5cf6',
+            cyan: '#06b6d4',
+            body: '#a1a1aa',
+            border: '#1e1e24',
+            section: '#111113',
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.6s ease-out forwards',
+            'fade-up': 'fadeUp 0.6s ease-out forwards',
+            'fade-up-d1': 'fadeUp 0.6s ease-out 0.1s forwards',
+            'fade-up-d2': 'fadeUp 0.6s ease-out 0.2s forwards',
+            'fade-up-d3': 'fadeUp 0.6s ease-out 0.3s forwards',
+          },
+          keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0' },
+              '100%': { opacity: '1' },
+            },
+            fadeUp: {
+              '0%': { opacity: '0', transform: 'translateY(20px)' },
+              '100%': { opacity: '1', transform: 'translateY(0)' },
+            },
+          },
+        },
+      },
+    }
+  </script>
+
+  <style>
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #09090b; }
+    ::-webkit-scrollbar-thumb { background: #2a2a32; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+    /* Scroll reveal */
+    .reveal {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    }
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Gradient text */
+    .gradient-text {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6, #06b6d4);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    /* Hero soft glow orbs */
+    .hero-orb {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(100px);
+      pointer-events: none;
+    }
+
+    /* Grid pattern */
+    .grid-pattern {
+      background-image:
+        linear-gradient(rgba(59,130,246,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59,130,246,0.04) 1px, transparent 1px);
+      background-size: 60px 60px;
+    }
+
+    /* Nav backdrop */
+    .nav-blur {
+      backdrop-filter: blur(12px) saturate(180%);
+      -webkit-backdrop-filter: blur(12px) saturate(180%);
+    }
+
+    /* Code blocks */
+    .code-block {
+      background: #0f172a;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .code-block pre { overflow-x: auto; }
+
+    /* Syntax colors */
+    .tok-comment { color: #64748b; }
+    .tok-keyword { color: #c084fc; }
+    .tok-string { color: #34d399; }
+    .tok-function { color: #60a5fa; }
+    .tok-variable { color: #f472b6; }
+    .tok-flag { color: #fbbf24; }
+    .tok-dim { color: #475569; }
+
+    /* Step connector */
+    .step-line {
+      position: absolute;
+      top: 40px;
+      height: 2px;
+      background: linear-gradient(90deg, #3b82f6, #8b5cf6, #06b6d4);
+      opacity: 0.2;
+    }
+
+    /* Mobile menu */
+    .mobile-menu {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 0.3s ease-out;
+    }
+    .mobile-menu.open {
+      max-height: 300px;
+    }
+  </style>
+
+  <!-- Structured Data: WebSite -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Oculo",
+    "url": "https://getoculo.com",
+    "description": "The open-source AI browser built for MCP clients. Works with Claude Code, Cursor, and Windsurf.",
+    "publisher": {
+      "@type": "Person",
+      "name": "Salakhitdinov Khidayotullo",
+      "url": "https://github.com/xidik12"
+    }
+  }
+  </script>
+
+  <!-- Structured Data: SoftwareApplication -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "Oculo",
+    "operatingSystem": "macOS, Windows",
+    "applicationCategory": "BrowserApplication",
+    "applicationSubCategory": "AI Browser",
+    "softwareVersion": "0.3.0",
+    "url": "https://getoculo.com",
+    "downloadUrl": "https://github.com/xidik12/oculo/releases/tag/v0.3.0",
+    "screenshot": "https://getoculo.com/og-image.png",
+    "description": "Oculo is an open-source AI browser with 7 MCP tools that gives AI agents eyes to see and hands to interact with any website. ~30 tokens per page description.",
+    "license": "https://opensource.org/licenses/MIT",
+    "isAccessibleForFree": true,
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "author": {
+      "@type": "Person",
+      "name": "Salakhitdinov Khidayotullo",
+      "url": "https://github.com/xidik12"
+    },
+    "featureList": [
+      "7 MCP tools for AI browser automation",
+      "~30 tokens per page description",
+      "Built-in AI chat panel with multi-provider support",
+      "Smart passkey and credential vault",
+      "AI image and video generation",
+      "Privacy-first with PII redaction",
+      "Voice control with Web Speech API",
+      "Hover link preview with AI summaries",
+      "Auto-rename downloads with AI",
+      "Smart tab title cleanup",
+      "Transparent AI action overlay",
+      "Background tab task execution",
+      "Webpage change monitoring",
+      "AI auto tab grouping",
+      "Deep research mode"
+    ]
+  }
+  </script>
+
+  <!-- Structured Data: FAQPage -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "What is Oculo?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Oculo is a free, open-source AI browser built for MCP (Model Context Protocol) clients. It gives AI agents like Claude Code, Cursor, and Windsurf the ability to see and interact with any website using just 7 tools and ~30 tokens per page."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How does Oculo work with Claude Code?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Run 'claude mcp add oculo -- node ~/path/to/oculo-mcp.mjs' to connect. Oculo runs as both a browser and an MCP server. Claude Code can then browse, click, fill forms, and extract data from any website through Oculo's 7 MCP tools."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Is Oculo free and open source?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Yes. Oculo is completely free and released under the MIT license. The source code is available on GitHub. There are no paid tiers, subscriptions, or usage limits."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "What platforms does Oculo support?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Oculo is available for macOS (Apple Silicon) and Windows (x64). Linux support is coming soon. Download the latest version from getoculo.com."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How is Oculo different from other browser automation tools?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "Oculo uses only ~30 tokens per page description compared to ~25,000 tokens for full DOM snapshots used by other tools. It's a real browser you can use daily, not just an automation framework. Think of it as: Cursor is to VS Code what Oculo is to Chrome."
+        }
+      }
+    ]
+  }
+  </script>
+</head>
+
+<body class="bg-[#09090b] text-heading antialiased font-sans">
+
+  <!-- ======================== NAVIGATION ======================== -->
+  <header>
+  <nav class="fixed top-0 left-0 right-0 z-50 nav-blur bg-[#09090b]/80 border-b border-[#1e1e24]">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <!-- Logo -->
+      <a href="#" class="flex items-center gap-2.5 group">
+        <img src="logo-nav.png" alt="Oculo AI browser logo" width="32" height="32" class="w-8 h-8 rounded-lg">
+        <span class="text-lg font-bold tracking-tight text-heading">Oculo</span>
+      </a>
+
+      <!-- Nav links (desktop) -->
+      <div class="hidden md:flex items-center gap-8">
+        <a href="#features" class="text-sm text-body hover:text-heading transition-colors">Features</a>
+        <a href="#how-it-works" class="text-sm text-body hover:text-heading transition-colors">How It Works</a>
+        <a href="#mcp-tools" class="text-sm text-body hover:text-heading transition-colors">MCP Tools</a>
+        <a href="#community" class="text-sm text-body hover:text-heading transition-colors">Open Source</a>
+        <a href="#download" class="text-sm text-body hover:text-heading transition-colors">Download</a>
+      </div>
+
+      <!-- Right: GitHub + CTA + Mobile toggle -->
+      <div class="flex items-center gap-3">
+        <a href="https://github.com/xidik12/oculo" target="_blank" rel="noopener" class="hidden sm:flex items-center gap-1.5 text-sm text-body hover:text-heading transition-colors">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+          GitHub
+        </a>
+        <a href="#download" class="bg-primary hover:bg-blue-600 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors shadow-sm">
+          Download
+        </a>
+        <!-- Mobile hamburger -->
+        <button onclick="toggleMobileMenu()" class="md:hidden p-2 text-body hover:text-heading" aria-label="Toggle menu">
+          <svg id="menu-open" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          <svg id="menu-close" class="hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+    </div>
+    <!-- Mobile menu -->
+    <div id="mobile-menu" class="mobile-menu md:hidden border-t border-[#1e1e24] bg-[#09090b]">
+      <div class="max-w-6xl mx-auto px-6 py-4 flex flex-col gap-3">
+        <a href="#features" onclick="closeMobileMenu()" class="text-sm text-body hover:text-heading py-1">Features</a>
+        <a href="#how-it-works" onclick="closeMobileMenu()" class="text-sm text-body hover:text-heading py-1">How It Works</a>
+        <a href="#mcp-tools" onclick="closeMobileMenu()" class="text-sm text-body hover:text-heading py-1">MCP Tools</a>
+        <a href="#community" onclick="closeMobileMenu()" class="text-sm text-body hover:text-heading py-1">Open Source</a>
+        <a href="#download" onclick="closeMobileMenu()" class="text-sm text-body hover:text-heading py-1">Download</a>
+        <a href="https://github.com/xidik12/oculo" target="_blank" rel="noopener" class="text-sm text-body hover:text-heading py-1">GitHub</a>
+      </div>
+    </div>
+  </nav>
+  </header>
+
+  <main>
+  <!-- ======================== HERO ======================== -->
+  <section class="relative min-h-screen flex items-center justify-center overflow-hidden pt-16">
+    <!-- Soft glow orbs -->
+    <div class="hero-orb bg-blue-500/10 w-[500px] h-[500px] -top-32 -right-32" style="position:absolute;"></div>
+    <div class="hero-orb bg-purple-500/8 w-[400px] h-[400px] -bottom-24 -left-24" style="position:absolute;"></div>
+    <div class="hero-orb bg-cyan-500/[0.06] w-[600px] h-[300px] top-1/3 left-1/2 -translate-x-1/2" style="position:absolute;"></div>
+
+    <!-- Grid pattern -->
+    <div class="absolute inset-0 grid-pattern"></div>
+
+    <div class="relative z-10 max-w-4xl mx-auto px-6 text-center">
+      <!-- Hero icon -->
+      <div class="animate-fade-in mb-6">
+        <img src="logo.png" alt="Oculo — open-source AI browser for MCP clients" width="96" height="96" fetchpriority="high" class="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl shadow-lg shadow-blue-500/10 mx-auto">
+      </div>
+
+      <!-- Badge pill -->
+      <div class="animate-fade-in inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[#1e1e24] bg-[#111113] shadow-sm mb-8">
+        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+        <span class="text-sm text-body">Open Source &middot; Free &middot; MIT License &middot; v0.3.0</span>
+      </div>
+
+      <!-- H1 -->
+      <h1 class="animate-fade-up opacity-0 text-5xl sm:text-6xl md:text-7xl font-extrabold tracking-tight leading-[1.08] mb-6">
+        The AI Browser That<br>
+        <span class="gradient-text">Sees the Web</span>
+      </h1>
+
+      <!-- Subtitle -->
+      <p class="animate-fade-up-d1 opacity-0 text-lg sm:text-xl text-body max-w-2xl mx-auto mb-4 leading-relaxed">
+        7 MCP tools. ~30 tokens per page description. Give AI eyes to see<br class="hidden sm:inline">
+        and hands to interact with any website.
+      </p>
+
+      <!-- Mono analogy -->
+      <p class="animate-fade-up-d2 opacity-0 font-mono text-sm text-[#71717a] mb-10">
+        <span class="text-primary">Cursor</span><span class="text-[#3f3f46]">:</span><span class="text-body">VSCode</span>
+        <span class="text-[#3f3f46] mx-2">::</span>
+        <span class="text-purple">Oculo</span><span class="text-[#3f3f46]">:</span><span class="text-body">Chrome</span>
+      </p>
+
+      <!-- CTAs -->
+      <div class="animate-fade-up-d3 opacity-0 flex flex-col sm:flex-row items-center justify-center gap-4">
+        <a href="https://github.com/xidik12/oculo/releases" target="_blank" rel="noopener"
+           class="inline-flex items-center gap-3 bg-primary hover:bg-blue-600 text-white font-semibold px-8 py-3.5 rounded-xl transition-all shadow-lg shadow-blue-500/20 hover:shadow-blue-500/30">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+          Download for macOS &amp; Windows
+        </a>
+        <a href="https://github.com/xidik12/oculo" target="_blank" rel="noopener"
+           class="inline-flex items-center gap-2.5 border border-[#1e1e24] hover:border-[#2a2a32] bg-[#111113] hover:bg-[#18181b] text-[#e4e4e7] font-medium px-7 py-3.5 rounded-xl transition-all shadow-sm">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+          Star on GitHub
+        </a>
+      </div>
+
+      <!-- Tech badges row -->
+      <div class="mt-14 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-xs text-[#71717a]">
+        <span class="flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          Electron 34
+        </span>
+        <span class="flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+          TypeScript
+        </span>
+        <span class="flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+          React 19
+        </span>
+        <span class="flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+          MCP SDK
+        </span>
+        <span class="flex items-center gap-1.5">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+          Privacy-First
+        </span>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== TRUST / TECH BAR ======================== -->
+  <section class="py-12 border-y border-[#1e1e24] bg-[#111113]">
+    <div class="max-w-5xl mx-auto px-6">
+      <p class="text-center text-xs font-medium tracking-widest uppercase text-[#71717a] mb-6">Built with</p>
+      <div class="flex flex-wrap items-center justify-center gap-x-10 gap-y-4 text-sm font-medium text-[#71717a]">
+        <span class="flex items-center gap-2 grayscale opacity-60 hover:opacity-100 hover:grayscale-0 transition-all">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10"/></svg>
+          Electron
+        </span>
+        <span class="flex items-center gap-2 grayscale opacity-60 hover:opacity-100 hover:grayscale-0 transition-all">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="2" width="20" height="20" rx="4"/></svg>
+          TypeScript
+        </span>
+        <span class="flex items-center gap-2 grayscale opacity-60 hover:opacity-100 hover:grayscale-0 transition-all">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+          React
+        </span>
+        <span class="flex items-center gap-2 grayscale opacity-60 hover:opacity-100 hover:grayscale-0 transition-all">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5L12 2z"/></svg>
+          Tailwind CSS
+        </span>
+        <span class="flex items-center gap-2 grayscale opacity-60 hover:opacity-100 hover:grayscale-0 transition-all">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/></svg>
+          MCP Protocol
+        </span>
+        <span class="flex items-center gap-2 grayscale opacity-60 hover:opacity-100 hover:grayscale-0 transition-all">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/></svg>
+          Whisper STT
+        </span>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== FEATURES ======================== -->
+  <section id="features" class="py-24 sm:py-32">
+    <div class="max-w-6xl mx-auto px-6">
+      <!-- Section header -->
+      <div class="text-center mb-16 reveal">
+        <p class="text-primary text-sm font-semibold tracking-widest uppercase mb-3">Features</p>
+        <h2 class="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-heading mb-4">
+          Everything AI needs<br class="hidden sm:inline"> to browse the web
+        </h2>
+        <p class="text-body text-lg max-w-2xl mx-auto">
+          Built from the ground up for AI agents. Seven MCP tools, zero token waste, full security.
+        </p>
+      </div>
+
+      <!-- 2×3 card grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        <!-- Card 1: AI Chat Panel -->
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-blue-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">AI Chat Panel</h3>
+          <p class="text-body text-sm leading-relaxed">
+            Built-in AI sidebar with multi-provider support. Claude, OpenAI, Gemini, Grok, and OpenClaw. Chat about any page without leaving the browser.
+          </p>
+        </div>
+
+        <!-- Card 2: 7 MCP Tools -->
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-purple-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">7 MCP Tools</h3>
+          <p class="text-body text-sm leading-relaxed">
+            <code class="text-purple text-xs bg-purple-500/10 px-1.5 py-0.5 rounded">page</code>
+            <code class="text-purple text-xs bg-purple-500/10 px-1.5 py-0.5 rounded">act</code>
+            <code class="text-purple text-xs bg-purple-500/10 px-1.5 py-0.5 rounded">fill</code>
+            <code class="text-purple text-xs bg-purple-500/10 px-1.5 py-0.5 rounded">read</code>
+            <code class="text-purple text-xs bg-purple-500/10 px-1.5 py-0.5 rounded">run</code>
+            <code class="text-purple text-xs bg-purple-500/10 px-1.5 py-0.5 rounded">media</code>
+            <code class="text-purple text-xs bg-purple-500/10 px-1.5 py-0.5 rounded">shell</code>
+            — page descriptions in ~30 tokens. 99% fewer than DOM snapshots.
+          </p>
+        </div>
+
+        <!-- Card 3: Smart Auth -->
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Smart Passkey & Auth</h3>
+          <p class="text-body text-sm leading-relaxed">
+            Credential vault backed by macOS Keychain with AES-256 encryption. AI says "login" — Oculo fills credentials securely. Passwords never touch the AI.
+          </p>
+        </div>
+
+        <!-- Card 4: Media Generation -->
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-amber-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Media Generation</h3>
+          <p class="text-body text-sm leading-relaxed">
+            Generate images with Nano Banana and videos with Veo 3.1 directly from the browser. AI-powered creative tools in your workflow.
+          </p>
+        </div>
+
+        <!-- Card 5: Privacy & Security -->
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-rose-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Privacy & Security</h3>
+          <p class="text-body text-sm leading-relaxed">
+            Four-tier permission gates. PII redaction on every MCP response. Anti-prompt-injection. Encrypted audit log. Touch ID for sensitive actions.
+          </p>
+        </div>
+
+        <!-- Card 6: Voice Control -->
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-cyan-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+              <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Voice Control</h3>
+          <p class="text-body text-sm leading-relaxed">
+            On-device Whisper speech-to-text. Talk to the AI or dictate form inputs. Also powers autonomous audio CAPTCHA solving — zero cloud calls.
+          </p>
+        </div>
+
+      </div>
+
+      <!-- v0.3.0 New Features -->
+      <div class="mt-16 text-center mb-10 reveal">
+        <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 mb-4">
+          <span class="text-xs font-semibold text-emerald-400 tracking-wider uppercase">New in v0.3.0</span>
+        </div>
+        <h3 class="text-2xl sm:text-3xl font-bold tracking-tight text-heading">9 new features</h3>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+        <!-- New: Hover Link Preview -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+              <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Hover Link Preview</h3>
+          <p class="text-body text-sm leading-relaxed">
+            Shift+hover over any link for an AI-generated one-line summary of the destination. Cached for instant re-display.
+          </p>
+        </div>
+
+        <!-- New: Auto-Rename Downloads -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-blue-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Auto-Rename Downloads</h3>
+          <p class="text-body text-sm leading-relaxed">
+            AI suggests cleaner filenames after each download completes. Automatically renames files like <code class="text-xs bg-[#1e1e24] px-1 rounded">doc_v3_final(2).pdf</code> to something sensible.
+          </p>
+        </div>
+
+        <!-- New: Smart Tab Titles -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-purple-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="8" y1="6" x2="21" y2="6"/>
+              <line x1="8" y1="12" x2="21" y2="12"/>
+              <line x1="8" y1="18" x2="21" y2="18"/>
+              <line x1="3" y1="6" x2="3.01" y2="6"/>
+              <line x1="3" y1="12" x2="3.01" y2="12"/>
+              <line x1="3" y1="18" x2="3.01" y2="18"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Smart Tab Titles</h3>
+          <p class="text-body text-sm leading-relaxed">
+            Auto-tidies messy tab titles by stripping " - YouTube", " | Site Name", and other clutter. Original title shown on hover.
+          </p>
+        </div>
+
+        <!-- New: AI Action Overlay -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-rose-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/>
+              <path d="M12 8v8"/>
+              <path d="M8 12h8"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">AI Action Overlay</h3>
+          <p class="text-body text-sm leading-relaxed">
+            See when AI is acting on a page with a subtle blue border glow and a floating "AI Acting — Stop" button for instant control.
+          </p>
+        </div>
+
+        <!-- New: Background Tasks -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-amber-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Background Tasks</h3>
+          <p class="text-body text-sm leading-relaxed">
+            AI can work in non-active tabs. Pass a <code class="text-xs bg-[#1e1e24] px-1 rounded">tabId</code> to any MCP tool to target a specific tab in the background.
+          </p>
+        </div>
+
+        <!-- New: Change Monitoring -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-cyan-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#06b6d4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <polyline points="12 6 12 12 16 14"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Change Monitoring</h3>
+          <p class="text-body text-sm leading-relaxed">
+            Watch any URL for content changes. Oculo polls periodically, hashes page content, and alerts you when something changes.
+          </p>
+        </div>
+
+        <!-- New: AI Tab Grouping -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-indigo-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="7" height="7"/>
+              <rect x="14" y="3" width="7" height="7"/>
+              <rect x="3" y="14" width="7" height="7"/>
+              <rect x="14" y="14" width="7" height="7"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">AI Tab Grouping</h3>
+          <p class="text-body text-sm leading-relaxed">
+            One click to auto-group all open tabs. AI clusters by domain and semantic similarity, assigns names and colors.
+          </p>
+        </div>
+
+        <!-- New: Deep Research -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-violet-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8b5cf6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              <line x1="11" y1="8" x2="11" y2="14"/>
+              <line x1="8" y1="11" x2="14" y2="11"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Deep Research</h3>
+          <p class="text-body text-sm leading-relaxed">
+            New MCP tool: search, open multiple pages, read content, and synthesize a markdown report with sources — all in one call.
+          </p>
+        </div>
+
+        <!-- New: Voice Input -->
+        <div class="bg-[#111113] border border-emerald-500/20 rounded-2xl p-7 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5 transition-all duration-300 hover:-translate-y-1 reveal">
+          <div class="w-11 h-11 rounded-xl bg-pink-500/10 flex items-center justify-center mb-5">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ec4899" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+              <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+              <line x1="8" y1="23" x2="16" y2="23"/>
+            </svg>
+          </div>
+          <h3 class="text-lg font-semibold text-heading mb-2">Voice Input</h3>
+          <p class="text-body text-sm leading-relaxed">
+            Push-to-talk in the AI chat panel using Web Speech API. Click the mic, speak, and your voice is transcribed into the chat input.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== COMMUNITY ======================== -->
+  <section id="community" class="py-16 border-y border-[#1e1e24]">
+    <div class="max-w-5xl mx-auto px-6">
+      <div class="text-center mb-10 reveal">
+        <p class="text-emerald-400 text-sm font-semibold tracking-widest uppercase mb-3">Open Source</p>
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-heading mb-4">
+          Built in the open
+        </h2>
+        <p class="text-body text-lg max-w-xl mx-auto">
+          Oculo is fully open-source under the MIT license. Inspect, modify, and redistribute freely.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 reveal">
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 text-center hover:border-[#2a2a32] transition-all">
+          <div class="text-3xl font-bold text-heading mb-2">MIT</div>
+          <div class="text-sm text-body">License</div>
+          <p class="text-xs text-[#71717a] mt-2">No restrictions. Use it anywhere.</p>
+        </div>
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 text-center hover:border-[#2a2a32] transition-all">
+          <div class="text-3xl font-bold text-heading mb-2">100%</div>
+          <div class="text-sm text-body">Open Source</div>
+          <p class="text-xs text-[#71717a] mt-2">Every line of code on GitHub.</p>
+        </div>
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-2xl p-7 text-center hover:border-[#2a2a32] transition-all">
+          <div class="text-3xl font-bold text-heading mb-2">$0</div>
+          <div class="text-sm text-body">Forever Free</div>
+          <p class="text-xs text-[#71717a] mt-2">No paid tiers. No subscriptions.</p>
+        </div>
+      </div>
+
+      <div class="text-center mt-8 reveal">
+        <a href="https://github.com/xidik12/oculo" target="_blank" rel="noopener"
+           class="inline-flex items-center gap-2.5 bg-[#111113] hover:bg-[#18181b] border border-[#1e1e24] hover:border-[#2a2a32] text-heading font-medium px-6 py-3 rounded-xl transition-all">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.374 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0112 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+          Star on GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== HOW IT WORKS ======================== -->
+  <section id="how-it-works" class="py-24 sm:py-32 bg-[#111113]">
+    <div class="max-w-5xl mx-auto px-6">
+      <!-- Section header -->
+      <div class="text-center mb-20 reveal">
+        <p class="text-purple text-sm font-semibold tracking-widest uppercase mb-3">How It Works</p>
+        <h2 class="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-heading mb-4">
+          Three steps to AI browsing
+        </h2>
+        <p class="text-body text-lg max-w-xl mx-auto">
+          From install to AI-powered web interaction in under a minute.
+        </p>
+      </div>
+
+      <!-- Steps -->
+      <div class="relative">
+        <!-- Connector line (desktop) -->
+        <div class="hidden lg:block step-line" style="left: calc(16.67% + 30px); right: calc(16.67% + 30px);"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-10 lg:gap-8">
+
+          <!-- Step 1 -->
+          <div class="relative text-center reveal">
+            <div class="relative z-10 w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-blue-600 flex items-center justify-center mx-auto mb-6 shadow-lg shadow-blue-500/20">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                <polyline points="7 10 12 15 17 10"/>
+                <line x1="12" y1="15" x2="12" y2="3"/>
+              </svg>
+            </div>
+            <div class="font-mono text-xs text-primary/60 mb-2">01</div>
+            <h3 class="text-xl font-semibold text-heading mb-3">Install Oculo</h3>
+            <p class="text-body text-sm leading-relaxed mb-4">
+              Download the macOS app or clone from GitHub. Launch it and Oculo starts as both a browser and an MCP server.
+            </p>
+            <code class="text-xs font-mono text-body bg-[#09090b] px-3 py-1.5 rounded-lg border border-[#1e1e24] shadow-sm">
+              git clone https://github.com/xidik12/oculo.git
+            </code>
+          </div>
+
+          <!-- Step 2 -->
+          <div class="relative text-center reveal">
+            <div class="relative z-10 w-16 h-16 rounded-2xl bg-gradient-to-br from-purple to-purple-600 flex items-center justify-center mx-auto mb-6 shadow-lg shadow-purple-500/20">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="16 18 22 12 16 6"/>
+                <polyline points="8 6 2 12 8 18"/>
+                <line x1="14" y1="4" x2="10" y2="20"/>
+              </svg>
+            </div>
+            <div class="font-mono text-xs text-purple/60 mb-2">02</div>
+            <h3 class="text-xl font-semibold text-heading mb-3">Connect Any MCP Client</h3>
+            <p class="text-body text-sm leading-relaxed mb-4">
+              Register Oculo as an MCP server in Claude Code, Cursor, Windsurf, or any MCP client. One command.
+            </p>
+            <code class="text-xs font-mono text-body bg-[#09090b] px-3 py-1.5 rounded-lg border border-[#1e1e24] shadow-sm">
+              claude mcp add oculo ...
+            </code>
+          </div>
+
+          <!-- Step 3 -->
+          <div class="relative text-center reveal">
+            <div class="relative z-10 w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan to-teal-500 flex items-center justify-center mx-auto mb-6 shadow-lg shadow-cyan-500/20">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                <path d="M2 17l10 5 10-5"/>
+                <path d="M2 12l10 5 10-5"/>
+              </svg>
+            </div>
+            <div class="font-mono text-xs text-cyan/60 mb-2">03</div>
+            <h3 class="text-xl font-semibold text-heading mb-3">AI Browses For You</h3>
+            <p class="text-body text-sm leading-relaxed mb-4">
+              Ask Claude to navigate, fill forms, extract data, or run multi-step workflows. ~30 tokens per page.
+            </p>
+            <code class="text-xs font-mono text-body bg-[#09090b] px-3 py-1.5 rounded-lg border border-[#1e1e24] shadow-sm">
+              "Search for flights to Tokyo"
+            </code>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== MCP TOOLS ======================== -->
+  <section id="mcp-tools" class="py-24 sm:py-32">
+    <div class="max-w-5xl mx-auto px-6">
+      <!-- Section header -->
+      <div class="text-center mb-16 reveal">
+        <p class="text-cyan text-sm font-semibold tracking-widest uppercase mb-3">MCP Integration</p>
+        <h2 class="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-heading mb-4">
+          Connect in one command
+        </h2>
+        <p class="text-body text-lg max-w-xl mx-auto">
+          Register Oculo as an MCP server and unlock 7 powerful tools for any AI client.
+        </p>
+      </div>
+
+      <!-- Registration code block -->
+      <div class="code-block mb-8 reveal">
+        <div class="flex items-center gap-2 px-5 py-3 border-b border-slate-700/50">
+          <div class="flex gap-1.5">
+            <div class="w-3 h-3 rounded-full bg-red-500/70"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/70"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/70"></div>
+          </div>
+          <span class="text-xs text-slate-500 ml-2 font-mono">Terminal</span>
+        </div>
+        <pre class="p-5 sm:p-6 text-sm font-mono leading-relaxed text-slate-300"><code><span class="tok-dim"># Register Oculo as an MCP server (works with any MCP client)</span>
+<span class="tok-variable">$</span> <span class="tok-function">claude</span> <span class="tok-keyword">mcp add</span> oculo <span class="tok-flag">--</span> <span class="tok-function">node</span> <span class="tok-string">/path/to/oculo/bin/oculo-mcp.mjs</span></code></pre>
+      </div>
+
+      <!-- 2×3 tool grid (now 7 tools, 3+3+1) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8 reveal">
+
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-xl p-5 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all">
+          <div class="flex items-center gap-3 mb-3">
+            <code class="text-primary font-mono font-semibold text-sm">page</code>
+            <span class="text-[11px] text-[#71717a] bg-[#09090b] px-2 py-0.5 rounded-md font-mono">~30 tok</span>
+          </div>
+          <p class="text-body text-xs leading-relaxed">Describe current page — headings, forms, buttons, links. Compact summaries, not DOM dumps.</p>
+        </div>
+
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-xl p-5 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all">
+          <div class="flex items-center gap-3 mb-3">
+            <code class="text-purple font-mono font-semibold text-sm">act</code>
+            <span class="text-[11px] text-[#71717a] bg-[#09090b] px-2 py-0.5 rounded-md font-mono">~10 tok</span>
+          </div>
+          <p class="text-body text-xs leading-relaxed">Navigate, click, scroll, press keys, login with vault credentials. Intent-based, not selector-based.</p>
+        </div>
+
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-xl p-5 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all">
+          <div class="flex items-center gap-3 mb-3">
+            <code class="text-emerald-500 font-mono font-semibold text-sm">fill</code>
+            <span class="text-[11px] text-[#71717a] bg-[#09090b] px-2 py-0.5 rounded-md font-mono">~15 tok</span>
+          </div>
+          <p class="text-body text-xs leading-relaxed">Fill forms by label — name, email, country. Smart field matching with auto-submit option.</p>
+        </div>
+
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-xl p-5 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all">
+          <div class="flex items-center gap-3 mb-3">
+            <code class="text-amber-500 font-mono font-semibold text-sm">read</code>
+            <span class="text-[11px] text-[#71717a] bg-[#09090b] px-2 py-0.5 rounded-md font-mono">~100 tok</span>
+          </div>
+          <p class="text-body text-xs leading-relaxed">Extract structured data — search results, tables, lists, product details. Text or JSON output.</p>
+        </div>
+
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-xl p-5 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all">
+          <div class="flex items-center gap-3 mb-3">
+            <code class="text-rose-500 font-mono font-semibold text-sm">run</code>
+            <span class="text-[11px] text-[#71717a] bg-[#09090b] px-2 py-0.5 rounded-md font-mono">~200 tok</span>
+          </div>
+          <p class="text-body text-xs leading-relaxed">Multi-step pipelines — chain navigate, fill, click, wait, and read in a single tool call.</p>
+        </div>
+
+        <div class="bg-[#111113] border border-[#1e1e24] rounded-xl p-5 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all">
+          <div class="flex items-center gap-3 mb-3">
+            <code class="text-cyan font-mono font-semibold text-sm">media</code>
+            <span class="text-[11px] text-[#71717a] bg-[#09090b] px-2 py-0.5 rounded-md font-mono">varies</span>
+          </div>
+          <p class="text-body text-xs leading-relaxed">Generate images and videos via Nano Banana and Veo 3.1. Creative AI tools at your fingertips.</p>
+        </div>
+
+      </div>
+
+      <!-- Shell tool (7th, full-width) -->
+      <div class="bg-[#111113] border border-[#1e1e24] rounded-xl p-5 hover:border-[#2a2a32] hover:shadow-lg hover:shadow-blue-500/5 transition-all mb-8 reveal">
+        <div class="flex items-center gap-3 mb-3">
+          <code class="text-[#a1a1aa] font-mono font-semibold text-sm">shell</code>
+          <span class="text-[11px] text-[#71717a] bg-[#09090b] px-2 py-0.5 rounded-md font-mono">~50 tok</span>
+        </div>
+        <p class="text-body text-xs leading-relaxed">Execute shell commands (ls, npm, git, node, python) directly from Claude Code. Non-interactive, capped output, timeout-protected — perfect for AI-driven automation workflows.</p>
+      </div>
+
+      <!-- Example usage code block -->
+      <div class="code-block reveal">
+        <div class="flex items-center gap-2 px-5 py-3 border-b border-slate-700/50">
+          <div class="flex gap-1.5">
+            <div class="w-3 h-3 rounded-full bg-red-500/70"></div>
+            <div class="w-3 h-3 rounded-full bg-yellow-500/70"></div>
+            <div class="w-3 h-3 rounded-full bg-green-500/70"></div>
+          </div>
+          <span class="text-xs text-slate-500 ml-2 font-mono">Example — AI agent using Oculo</span>
+        </div>
+        <pre class="p-5 sm:p-6 text-sm font-mono leading-relaxed text-slate-300"><code><span class="tok-dim"># AI prompt (Claude Code, Cursor, Windsurf, etc.):</span>
+<span class="tok-string">"Go to Hacker News and get the top 5 stories"</span>
+
+<span class="tok-dim"># Oculo handles it in ~3 tool calls:</span>
+<span class="tok-function">act</span>  → navigate to news.ycombinator.com        <span class="tok-dim"># 10 tokens</span>
+<span class="tok-function">page</span> → "Hacker News | 30 stories, nav, search"  <span class="tok-dim"># 30 tokens</span>
+<span class="tok-function">read</span> → extract top 5 with title, points, link  <span class="tok-dim"># 80 tokens</span>
+
+<span class="tok-dim"># Total: ~120 tokens (vs ~25,000 with DOM snapshots)</span></code></pre>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== STATS / TRUST ======================== -->
+  <section class="py-16 bg-[#111113] border-y border-[#1e1e24]">
+    <div class="max-w-5xl mx-auto px-6">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 text-center reveal">
+        <div>
+          <div class="text-3xl sm:text-4xl font-bold text-heading mb-1">7</div>
+          <div class="text-sm text-body">MCP Tools</div>
+        </div>
+        <div>
+          <div class="text-3xl sm:text-4xl font-bold text-heading mb-1">~30</div>
+          <div class="text-sm text-body">Tokens per page</div>
+        </div>
+        <div>
+          <div class="text-3xl sm:text-4xl font-bold text-heading mb-1">99%</div>
+          <div class="text-sm text-body">Less than DOM snapshots</div>
+        </div>
+        <div>
+          <div class="text-3xl sm:text-4xl font-bold text-heading mb-1">5</div>
+          <div class="text-sm text-body">AI Providers</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== DOWNLOAD CTA ======================== -->
+  <section id="download" class="py-24 sm:py-32 relative overflow-hidden">
+    <!-- Gradient background -->
+    <div class="absolute inset-0 bg-gradient-to-br from-blue-600 via-purple-600 to-cyan-500"></div>
+    <div class="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(255,255,255,0.15),transparent_50%)]"></div>
+
+    <div class="relative z-10 max-w-3xl mx-auto px-6 text-center">
+      <div class="reveal">
+        <h2 class="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight text-white mb-4">
+          Ready to give AI vision?
+        </h2>
+        <p class="text-blue-100 text-lg max-w-xl mx-auto mb-10">
+          Oculo is free and available now for macOS.
+        </p>
+      </div>
+
+      <!-- Download buttons -->
+      <div class="reveal flex flex-col sm:flex-row items-center justify-center gap-4">
+        <a href="https://github.com/xidik12/oculo/releases/download/v0.3.0/Oculo-0.3.0-arm64.dmg" target="_blank" rel="noopener nofollow"
+           class="group inline-flex items-center gap-4 bg-white hover:bg-slate-100 text-gray-900 font-semibold px-10 py-4 rounded-2xl transition-all shadow-xl text-lg">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+          </svg>
+          <div class="text-left">
+            <div>Download for macOS</div>
+            <div class="text-sm font-normal text-gray-500">Apple Silicon (arm64) &middot; DMG</div>
+          </div>
+        </a>
+        <a href="https://github.com/xidik12/oculo/releases/download/v0.3.0/Oculo.Setup.0.3.0.exe" target="_blank" rel="noopener nofollow"
+           class="group inline-flex items-center gap-4 bg-white/10 hover:bg-white/20 text-white font-semibold px-10 py-4 rounded-2xl transition-all border border-white/20 text-lg">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M3 12V6.75l8-1.25V12H3zm0 .5h8v6.5l-8-1.25V12.5zM11.5 12V5.35l9.5-1.6V12H11.5zm0 .5h9.5v7.75l-9.5-1.6V12.5z"/>
+          </svg>
+          <div class="text-left">
+            <div>Download for Windows</div>
+            <div class="text-sm font-normal text-blue-200/70">x64 &middot; Installer</div>
+          </div>
+        </a>
+      </div>
+
+      <!-- macOS Security Note -->
+      <div class="mt-8 reveal">
+        <div class="inline-block bg-white/10 border border-white/20 rounded-2xl p-6 sm:p-8 text-left max-w-lg mx-auto backdrop-blur-sm">
+          <div class="flex items-start gap-3 mb-4">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="flex-shrink-0 mt-0.5">
+              <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+            <p class="text-white font-semibold text-sm">First launch on macOS?</p>
+          </div>
+          <p class="text-blue-100/90 text-sm leading-relaxed mb-4">
+            Since Oculo isn't notarized by Apple yet, macOS will show a security warning. Here's how to open it:
+          </p>
+          <ol class="space-y-3 text-sm text-blue-100/80">
+            <li class="flex items-start gap-2.5">
+              <span class="bg-white/20 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">1</span>
+              <span>Open the <strong class="text-white">.dmg</strong> file and drag Oculo to Applications</span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <span class="bg-white/20 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">2</span>
+              <span><strong class="text-white">Right-click</strong> (or Control-click) the Oculo app and select <strong class="text-white">Open</strong></span>
+            </li>
+            <li class="flex items-start gap-2.5">
+              <span class="bg-white/20 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">3</span>
+              <span>Click <strong class="text-white">Open</strong> in the dialog that appears</span>
+            </li>
+          </ol>
+          <p class="text-blue-200/60 text-xs mt-4 pt-3 border-t border-white/10">
+            Alternatively: <strong class="text-blue-200/80">System Settings &rarr; Privacy & Security</strong> &rarr; scroll down and click <strong class="text-blue-200/80">"Open Anyway"</strong> next to Oculo.
+            You only need to do this once.
+          </p>
+        </div>
+      </div>
+
+      <!-- Other platforms -->
+      <div class="mt-6 reveal">
+        <p class="text-blue-200 text-sm">
+          Linux coming soon.
+          <a href="https://github.com/xidik12/oculo" target="_blank" rel="noopener" class="underline hover:text-white transition-colors">Star on GitHub</a>
+          to get notified.
+        </p>
+      </div>
+
+      <!-- Clone from source -->
+      <div class="mt-10 reveal">
+        <p class="text-blue-200/70 text-xs uppercase tracking-wider mb-3">Or clone from source</p>
+        <div class="inline-block bg-white/10 border border-white/20 rounded-xl">
+          <pre class="px-6 py-3 text-sm font-mono text-white"><code>$ git clone https://github.com/xidik12/oculo.git && cd oculo && npm install && npm run dev</code></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== DONATE (BTC) ======================== -->
+  <section id="donate" class="py-24 sm:py-32 bg-[#111113]">
+    <div class="max-w-2xl mx-auto px-6 text-center">
+      <div class="reveal">
+        <p class="text-amber-500 text-sm font-semibold tracking-widest uppercase mb-3">Support</p>
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-heading mb-4">
+          Support Oculo Development
+        </h2>
+        <p class="text-body text-lg max-w-lg mx-auto mb-10">
+          Help keep Oculo free. Every contribution fuels development.
+        </p>
+      </div>
+
+      <div class="bg-[#09090b] border border-[#1e1e24] rounded-2xl p-8 sm:p-10 text-center shadow-sm reveal">
+        <!-- Bitcoin icon -->
+        <div class="w-16 h-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto mb-6">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="#f59e0b">
+            <path d="M11.5 11.5V8.5h1.75c.69 0 1.25.56 1.25 1.25v.5c0 .69-.56 1.25-1.25 1.25H11.5zm0 1h2c.69 0 1.25.56 1.25 1.25v.5c0 .69-.56 1.25-1.25 1.25h-2v-3z"/>
+            <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm3.5 13.25c0 1.52-1.23 2.75-2.75 2.75H11.5V19.5h-1V18h-.75v-1H9V7h.75V5.5h1V7h.75V5.5h1V7h1.25c1.52 0 2.75 1.23 2.75 2.75v.5c0 .98-.52 1.83-1.29 2.32.49.42.79 1.04.79 1.68v.5z"/>
+          </svg>
+        </div>
+
+        <p class="text-sm text-body mb-3 font-medium">Bitcoin (BTC)</p>
+
+        <!-- Address with copy -->
+        <div class="inline-flex items-center gap-3 bg-[#111113] border border-[#1e1e24] rounded-xl px-5 py-3 mb-6 cursor-pointer hover:border-[#2a2a32] transition-colors" onclick="copyBTC()" id="btc-container">
+          <code class="text-sm font-mono text-heading select-all" id="btc-address">12yRGpUfFznzZoz4yVfZKRxLSkAwbanw2B</code>
+          <button class="text-[#71717a] hover:text-heading transition-colors flex-shrink-0" aria-label="Copy address">
+            <svg id="copy-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+            <svg id="check-icon" class="hidden" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"/>
+            </svg>
+          </button>
+        </div>
+
+        <p class="text-xs text-body leading-relaxed">
+          Oculo is and will always be free. Donations directly fund development time,<br class="hidden sm:inline">
+          infrastructure, and code signing certificates.
+        </p>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== PRIVACY ======================== -->
+  <section id="privacy" class="py-16 bg-[#0c0c0e] border-t border-[#1e1e24]">
+    <div class="max-w-3xl mx-auto px-6">
+      <div class="reveal">
+        <h2 class="text-xl font-bold tracking-tight text-heading mb-4">Privacy Policy</h2>
+        <div class="text-sm text-body leading-relaxed space-y-3">
+          <p><strong class="text-heading">No telemetry.</strong> Oculo does not collect, transmit, or store any usage data, analytics, or personal information. There are no tracking pixels, session recordings, or third-party analytics services.</p>
+          <p><strong class="text-heading">Local-only data.</strong> All browsing data (history, bookmarks, downloads, credentials) is stored locally on your device in <code class="bg-[#1e1e24] px-1 py-0.5 rounded text-xs">~/Library/Application Support/oculo/</code>. No data is synced to any server.</p>
+          <p><strong class="text-heading">Credential security.</strong> Passwords stored in the vault are encrypted using your operating system's keychain (macOS Keychain / Windows DPAPI) with AES-256 encryption. They are never exposed via IPC, MCP, or any API.</p>
+          <p><strong class="text-heading">MCP privacy.</strong> All MCP responses are automatically processed through a PII redactor that strips credit card numbers, SSNs, JWTs, API keys, and other sensitive data before they reach any AI model.</p>
+          <p><strong class="text-heading">External connections.</strong> This website loads Google Fonts (Inter). Oculo itself makes no external connections other than the websites you choose to visit.</p>
+          <p class="text-xs text-gray-600">Last updated: March 2, 2026 &middot; Contact: <a href="https://github.com/xidik12/oculo/issues" target="_blank" rel="noopener" class="text-primary hover:underline">GitHub Issues</a></p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+
+  <!-- ======================== FAQ ======================== -->
+  <section id="faq" class="py-24 sm:py-32 bg-[#09090b]">
+    <div class="max-w-3xl mx-auto px-6">
+      <div class="reveal text-center mb-16">
+        <p class="text-primary text-sm font-semibold tracking-widest uppercase mb-3">FAQ</p>
+        <h2 class="text-3xl sm:text-4xl font-bold tracking-tight text-heading mb-4">
+          Frequently Asked Questions
+        </h2>
+        <p class="text-body text-lg max-w-xl mx-auto">
+          Everything you need to know about the open-source AI browser for MCP.
+        </p>
+      </div>
+
+      <div class="space-y-4 reveal">
+        <!-- FAQ 1 -->
+        <details class="group bg-[#111113] border border-[#1e1e24] rounded-xl overflow-hidden">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[#18181b] transition-colors">
+            <span class="text-sm font-semibold text-heading">What is Oculo and how is it different from other AI browser automation tools?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform flex-shrink-0 ml-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+          </summary>
+          <div class="px-6 pb-5 text-sm text-body leading-relaxed">
+            Oculo is a free, open-source AI browser built specifically for <strong class="text-heading">MCP (Model Context Protocol)</strong> clients. Unlike headless browser automation frameworks like Playwright or Puppeteer, Oculo is a real browser you use every day — with tabs, bookmarks, history, and a built-in AI chat panel. It describes pages in <strong class="text-heading">~30 tokens</strong> compared to ~25,000 tokens for full DOM snapshots, making it dramatically more efficient for AI agents. Think of it as: <em>Cursor is to VS Code what Oculo is to Chrome.</em>
+          </div>
+        </details>
+
+        <!-- FAQ 2 -->
+        <details class="group bg-[#111113] border border-[#1e1e24] rounded-xl overflow-hidden">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[#18181b] transition-colors">
+            <span class="text-sm font-semibold text-heading">How do I connect Oculo to Claude Code, Cursor, or Windsurf?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform flex-shrink-0 ml-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+          </summary>
+          <div class="px-6 pb-5 text-sm text-body leading-relaxed">
+            One command: <code class="bg-[#1e1e24] px-1.5 py-0.5 rounded text-xs text-primary">claude mcp add oculo -- node ~/path/to/oculo-mcp.mjs</code>. Oculo runs as both your daily browser and an MCP server simultaneously. Any MCP-compatible client — Claude Code, Cursor, Windsurf, or custom agents — can connect and start browsing, clicking, filling forms, and extracting data through Oculo's 7 tools. No API keys required, no cloud dependency.
+          </div>
+        </details>
+
+        <!-- FAQ 3 -->
+        <details class="group bg-[#111113] border border-[#1e1e24] rounded-xl overflow-hidden">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[#18181b] transition-colors">
+            <span class="text-sm font-semibold text-heading">Is Oculo free and open source?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform flex-shrink-0 ml-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+          </summary>
+          <div class="px-6 pb-5 text-sm text-body leading-relaxed">
+            Yes — completely free, forever. Oculo is released under the <strong class="text-heading">MIT license</strong> with no paid tiers, subscriptions, usage limits, or telemetry. The source code is available on <a href="https://github.com/xidik12/oculo" target="_blank" rel="noopener" class="text-primary hover:underline">GitHub</a>. You can inspect, modify, and redistribute it freely.
+          </div>
+        </details>
+
+        <!-- FAQ 4 -->
+        <details class="group bg-[#111113] border border-[#1e1e24] rounded-xl overflow-hidden">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[#18181b] transition-colors">
+            <span class="text-sm font-semibold text-heading">What platforms does Oculo support?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform flex-shrink-0 ml-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+          </summary>
+          <div class="px-6 pb-5 text-sm text-body leading-relaxed">
+            Oculo is available for <strong class="text-heading">macOS</strong> (Apple Silicon / arm64) and <strong class="text-heading">Windows</strong> (x64) as native installers. Linux support is coming soon. Built with Electron 34, TypeScript, and React 19 — the same stack used by Cursor, VS Code, and Slack.
+          </div>
+        </details>
+
+        <!-- FAQ 5 -->
+        <details class="group bg-[#111113] border border-[#1e1e24] rounded-xl overflow-hidden">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[#18181b] transition-colors">
+            <span class="text-sm font-semibold text-heading">What are the 7 MCP tools and how do they work?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform flex-shrink-0 ml-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+          </summary>
+          <div class="px-6 pb-5 text-sm text-body leading-relaxed">
+            Oculo provides 7 MCP tools for AI web automation: <strong class="text-heading">page</strong> (describe what's on screen), <strong class="text-heading">act</strong> (click, navigate, scroll, type), <strong class="text-heading">fill</strong> (fill forms by label), <strong class="text-heading">read</strong> (extract structured data), <strong class="text-heading">run</strong> (multi-step pipelines with conditionals), <strong class="text-heading">media</strong> (generate images and videos), and <strong class="text-heading">shell</strong> (execute terminal commands). Each tool is optimized for minimal token usage — a full page description costs ~30 tokens vs ~25,000 with traditional DOM approaches.
+          </div>
+        </details>
+
+        <!-- FAQ 6 -->
+        <details class="group bg-[#111113] border border-[#1e1e24] rounded-xl overflow-hidden">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[#18181b] transition-colors">
+            <span class="text-sm font-semibold text-heading">Is my data private? How does Oculo handle security?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform flex-shrink-0 ml-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+          </summary>
+          <div class="px-6 pb-5 text-sm text-body leading-relaxed">
+            Privacy is core to Oculo's design. All data stays on your device — there are no analytics, telemetry, or cloud services. Oculo uses a <strong class="text-heading">four-tier permission system</strong> (auto, notify, confirm, blocked) for MCP actions. <strong class="text-heading">PII is automatically redacted</strong> from every MCP response before it reaches any AI model. Passwords are stored in the OS keychain using AES-256 encryption and are never exposed via IPC or MCP. Anti-prompt-injection boundaries protect against malicious web content.
+          </div>
+        </details>
+
+        <!-- FAQ 7 -->
+        <details class="group bg-[#111113] border border-[#1e1e24] rounded-xl overflow-hidden">
+          <summary class="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[#18181b] transition-colors">
+            <span class="text-sm font-semibold text-heading">Can I use Oculo as my daily web browser?</span>
+            <svg class="w-4 h-4 text-gray-500 group-open:rotate-180 transition-transform flex-shrink-0 ml-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+          </summary>
+          <div class="px-6 pb-5 text-sm text-body leading-relaxed">
+            Absolutely. Oculo is a full-featured Chromium-based browser with tabs, bookmarks, history, downloads, a built-in AI chat panel, reader mode, split view, and more. It's designed to be your primary browser — not just an automation tool. The AI capabilities are always available but never get in the way of normal browsing.
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+
+  </main>
+
+  <!-- ======================== FOOTER ======================== -->
+  <footer class="border-t border-[#1e1e24] bg-[#09090b] py-16">
+    <div class="max-w-6xl mx-auto px-6">
+      <!-- Footer columns -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
+
+        <!-- Column 1: Brand -->
+        <div class="col-span-2 md:col-span-1">
+          <div class="flex items-center gap-2.5 mb-4">
+            <img src="logo-nav.png" alt="Oculo AI browser logo" width="32" height="32" class="w-8 h-8 rounded-lg">
+            <span class="text-lg font-bold text-heading">Oculo</span>
+          </div>
+          <p class="text-sm text-body leading-relaxed">
+            The AI browser that gives AI eyes to see and hands to interact with the web.
+          </p>
+        </div>
+
+        <!-- Column 2: Product -->
+        <div>
+          <h4 class="text-sm font-semibold text-heading mb-4">Product</h4>
+          <div class="flex flex-col gap-2.5">
+            <a href="#features" class="text-sm text-body hover:text-heading transition-colors">Features</a>
+            <a href="#mcp-tools" class="text-sm text-body hover:text-heading transition-colors">MCP Tools</a>
+            <a href="#download" class="text-sm text-body hover:text-heading transition-colors">Download</a>
+            <a href="#how-it-works" class="text-sm text-body hover:text-heading transition-colors">How It Works</a>
+            <a href="#faq" class="text-sm text-body hover:text-heading transition-colors">FAQ</a>
+          </div>
+        </div>
+
+        <!-- Column 3: Resources -->
+        <div>
+          <h4 class="text-sm font-semibold text-heading mb-4">Resources</h4>
+          <div class="flex flex-col gap-2.5">
+            <a href="https://github.com/xidik12/oculo" target="_blank" rel="noopener" class="text-sm text-body hover:text-heading transition-colors">GitHub</a>
+            <a href="https://github.com/xidik12/oculo/releases" target="_blank" rel="noopener" class="text-sm text-body hover:text-heading transition-colors">Releases</a>
+            <a href="https://github.com/xidik12/oculo/blob/main/LICENSE" target="_blank" rel="noopener" class="text-sm text-body hover:text-heading transition-colors">MIT License</a>
+          </div>
+        </div>
+
+        <!-- Column 4: Community -->
+        <div>
+          <h4 class="text-sm font-semibold text-heading mb-4">Community</h4>
+          <div class="flex flex-col gap-2.5">
+            <a href="https://github.com/xidik12/oculo/issues" target="_blank" rel="noopener" class="text-sm text-body hover:text-heading transition-colors">Report a Bug</a>
+            <a href="#donate" class="text-sm text-body hover:text-heading transition-colors">Donate</a>
+            <a href="https://github.com/xidik12" target="_blank" rel="noopener" class="text-sm text-body hover:text-heading transition-colors">Author</a>
+            <a href="#privacy" class="text-sm text-body hover:text-heading transition-colors">Privacy</a>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bottom bar -->
+      <div class="border-t border-[#1e1e24] pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <p class="text-sm text-body">
+          &copy; 2026 <a href="https://github.com/xidik12" target="_blank" rel="noopener" class="hover:text-heading transition-colors">Salakhitdinov Khidayotullo</a>. All rights reserved.
+        </p>
+        <p class="text-sm text-body">
+          Open Source &middot; MIT License &middot; Free forever.
+        </p>
+      </div>
+    </div>
+  </footer>
+
+
+  <!-- ======================== SCRIPTS ======================== -->
+  <script>
+    // Intersection Observer for scroll reveals
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add('visible');
+        }
+      });
+    }, {
+      threshold: 0.1,
+      rootMargin: '0px 0px -40px 0px'
+    });
+    document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+    // Copy BTC address
+    function copyBTC() {
+      const address = document.getElementById('btc-address').textContent;
+      navigator.clipboard.writeText(address).then(() => {
+        document.getElementById('copy-icon').classList.add('hidden');
+        document.getElementById('check-icon').classList.remove('hidden');
+        setTimeout(() => {
+          document.getElementById('copy-icon').classList.remove('hidden');
+          document.getElementById('check-icon').classList.add('hidden');
+        }, 2000);
+      });
+    }
+
+    // Smooth scroll for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function(e) {
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          e.preventDefault();
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+
+    // Mobile menu toggle
+    function toggleMobileMenu() {
+      const menu = document.getElementById('mobile-menu');
+      const openIcon = document.getElementById('menu-open');
+      const closeIcon = document.getElementById('menu-close');
+      menu.classList.toggle('open');
+      openIcon.classList.toggle('hidden');
+      closeIcon.classList.toggle('hidden');
+    }
+
+    function closeMobileMenu() {
+      const menu = document.getElementById('mobile-menu');
+      const openIcon = document.getElementById('menu-open');
+      const closeIcon = document.getElementById('menu-close');
+      menu.classList.remove('open');
+      openIcon.classList.remove('hidden');
+      closeIcon.classList.add('hidden');
+    }
+  </script>
+
+</body>
+</html>

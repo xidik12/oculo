@@ -247,7 +247,7 @@ export default function GuidePage() {
               </li>
             </ol>
             <code className="block bg-surface-dark-0 px-3 py-2 rounded text-[11px] text-gray-300 font-mono mb-2">
-              claude mcp add oculo -- node ~/Desktop/oculo/bin/oculo-mcp.mjs
+              claude mcp add oculo -- node /path/to/oculo/bin/oculo-mcp.mjs
             </code>
             <ol start={3} className="space-y-2 mb-3">
               <li className="flex gap-2 text-[11px] text-gray-400">

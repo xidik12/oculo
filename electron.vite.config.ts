@@ -2,36 +2,15 @@ import { defineConfig, externalizeDepsPlugin, bytecodePlugin } from 'electron-vi
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 
-const edition = process.env.OCULO_EDITION || 'private'
-const enableOAuth = edition === 'private'
-
-// Compile-time flag for renderer UI gating (OAuth buttons, badges)
-function oculoDefinePlugin(): any {
-  return {
-    name: 'oculo-define',
-    enforce: 'pre',
-    transform(code: string, id: string) {
-      if (!id.includes('node_modules') && code.includes('__ENABLE_OAUTH__')) {
-        return { code: code.replace(/__ENABLE_OAUTH__/g, String(enableOAuth)), map: null }
-      }
-    }
-  }
-}
-
 export default defineConfig({
   main: {
     plugins: [
-      externalizeDepsPlugin(),
-      bytecodePlugin(),
-      oculoDefinePlugin()
+      externalizeDepsPlugin({ exclude: ['@modelcontextprotocol/sdk', '@anthropic-ai/sdk', 'zod', 'turndown', '@mozilla/readability'] }),
+      bytecodePlugin()
     ],
     resolve: {
       alias: {
-        '@shared': resolve('src/shared'),
-        // Edition split: swap oauth-manager.ts for oauth-stub.ts in public builds
-        './oauth-manager': enableOAuth
-          ? resolve('src/main/ai/oauth-manager.ts')
-          : resolve('src/main/ai/oauth-stub.ts')
+        '@shared': resolve('src/shared')
       }
     }
   },
@@ -52,7 +31,7 @@ export default defineConfig({
     }
   },
   renderer: {
-    plugins: [react(), oculoDefinePlugin()],
+    plugins: [react()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared'),
@@ -63,7 +42,7 @@ export default defineConfig({
       minify: 'terser',
       terserOptions: {
         mangle: { toplevel: true },
-        compress: { dead_code: true, drop_console: edition === 'public' }
+        compress: { dead_code: true }
       }
     },
   }

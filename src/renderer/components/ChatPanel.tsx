@@ -108,7 +108,7 @@ function ProviderSelector({ activeProvider, activeModel, onSelect }: {
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute top-full left-0 mt-1 w-[320px] bg-surface-dark-1 border border-surface-dark-3 rounded-lg shadow-xl z-50 py-1 max-h-[400px] overflow-y-auto">
-            {AI_PROVIDERS.filter(p => p.id !== 'claude' || __ENABLE_CLAUDE_OAUTH__).map(provider => {
+            {AI_PROVIDERS.map(provider => {
               const status = statuses[provider.id]
               const isActive = provider.id === activeProvider
               const isReady = status?.ready
@@ -454,6 +454,38 @@ function ChatInput({ value, onChange, onKeyDown, onSend, onStop, isStreaming, in
     const el = e.target; el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 120) + 'px'
   }
 
+  // Voice input (v0.3.0)
+  const [isRecording, setIsRecording] = useState(false)
+  const recognitionRef = useRef<any>(null)
+
+  const toggleVoice = useCallback(() => {
+    if (isRecording) {
+      recognitionRef.current?.stop()
+      setIsRecording(false)
+      return
+    }
+    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition
+    if (!SpeechRecognition) return
+    const recognition = new SpeechRecognition()
+    recognition.continuous = false
+    recognition.interimResults = false
+    recognition.lang = 'en-US'
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0]?.[0]?.transcript || ''
+      if (transcript) onChange(value + (value ? ' ' : '') + transcript)
+      setIsRecording(false)
+    }
+    recognition.onerror = () => setIsRecording(false)
+    recognition.onend = () => setIsRecording(false)
+    recognitionRef.current = recognition
+    try {
+      recognition.start()
+      setIsRecording(true)
+    } catch {
+      setIsRecording(false)
+    }
+  }, [isRecording, value, onChange])
+
   const getFileName = (filePath: string) => filePath.split('/').pop() || filePath
   const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp']
   const isImageFile = (filePath: string) => {
@@ -525,6 +557,14 @@ function ChatInput({ value, onChange, onKeyDown, onSend, onStop, isStreaming, in
           disabled={isStreaming} rows={1}
           className="flex-1 resize-none px-3 py-2 rounded-md bg-surface-dark-1 border border-surface-dark-3 text-gray-200 text-sm font-mono placeholder-gray-600 outline-none focus:border-accent/50 transition-colors disabled:opacity-50"
           style={{ maxHeight: '120px' }} />
+        {/* Voice input button (v0.3.0) */}
+        <button onClick={toggleVoice} disabled={isStreaming}
+          className={`flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-md transition-colors ${isRecording ? 'bg-red-500/20 border border-red-500/40 text-red-400 animate-pulse' : 'hover:bg-white/5 text-gray-500 hover:text-gray-300 disabled:opacity-30'}`}
+          title={isRecording ? 'Stop recording' : 'Voice input'}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" />
+          </svg>
+        </button>
         {isStreaming ? (
           <button onClick={onStop}
             className="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded-md bg-red-600/20 hover:bg-red-600/30 border border-red-600/30 text-red-400 transition-colors" title="Stop">
@@ -837,7 +877,6 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
       </div>
 
       <div className="w-full max-w-[280px] space-y-2 mt-1">
-          {__ENABLE_CLAUDE_OAUTH__ && (
           <button
             onClick={() => handleLogin('claude')}
             disabled={loading !== null}
@@ -851,7 +890,6 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
             </div>
             {loading === 'claude' && <span className="w-3 h-3 border-2 border-[#d97706] border-t-transparent rounded-full animate-spin flex-shrink-0" />}
           </button>
-          )}
 
           <button
             onClick={() => handleLogin('codex')}

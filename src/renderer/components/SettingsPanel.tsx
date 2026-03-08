@@ -213,13 +213,8 @@ function GeneralSettings({ settings, onSave, flash }: { settings: AppSettings; o
 
   return (
     <>
-      <SettingRow label="Theme" description="Controls the app's appearance">
-        <select value={settings.theme} onChange={e => onSave('theme', e.target.value)}
-          className="h-8 px-2 rounded bg-surface-dark-1 border border-surface-dark-3 text-gray-200 text-xs outline-none focus:border-accent/50">
-          <option value="system">System</option>
-          <option value="dark">Dark</option>
-          <option value="light">Light</option>
-        </select>
+      <SettingRow label="Theme" description="Dark mode only for now — light mode coming soon">
+        <span className="h-8 px-3 flex items-center rounded bg-surface-dark-1 border border-surface-dark-3 text-gray-400 text-xs">Dark</span>
       </SettingRow>
 
       <SettingRow label="Home Page" description="URL opened when creating a new tab">
@@ -339,7 +334,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
         Configure API keys for AI providers. Keys are stored securely and never leave your device.
       </p>
 
-      {AI_PROVIDERS.filter(p => p.id !== 'claude' || __ENABLE_CLAUDE_OAUTH__).map(provider => {
+      {AI_PROVIDERS.map(provider => {
         const status = statuses[provider.id]
         const isReady = status?.ready
         const authMode = status?.authMode

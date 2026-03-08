@@ -35,6 +35,7 @@ import { WorkspaceStore } from './data/workspaces'
 import { MacroStore } from './data/macros'
 import { PinnedAppStore } from './data/pinned-apps'
 import { PatternDetector } from './data/pattern-detector'
+import { WatcherStore } from './data/watchers'
 
 /** Clean up temp files older than 1 hour (only transient dirs, NOT ~/Pictures/Oculo) */
 function cleanupTempFiles(): void {
@@ -81,6 +82,7 @@ let workspaceStore: WorkspaceStore | null = null
 let macroStore: MacroStore | null = null
 let pinnedAppStore: PinnedAppStore | null = null
 let patternDetector: PatternDetector | null = null
+let watcherStore: WatcherStore | null = null
 
 function createWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
@@ -235,7 +237,8 @@ app.whenReady().then(async () => {
   webviewSession.webRequest.onBeforeRequest(
     { urls: ['https://*/*', 'http://*/*'] },
     (details, callback) => {
-      if (adBlocker.shouldBlock(details.url, details.resourceType, details.webContents?.getURL() || '')) {
+      const pageUrl = details.webContents?.getURL() || ''
+      if (adBlocker.shouldBlock(details.url, details.resourceType, pageUrl)) {
         callback({ cancel: true })
       } else {
         callback({})
@@ -276,13 +279,83 @@ app.whenReady().then(async () => {
 
     // Intercept window.open / target="_blank" → open as new tab, not new window
     // Block popups to known ad/malware domains; allow legitimate ones (OAuth, payment, SSO)
+    const OAUTH_DOMAINS = [
+      'accounts.google.com',
+      'appleid.apple.com',
+      'github.com/login/oauth',
+      'login.microsoftonline.com',
+      'clerk.', 'accounts.clerk', 'clerk.accounts',
+      'auth0.com',
+      'login.live.com',
+      'login.yahoo.com',
+      'api.twitter.com',
+      'facebook.com/v',
+    ]
+
     wc.setWindowOpenHandler((details) => {
       if (adBlocker.isAdDomain(details.url)) {
         return { action: 'deny' }
       }
-      // Pass opener webContentsId so renderer can relay OAuth data back
+
+      // OAuth/SSO popups need to open as real child windows so window.opener works
+      const url = details.url.toLowerCase()
+      const isOAuth = OAUTH_DOMAINS.some(d => url.includes(d))
+
+      if (isOAuth) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 520,
+            height: 720,
+            autoHideMenuBar: true,
+            parent: mainWindow!,
+            modal: false,
+            webPreferences: {
+              partition: 'persist:oculo',
+              nodeIntegration: false,
+              contextIsolation: true,
+            },
+          },
+        }
+      }
+
+      // Everything else → open as a new tab
       mainWindow?.webContents.send('tab:create', details.url, wc.id)
       return { action: 'deny' }
+    })
+
+    // When an OAuth popup window is created, configure it and auto-close on completion
+    wc.on('did-create-window', (popupWindow) => {
+      // Clean UA in popup (remove Electron marker)
+      const popupWC = popupWindow.webContents
+      const popupUA = popupWC.getUserAgent()
+      popupWC.setUserAgent(popupUA.replace(/\s*Electron\/[\d.]+/, '').replace(/\s*oculo\/[\d.]+/i, ''))
+
+      // Auto-close popup when it navigates back to the opener's origin (OAuth callback done)
+      const openerUrl = wc.getURL()
+      let openerOrigin = ''
+      try { openerOrigin = new URL(openerUrl).origin } catch {}
+
+      popupWC.on('will-navigate', (_e, navUrl) => {
+        try {
+          const navOrigin = new URL(navUrl).origin
+          // If the popup redirects back to the opener's origin, auth is done
+          if (openerOrigin && navOrigin === openerOrigin) {
+            setTimeout(() => {
+              if (!popupWindow.isDestroyed()) popupWindow.close()
+            }, 1500)
+          }
+        } catch {}
+      })
+
+      // Also close if popup navigates to a known "done" page
+      popupWC.on('did-navigate', (_e, navUrl) => {
+        if (navUrl.includes('/sso-callback') || navUrl.includes('/oauth/callback') || navUrl.includes('accounts.google.com/o/oauth2/approval')) {
+          setTimeout(() => {
+            if (!popupWindow.isDestroyed()) popupWindow.close()
+          }, 2000)
+        }
+      })
     })
   })
 
@@ -314,6 +387,12 @@ app.whenReady().then(async () => {
       // Image actions
       if (params.hasImageContents && params.srcURL) {
         menuItems.push(
+          { label: 'Save Image As…', click: () => {
+            wc.downloadURL(params.srcURL)
+          }},
+          { label: 'Copy Image', click: () => {
+            wc.copyImageAt(params.x, params.y)
+          }},
           { label: 'Open Image in New Tab', click: () => mainWindow?.webContents.send('tab:create', params.srcURL) },
           { label: 'Copy Image Address', click: () => clipboard.writeText(params.srcURL) },
           { type: 'separator' }
@@ -336,8 +415,8 @@ app.whenReady().then(async () => {
 
       // Standard page actions
       menuItems.push(
-        { label: 'Back', enabled: wc.canGoBack(), click: () => wc.goBack() },
-        { label: 'Forward', enabled: wc.canGoForward(), click: () => wc.goForward() },
+        { label: 'Back', enabled: wc.navigationHistory?.canGoBack() ?? false, click: () => wc.navigationHistory?.goBack() },
+        { label: 'Forward', enabled: wc.navigationHistory?.canGoForward() ?? false, click: () => wc.navigationHistory?.goForward() },
         { label: 'Reload', click: () => wc.reload() },
         { type: 'separator' },
         { label: 'View Page Source', accelerator: 'CmdOrCtrl+Option+U', click: () => mainWindow?.webContents.send('view-page-source') },
@@ -364,6 +443,22 @@ app.whenReady().then(async () => {
 
   ipcMain.on('webview:tab-activated', (_, wcId: number) => {
     activeWebContentsId = wcId
+  })
+
+  // === Direct navigation via main-process webContents (toolbar buttons) ===
+  // WebviewTag.goBack() in preload is unreliable in Electron 34;
+  // webContents.goBack() from main process works correctly (same path MCP uses).
+  ipcMain.on('nav:back-direct', () => {
+    const wc = findActiveWebviewWC()
+    if (wc?.navigationHistory?.canGoBack()) wc.navigationHistory.goBack()
+  })
+  ipcMain.on('nav:forward-direct', () => {
+    const wc = findActiveWebviewWC()
+    if (wc?.navigationHistory?.canGoForward()) wc.navigationHistory.goForward()
+  })
+  ipcMain.on('nav:reload-direct', () => {
+    const wc = findActiveWebviewWC()
+    if (wc) wc.reload()
   })
 
   // Helper: find the active webview webContents
@@ -549,6 +644,9 @@ app.whenReady().then(async () => {
   // Initialize pattern detector
   patternDetector = new PatternDetector(window)
 
+  // Initialize webpage change monitor (v0.3.0)
+  watcherStore = new WatcherStore(window)
+
   // Start MCP server
   mcpServer = new McpServerManager(window, securityManager, auditLog, redactor, patternDetector)
   try {
@@ -607,8 +705,11 @@ app.whenReady().then(async () => {
   // Wire MCP client manager to AI agent for connected app tool routing
   agentController.setMcpClientManager(mcpClientManager)
 
+  // Wire AI agent to download manager for auto-rename (v0.3.0)
+  downloadManager!.setAgent(agentController)
+
   // Setup IPC handlers (after agent init so chat handlers are wired)
-  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache, ptyManager, mcpClientManager, sessionMemoryStore, containerStore, cardStore, workspaceStore, macroStore, pinnedAppStore, patternDetector)
+  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache, ptyManager, mcpClientManager, sessionMemoryStore, containerStore, cardStore, workspaceStore, macroStore, pinnedAppStore, patternDetector, watcherStore)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

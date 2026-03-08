@@ -56,6 +56,16 @@ export class ElementResolver {
           return style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0;
         }
 
+        function fuzzyMatch(a, b) {
+          a = a.toLowerCase(); b = b.toLowerCase();
+          if (a === b || a.includes(b) || b.includes(a)) return true;
+          var ta = a.split(/[\\s\\-_\\/]+/).filter(function(t) { return t.length > 2; });
+          var tb = b.split(/[\\s\\-_\\/]+/).filter(function(t) { return t.length > 2; });
+          if (!ta.length || !tb.length) return false;
+          var m = 0; for (var i = 0; i < ta.length; i++) { for (var j = 0; j < tb.length; j++) { if (ta[i] === tb[j]) m++; } }
+          return m >= Math.min(ta.length, tb.length) * 0.5;
+        }
+
         function findByText(text) {
           const lower = text.toLowerCase();
           // Phase 1: search interactive elements first (faster, more specific)
@@ -92,7 +102,27 @@ export class ElementResolver {
             }
           });
           sortMatches(fallback);
-          return fallback[nth] || null;
+          if (fallback[nth]) return fallback[nth];
+
+          // Phase 3: fuzzy token-overlap matching (e.g. "Sign Up" matches "Sign Up Now")
+          const fuzzyResults = [];
+          interactive.forEach(el => {
+            if (!isVisible(el)) return;
+            const elText = el.textContent?.trim() || el.getAttribute('value') || el.getAttribute('aria-label') || '';
+            if (fuzzyMatch(elText, text)) fuzzyResults.push(el);
+          });
+          sortMatches(fuzzyResults);
+          if (fuzzyResults[nth]) return fuzzyResults[nth];
+
+          // Phase 3b: fuzzy on broader elements
+          const fuzzyBroader = [];
+          broader.forEach(el => {
+            if (!isVisible(el)) return;
+            const elText = el.getAttribute('data-placeholder') || el.textContent?.trim() || el.getAttribute('aria-label') || '';
+            if (fuzzyMatch(elText, text)) fuzzyBroader.push(el);
+          });
+          sortMatches(fuzzyBroader);
+          return fuzzyBroader[nth] || null;
         }
 
         function findByRole(role, name) {

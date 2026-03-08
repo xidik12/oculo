@@ -7,6 +7,7 @@ const IPC = {
   // Tab management
   TAB_CREATE: 'tab:create',
   TAB_CLOSE: 'tab:close',
+  TAB_CLOSE_BY_URL: 'tab:close-by-url',
   TAB_SWITCH: 'tab:switch',
   TAB_UPDATE: 'tab:update',
   TAB_LIST: 'tab:list',
@@ -75,6 +76,7 @@ const IPC = {
   DOWNLOADS_LIST: 'downloads:list',
   DOWNLOADS_CANCEL: 'downloads:cancel',
   DOWNLOADS_OPEN: 'downloads:open',
+  DOWNLOADS_SHOW_IN_FOLDER: 'downloads:show-in-folder',
 
   // Zoom
   ZOOM_GET: 'zoom:get',
@@ -121,6 +123,9 @@ const IPC = {
 
   // Accessibility Tree (CDP)
   A11Y_SNAPSHOT: 'a11y:snapshot',
+
+  // Adaptive Element Resolution (CDP)
+  RESOLVE_NODE: 'resolve:node',
 
   // Print to PDF
   PRINT_TO_PDF: 'print:to-pdf',
@@ -213,6 +218,18 @@ const IPC = {
   PINNED_APP_REMOVE: 'pinned-app:remove',
   PINNED_APP_UPDATE: 'pinned-app:update',
   PINNED_APP_SAVE: 'pinned-app:save',
+
+  // AI Quick Complete (v0.3.0)
+  AI_QUICK_COMPLETE: 'ai:quick-complete',
+
+  // Download Updates (v0.3.0)
+  DOWNLOAD_UPDATED: 'download:updated',
+
+  // Webpage Change Monitoring (v0.3.0)
+  WATCHER_LIST: 'watcher:list',
+  WATCHER_ADD: 'watcher:add',
+  WATCHER_REMOVE: 'watcher:remove',
+  WATCHER_CHANGED: 'watcher:changed',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -231,20 +248,18 @@ const api = {
     ipcRenderer.on('close-active-tab', handler)
     return () => { ipcRenderer.removeListener('close-active-tab', handler) }
   },
+  onCloseTabByUrl: (callback: (urlPrefix: string) => void) => {
+    const handler = (_: any, urlPrefix: string) => callback(urlPrefix)
+    ipcRenderer.on(IPC.TAB_CLOSE_BY_URL, handler)
+    return () => { ipcRenderer.removeListener(IPC.TAB_CLOSE_BY_URL, handler) }
+  },
 
   // === Navigation ===
-  goBack: (tabId: string) => {
-    const wv = webviewRegistry.get(tabId)
-    try { if (wv && wv.canGoBack()) wv.goBack() } catch { /* not ready */ }
-  },
-  goForward: (tabId: string) => {
-    const wv = webviewRegistry.get(tabId)
-    try { if (wv && wv.canGoForward()) wv.goForward() } catch { /* not ready */ }
-  },
-  reload: (tabId: string) => {
-    const wv = webviewRegistry.get(tabId)
-    try { if (wv) wv.reload() } catch { /* not ready */ }
-  },
+  // Route through main process where webContents.goBack() works reliably.
+  // WebviewTag.goBack() in the renderer is broken in Electron 34.
+  goBack: (_tabId: string) => { ipcRenderer.send('nav:back-direct') },
+  goForward: (_tabId: string) => { ipcRenderer.send('nav:forward-direct') },
+  reload: (_tabId: string) => { ipcRenderer.send('nav:reload-direct') },
   onGoBack: (callback: (tabId: string) => void) => {
     const handler = (_: any, tabId: string) => callback(tabId)
     ipcRenderer.on(IPC.NAV_BACK, handler)
@@ -428,6 +443,7 @@ const api = {
   downloadsList: () => ipcRenderer.invoke(IPC.DOWNLOADS_LIST),
   downloadsCancel: (id: string) => ipcRenderer.invoke(IPC.DOWNLOADS_CANCEL, id),
   downloadsOpen: (savePath: string) => ipcRenderer.invoke(IPC.DOWNLOADS_OPEN, savePath),
+  downloadsShowInFolder: (savePath: string) => ipcRenderer.invoke(IPC.DOWNLOADS_SHOW_IN_FOLDER, savePath),
 
   // === Menu events ===
   onFindInPage: (callback: () => void) => {
@@ -600,6 +616,10 @@ const api = {
   a11ySnapshot: (webContentsId: number): Promise<string> =>
     ipcRenderer.invoke(IPC.A11Y_SNAPSHOT, webContentsId),
 
+  // === Adaptive Element Resolution (CDP) ===
+  resolveNode: (webContentsId: number, backendNodeId: number): Promise<{ alive: boolean; selector?: string }> =>
+    ipcRenderer.invoke(IPC.RESOLVE_NODE, webContentsId, backendNodeId),
+
   // === Run Cache (Compile-to-Code) ===
   runCacheSave: (url: string, steps: any[], description?: string): Promise<string | null> =>
     ipcRenderer.invoke(IPC.RUN_CACHE_SAVE, url, steps, description),
@@ -760,6 +780,29 @@ const api = {
     const handler = () => callback()
     ipcRenderer.on(IPC.FOCUS_MODE, handler)
     return () => { ipcRenderer.removeListener(IPC.FOCUS_MODE, handler) }
+  },
+
+  // === AI Quick Complete (v0.3.0) ===
+  aiQuickComplete: (prompt: string, maxTokens?: number): Promise<string> =>
+    ipcRenderer.invoke(IPC.AI_QUICK_COMPLETE, prompt, maxTokens),
+
+  // === Download Updates (v0.3.0) ===
+  onDownloadUpdated: (callback: (download: any) => void): (() => void) => {
+    const handler = (_: any, download: any) => callback(download)
+    ipcRenderer.on(IPC.DOWNLOAD_UPDATED, handler)
+    return () => ipcRenderer.removeListener(IPC.DOWNLOAD_UPDATED, handler)
+  },
+
+  // === Webpage Change Monitoring (v0.3.0) ===
+  watcherList: (): Promise<any[]> => ipcRenderer.invoke(IPC.WATCHER_LIST),
+  watcherAdd: (url: string, intervalMs?: number): Promise<any> =>
+    ipcRenderer.invoke(IPC.WATCHER_ADD, url, intervalMs),
+  watcherRemove: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.WATCHER_REMOVE, id),
+  onWatcherChanged: (callback: (data: { id: string; url: string }) => void): (() => void) => {
+    const handler = (_: any, data: any) => callback(data)
+    ipcRenderer.on(IPC.WATCHER_CHANGED, handler)
+    return () => ipcRenderer.removeListener(IPC.WATCHER_CHANGED, handler)
   },
 
   // === Webview preload script path (for <webview preload="..."> attribute) ===

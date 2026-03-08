@@ -61,7 +61,21 @@ export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelect
     }
     const onStartLoad = () => onUpdate({ isLoading: true, canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() })
     const onStopLoad = () => onUpdate({ isLoading: false, canGoBack: wv.canGoBack(), canGoForward: wv.canGoForward() })
-    const onTitle = (e: any) => onUpdate({ title: e.title })
+    const onTitle = (e: any) => {
+      let title = e.title || ''
+      // Auto-tidy: strip common suffixes (v0.3.0)
+      title = title
+        .replace(/\s*[-|–—]\s*YouTube$/i, '')
+        .replace(/\s*[-|–—]\s*Google Search$/i, '')
+        .replace(/\s*[-|–—]\s*Wikipedia$/i, '')
+        .replace(/\s*[-|–—]\s*Reddit$/i, '')
+        .replace(/\s*\|\s*LinkedIn$/i, '')
+        .replace(/\s*[-|–—·]\s*[A-Za-z0-9 ]{3,25}$/, '')  // generic " - SiteName"
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+        .trim()
+      if (!title) title = e.title  // fallback to original if we stripped too much
+      onUpdate({ title, originalTitle: e.title })
+    }
     const onFail = (e: any) => { if (e.errorCode !== -3) onUpdate({ isLoading: false, title: 'Failed to load' }) }
 
     // Crash recovery — when webview renderer crashes, auto-reload

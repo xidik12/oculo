@@ -63,6 +63,14 @@ MEDIA WORKFLOW (generate → upload → post):
 - Upload any of them: act({action:"upload", selector:"input[type=file]", value:"/path/from/above"})
 - Example: "Post about Oculo on X with an image" → media to generate → navigate to X → compose tweet → upload image → click Post
 
+SOCIAL MEDIA POSTING (X/Twitter, LinkedIn, Facebook, etc.):
+- X/Twitter has a 280-character limit for non-premium users. ALWAYS keep tweets under 280 chars including the link.
+- Write SHORT, clean text. No emojis unless the user asks. No hashtags unless the user asks. URLs count toward the limit (~23 chars each on X).
+- Type the ENTIRE post text in a SINGLE act type call. NEVER type in multiple parts — this causes garbled/repeated text.
+- Workflow: navigate → click compose → type full text in one call → click Post → DONE. Stop immediately after posting.
+- After clicking Post, the post is submitted. Do NOT verify, do NOT read it back, do NOT try to check if it worked. Just tell the user it's done.
+- If the user asks to delete a post: click the ••• menu on the post → Delete → Confirm. That's it.
+
 CRITICAL RULES:
 - NEVER regenerate media if you already have a file path from a previous media/screenshot call. Reuse the path.
 - After uploading an image/file to a compose box, your NEXT step is to click the Post/Submit/Send button. Do NOT loop.
@@ -70,6 +78,7 @@ CRITICAL RULES:
 - For knowledge/research questions, use what you already know FIRST. Only browse if you genuinely need live data.
 - Minimize tool calls. Each call should make concrete progress. If you're repeating an action, STOP and try a different approach.
 - NEVER click the same button or perform the same action more than twice in a row.
+- After a submit action succeeds (Post, Send, Submit, Publish), STOP. Do not attempt the same action again — the system will block it.
 
 HOW TO WORK:
 1. Call page to see the current state — it shows numbered clickable elements (#1, #2, etc.)
@@ -121,8 +130,8 @@ TIPS:
 LEARNING:
 When the user corrects you or you discover something important about how a website works, call the learn tool to remember it.
 Examples of when to learn:
-- User says "don't click that" → learn("On shipordie.club, 'Yep/Nope' buttons are for the open source question, not for submitting")
-- You discover a form needs a specific flow → learn("shipordie.club: must click My Fleet → + NEW SHIP before form appears")
+- User says "don't click that" → learn("On example.com, the 'Yes/No' buttons are for the survey question, not for submitting the form")
+- You discover a form needs a specific flow → learn("example.com: must click Dashboard → + New Item before the form appears")
 - A fill approach fails → learn("React apps need act type with selector instead of fill for controlled inputs")
 Your lessons persist across sessions — you get smarter over time.`
 
@@ -504,6 +513,109 @@ export class AgentController {
 
   signOut(provider: 'claude' | 'openai'): void {
     this.oauth.signOut(provider)
+  }
+
+  // === AI Quick Complete (v0.3.0 — non-streaming, short completions) ===
+
+  async quickComplete(prompt: string, maxTokens = 100): Promise<string> {
+    try {
+      // Use active provider's API key for a quick non-streaming completion
+      const provider = this.activeProvider
+      const config = this.providerConfigs.get(provider)
+
+      // Try Anthropic API (Claude / Anthropic provider)
+      if ((provider === 'claude' || provider === 'anthropic') && (config?.apiKey || this.oauth.getOAuthToken())) {
+        const token = config?.apiKey || this.oauth.getOAuthToken() || ''
+        const isOAuth = !config?.apiKey && !!this.oauth.getOAuthToken()
+        const body = JSON.stringify({
+          model: this.activeModel || 'claude-sonnet-4-6',
+          max_tokens: maxTokens,
+          messages: [{ role: 'user', content: prompt }]
+        })
+        return new Promise((resolve) => {
+          const req = https.request({
+            hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'anthropic-version': '2023-06-01',
+              ...(isOAuth
+                ? { 'Authorization': `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' }
+                : { 'x-api-key': token })
+            }
+          }, (res) => {
+            let data = ''
+            res.on('data', (c: Buffer) => { data += c.toString() })
+            res.on('end', () => {
+              try {
+                const parsed = JSON.parse(data)
+                const text = parsed.content?.[0]?.text || ''
+                resolve(text.trim())
+              } catch { resolve('') }
+            })
+          })
+          req.on('error', () => resolve(''))
+          req.setTimeout(10_000, () => { req.destroy(); resolve('') })
+          req.write(body)
+          req.end()
+        })
+      }
+
+      // Try OpenAI-compatible API
+      if ((provider === 'openai' || provider === 'codex') && config?.apiKey) {
+        const body = JSON.stringify({
+          model: this.activeModel || 'gpt-4o-mini',
+          max_tokens: maxTokens,
+          messages: [{ role: 'user', content: prompt }]
+        })
+        return new Promise((resolve) => {
+          const req = https.request({
+            hostname: 'api.openai.com', path: '/v1/chat/completions', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.apiKey}` }
+          }, (res) => {
+            let data = ''
+            res.on('data', (c: Buffer) => { data += c.toString() })
+            res.on('end', () => {
+              try {
+                const parsed = JSON.parse(data)
+                resolve((parsed.choices?.[0]?.message?.content || '').trim())
+              } catch { resolve('') }
+            })
+          })
+          req.on('error', () => resolve(''))
+          req.setTimeout(10_000, () => { req.destroy(); resolve('') })
+          req.write(body)
+          req.end()
+        })
+      }
+
+      // Try Gemini
+      if (provider === 'gemini' && config?.apiKey) {
+        const model = this.activeModel || 'gemini-2.0-flash'
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.apiKey}`
+        const body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { maxOutputTokens: maxTokens } })
+        return new Promise((resolve) => {
+          const req = https.request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, (res) => {
+            let data = ''
+            res.on('data', (c: Buffer) => { data += c.toString() })
+            res.on('end', () => {
+              try {
+                const parsed = JSON.parse(data)
+                resolve((parsed.candidates?.[0]?.content?.parts?.[0]?.text || '').trim())
+              } catch { resolve('') }
+            })
+          })
+          req.on('error', () => resolve(''))
+          req.setTimeout(10_000, () => { req.destroy(); resolve('') })
+          req.write(body)
+          req.end()
+        })
+      }
+
+      // No provider configured
+      return ''
+    } catch {
+      return ''
+    }
   }
 
   // === MCP Tool Execution (calls local Oculo HTTP server) ===
