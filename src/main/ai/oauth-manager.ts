@@ -32,7 +32,7 @@ export class OAuthManager extends CodexOAuthBase {
     if (process.platform === 'darwin') {
       try {
         const raw = execFileSync('security', [
-          'find-generic-password', '-s', 'Claude Code-credentials', '-w'
+          'find-generic-password', '-s', 'Oculo-credentials', '-w'
         ], { encoding: 'utf-8', timeout: 5000 }).trim()
         creds = JSON.parse(raw)
       } catch { /* keychain not available */ }
@@ -96,7 +96,7 @@ export class OAuthManager extends CodexOAuthBase {
       this.claudeAuthChecked = true
       this.claudeAuthEmail = undefined
       if (process.platform === 'darwin') {
-        try { execFileSync('security', ['delete-generic-password', '-s', 'Claude Code-credentials'], { timeout: 5000 }) } catch {}
+        try { execFileSync('security', ['delete-generic-password', '-s', 'Oculo-credentials'], { timeout: 5000 }) } catch {}
       } else {
         try {
           const dataDir = path.join(os.homedir(), '.oculo-data')
@@ -133,21 +133,21 @@ export class OAuthManager extends CodexOAuthBase {
             refreshToken: tokens.refresh_token || null,
             expiresAt: tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : 0,
             scopes: scope.split(' '),
-            subscriptionType: 'subscription'
+            subscriptionType: tokens.subscription_type || 'subscription'
           }
         }
         if (process.platform === 'darwin') {
           try {
             const credJson = JSON.stringify(creds)
             execFileSync('security', [
-              'add-generic-password', '-s', 'Claude Code-credentials',
+              'add-generic-password', '-s', 'Oculo-credentials',
               '-a', 'default', '-w', credJson, '-U'
             ], { timeout: 5000 })
           } catch {
             try {
-              execFileSync('security', ['delete-generic-password', '-s', 'Claude Code-credentials'], { timeout: 5000 })
+              execFileSync('security', ['delete-generic-password', '-s', 'Oculo-credentials'], { timeout: 5000 })
               execFileSync('security', [
-                'add-generic-password', '-s', 'Claude Code-credentials',
+                'add-generic-password', '-s', 'Oculo-credentials',
                 '-a', 'default', '-w', JSON.stringify(creds)
               ], { timeout: 5000 })
             } catch { /* keychain write failed */ }
@@ -171,7 +171,7 @@ export class OAuthManager extends CodexOAuthBase {
         this.oauthExpiresAt = tokens.expires_in ? Date.now() + tokens.expires_in * 1000 : 0
         this.claudeLoggedIn = true
         this.claudeAuthChecked = true
-        this.claudeAuthEmail = 'Claude subscription'
+        this.claudeAuthEmail = `Claude ${tokens.subscription_type || ''} subscription`.replace(/\s+/g, ' ').trim()
       }
     })
   }

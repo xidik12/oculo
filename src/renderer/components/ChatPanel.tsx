@@ -886,7 +886,7 @@ function AuthWelcome({ onLogin }: { onLogin: (providerId: string) => void }) {
             </div>
             <div className="flex-1 min-w-0">
               <div className="text-xs font-medium text-gray-200">Sign in with Claude</div>
-              <div className="text-[10px] text-gray-500">Max / Pro subscription</div>
+              <div className="text-[10px] text-gray-500">Use your Claude subscription</div>
             </div>
             {loading === 'claude' && <span className="w-3 h-3 border-2 border-[#d97706] border-t-transparent rounded-full animate-spin flex-shrink-0" />}
           </button>
@@ -1318,7 +1318,7 @@ export default function ChatPanel({ isOpen, onClose }: ChatPanelProps) {
             authMode === 'api-key' ? 'bg-emerald-900/50 text-emerald-300' :
             'bg-gray-800 text-gray-400'
           }`}>
-            {authMode === 'subscription' ? 'Max' : authMode === 'api-key' ? 'API' : authMode}
+            {authMode === 'subscription' ? 'Sub' : authMode === 'api-key' ? 'API' : authMode}
           </span>
         )}
 

@@ -386,7 +386,7 @@ function AISettings({ apiKeys, setApiKeys, statuses, onSaveKey, onRemoveKey, ref
                   <span className="text-[#d97706] text-sm font-bold">C</span>
                   <div>
                     <div className="text-xs font-medium text-gray-200">Sign in with Claude</div>
-                    <div className="text-[10px] text-gray-500">Use your Max or Pro subscription</div>
+                    <div className="text-[10px] text-gray-500">Use your Claude subscription</div>
                   </div>
                 </button>
                 <div className="flex items-center gap-2 my-1.5">

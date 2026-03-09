@@ -203,6 +203,42 @@ try {
   }
 } catch {}
 
+// 13.5. navigator.userAgentData — Chrome 90+ API; Google uses this to detect embedded browsers
+try {
+  const uaBrands = [
+    { brand: 'Not A(Brand', version: '8' },
+    { brand: 'Chromium', version: '132' },
+    { brand: 'Google Chrome', version: '132' }
+  ]
+  const uaPlatform = navigator.userAgent.includes('Windows') ? 'Windows' : navigator.userAgent.includes('Linux') ? 'Linux' : 'macOS'
+
+  Object.defineProperty(navigator, 'userAgentData', {
+    get: () => ({
+      brands: uaBrands,
+      mobile: false,
+      platform: uaPlatform,
+      getHighEntropyValues: async () => ({
+        brands: uaBrands,
+        fullVersionList: [
+          { brand: 'Not A(Brand', version: '8.0.0.0' },
+          { brand: 'Chromium', version: '132.0.6834.210' },
+          { brand: 'Google Chrome', version: '132.0.6834.210' }
+        ],
+        mobile: false,
+        model: '',
+        platform: uaPlatform,
+        platformVersion: uaPlatform === 'macOS' ? '14.0.0' : uaPlatform === 'Windows' ? '15.0.0' : '6.5.0',
+        architecture: 'x86',
+        bitness: '64',
+        uaFullVersion: '132.0.6834.210',
+        wow64: false
+      }),
+      toJSON: () => ({ brands: uaBrands, mobile: false, platform: uaPlatform })
+    }),
+    configurable: true
+  })
+} catch {}
+
 // ── Enhanced Stealth Evasion (Browserbase-grade) ──────────────────────────
 
 // 14. Canvas fingerprint randomization — add imperceptible noise to canvas
