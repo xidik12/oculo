@@ -1,6 +1,6 @@
 {
   "name": "oculo",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "AI-powered native browser — giving AI vision to see and interact with the web",
   "main": "./out/main/index.js",
   "author": "Salakhitdinov Khidayotullo",

@@ -1,10 +1,10 @@
 export const APP_NAME = 'Oculo'
-export const APP_VERSION = '0.4.0'
+export const APP_VERSION = '0.4.1'
 export const DEFAULT_VIEWPORT = { width: 1280, height: 720 }
 export const DEFAULT_HOME_PAGE = 'https://www.google.com'
 export const DEFAULT_SEARCH_ENGINE = 'https://www.google.com/search?q='
 export const MCP_SERVER_NAME = 'oculo'
-export const MCP_SERVER_VERSION = '0.4.0'
+export const MCP_SERVER_VERSION = '0.4.1'
 
 export const DEFAULT_SETTINGS: import('./types').AppSettings = {
   theme: 'system',
