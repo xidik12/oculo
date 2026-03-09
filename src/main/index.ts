@@ -16,6 +16,14 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist')
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
 app.commandLine.appendSwitch('enable-features', 'WebAuthenticationMacOS,WebAuthentication')
 app.commandLine.appendSwitch('enable-web-authentication-platform-support')
+
+// Global UA cleanup — removes Electron/oculo markers from ALL sessions before any windows open.
+// This is critical: per-webContents UA only affects page-level requests, but sub-resource requests
+// (XHR, fetch, preflight, service worker) use the session-level UA. Google detects the Electron
+// marker in these requests and blocks sign-in on fresh installs.
+app.userAgentFallback = app.userAgentFallback
+  .replace(/\s*Electron\/[\d.]+/, '')
+  .replace(/\s*oculo\/[\d.]+/i, '')
 import { isHeadless, headlessLog } from './headless'
 import { setupIPC, StoreRegistry } from './ipc'
 import { createMenu } from './menu'
@@ -187,6 +195,13 @@ app.whenReady().then(async () => {
 
   // --- Passkey / WebAuthn / Permissions (set ONCE on persistent session) ---
   const webviewSession = electronSession.fromPartition('persist:oculo')
+
+  // Clean UA at session level — ensures ALL requests (XHR, fetch, preflight, sub-resources)
+  // use a Chrome-compatible UA. Without this, Google detects the Electron marker.
+  const sessionUA = webviewSession.getUserAgent()
+  webviewSession.setUserAgent(
+    sessionUA.replace(/\s*Electron\/[\d.]+/, '').replace(/\s*oculo\/[\d.]+/i, '')
+  )
 
   // Permission REQUEST handler — called when site uses WebAuthn, media, etc.
   webviewSession.setPermissionRequestHandler((_wc, permission, callback) => {
