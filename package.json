@@ -75,6 +75,8 @@
   "build": {
     "appId": "com.oculo.browser",
     "productName": "Oculo",
+    "npmRebuild": false,
+    "beforeBuild": "./scripts/beforeBuild.js",
     "mac": {
       "category": "public.app-category.productivity",
       "target": [
@@ -89,8 +91,14 @@
     },
     "win": {
       "target": [
-        "nsis",
-        "portable"
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
       ],
       "icon": "assets/icons/icon.ico"
     },
