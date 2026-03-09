@@ -230,3 +230,190 @@ export class DataExtractor {
     }
   }
 }
+
+/**
+ * Build JS code to detect and extract data from HTML tables.
+ * Returns structured table data with headers and rows.
+ */
+export function buildTableExtractionCode(): string {
+  return `(function() {
+    var tables = document.querySelectorAll('table');
+    if (!tables.length) return JSON.stringify({ tables: [] });
+
+    var result = [];
+    for (var t = 0; t < Math.min(tables.length, 10); t++) {
+      var table = tables[t];
+      var headers = [];
+      var rows = [];
+
+      // Extract headers from thead or first row
+      var ths = table.querySelectorAll('thead th, thead td');
+      if (ths.length) {
+        for (var h = 0; h < ths.length; h++) {
+          headers.push(ths[h].textContent.trim());
+        }
+      }
+
+      // Extract body rows
+      var trs = table.querySelectorAll('tbody tr, tr');
+      for (var r = 0; r < Math.min(trs.length, 100); r++) {
+        var cells = trs[r].querySelectorAll('td, th');
+        if (cells.length === 0) continue;
+        // Skip header row if we already got headers
+        if (r === 0 && headers.length > 0 && !trs[r].closest('tbody')) continue;
+        var row = [];
+        for (var c = 0; c < cells.length; c++) {
+          row.push(cells[c].textContent.trim().substring(0, 200));
+        }
+        // If no headers, use first row as headers
+        if (headers.length === 0 && r === 0) {
+          headers = row;
+          continue;
+        }
+        rows.push(row);
+      }
+
+      result.push({ headers: headers, rows: rows, rowCount: rows.length });
+    }
+
+    return JSON.stringify({ tables: result });
+  })()`
+}
+
+/**
+ * Build JS code to detect card-like patterns (product listings, search results, etc.)
+ */
+export function buildCardDetectionCode(): string {
+  return `(function() {
+    // Detect repeated patterns (cards, list items, product tiles)
+    var containers = document.querySelectorAll('[class*="card"], [class*="item"], [class*="result"], [class*="product"], [class*="tile"], [class*="listing"], ul > li, ol > li, [role="listitem"]');
+
+    // Group by parent to find repeated patterns
+    var groups = new Map();
+    containers.forEach(function(el) {
+      var parent = el.parentElement;
+      if (!parent) return;
+      var key = parent.tagName + '.' + (parent.className || '').split(' ').slice(0, 2).join('.');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(el);
+    });
+
+    var cards = [];
+    groups.forEach(function(elements, key) {
+      if (elements.length < 2) return; // Need at least 2 for a pattern
+
+      for (var i = 0; i < Math.min(elements.length, 20); i++) {
+        var el = elements[i];
+        var card = {
+          title: '',
+          description: '',
+          link: '',
+          image: ''
+        };
+
+        // Find title (h1-h6, or first bold/strong element)
+        var heading = el.querySelector('h1, h2, h3, h4, h5, h6, strong, b, [class*="title"], [class*="name"]');
+        if (heading) card.title = heading.textContent.trim().substring(0, 100);
+
+        // Find description (p tag or text content)
+        var desc = el.querySelector('p, [class*="desc"], [class*="summary"], [class*="text"]');
+        if (desc) card.description = desc.textContent.trim().substring(0, 200);
+
+        // Find link
+        var link = el.querySelector('a[href]');
+        if (link) card.link = link.href;
+
+        // Find image
+        var img = el.querySelector('img[src]');
+        if (img) card.image = img.src;
+
+        if (card.title || card.description) cards.push(card);
+      }
+    });
+
+    return JSON.stringify({ cards: cards.slice(0, 50), total: cards.length });
+  })()`
+}
+
+/**
+ * Build JS code to extract ARIA landmarks for page structure understanding.
+ */
+export function buildLandmarkExtractionCode(): string {
+  return `(function() {
+    var landmarks = [];
+
+    // ARIA landmark roles
+    var roles = ['banner', 'navigation', 'main', 'complementary', 'contentinfo', 'search', 'form', 'region'];
+    roles.forEach(function(role) {
+      var elements = document.querySelectorAll('[role="' + role + '"]');
+      elements.forEach(function(el) {
+        landmarks.push({
+          role: role,
+          label: el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || '',
+          childCount: el.children.length
+        });
+      });
+    });
+
+    // Also check semantic HTML5 elements
+    var semanticMap = { header: 'banner', nav: 'navigation', main: 'main', aside: 'complementary', footer: 'contentinfo' };
+    Object.keys(semanticMap).forEach(function(tag) {
+      var elements = document.querySelectorAll(tag);
+      elements.forEach(function(el) {
+        // Don't duplicate if already has explicit role
+        if (el.getAttribute('role')) return;
+        landmarks.push({
+          role: semanticMap[tag],
+          label: el.getAttribute('aria-label') || '',
+          childCount: el.children.length,
+          implicit: true
+        });
+      });
+    });
+
+    return JSON.stringify({ landmarks: landmarks });
+  })()`
+}
+
+/**
+ * Build JS code to detect pagination patterns.
+ */
+export function buildPaginationDetectionCode(): string {
+  return `(function() {
+    var pagination = null;
+
+    // Look for pagination elements
+    var navs = document.querySelectorAll('nav[aria-label*="pag"], [class*="paginat"], [class*="pager"], [role="navigation"]');
+
+    for (var i = 0; i < navs.length; i++) {
+      var nav = navs[i];
+      var links = nav.querySelectorAll('a[href]');
+      if (links.length < 2) continue;
+
+      var pages = [];
+      var currentPage = null;
+
+      for (var j = 0; j < links.length; j++) {
+        var link = links[j];
+        var text = link.textContent.trim();
+        var isCurrent = link.getAttribute('aria-current') === 'page' || link.classList.contains('active') || link.classList.contains('current');
+
+        if (/^\\d+$/.test(text)) {
+          pages.push({ page: parseInt(text), url: link.href, current: isCurrent });
+          if (isCurrent) currentPage = parseInt(text);
+        } else if (text.toLowerCase().includes('next') || text.includes('\u203a') || text.includes('\u2192')) {
+          pages.push({ page: 'next', url: link.href, current: false });
+        } else if (text.toLowerCase().includes('prev') || text.includes('\u2039') || text.includes('\u2190')) {
+          pages.push({ page: 'prev', url: link.href, current: false });
+        }
+      }
+
+      if (pages.length > 0) {
+        pagination = { currentPage: currentPage, pages: pages };
+        break;
+      }
+    }
+
+    return JSON.stringify({ pagination: pagination });
+  })()`
+}

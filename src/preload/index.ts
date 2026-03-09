@@ -516,6 +516,14 @@ const api = {
   sendMcpToolResult: (callId: string, result: string) => {
     ipcRenderer.send('mcp:tool-result', callId, result)
   },
+  onMcpAgentTabCreate: (callback: (responseChannel: string) => void) => {
+    const handler = (_: any, responseChannel: string) => callback(responseChannel)
+    ipcRenderer.on('mcp:agent-tab-create', handler)
+    return () => { ipcRenderer.removeListener('mcp:agent-tab-create', handler) }
+  },
+  sendMcpAgentTabCreated: (responseChannel: string, tabId: string) => {
+    ipcRenderer.send(responseChannel, tabId)
+  },
 
   // Open/close webview DevTools docked at bottom (like Chrome)
   openWebviewDevTools: (tabId: string) => {

@@ -90,7 +90,7 @@ describe('MCP Tool Schema Consistency', () => {
     const serverCode = fs.readFileSync(serverPath, 'utf-8')
     const fillIdx = serverCode.indexOf("name: 'fill'")
     expect(fillIdx).toBeGreaterThan(-1)
-    const fillBlock = serverCode.substring(fillIdx, fillIdx + 1000)
+    const fillBlock = serverCode.substring(fillIdx, fillIdx + 2000)
     expect(fillBlock).toContain("required: ['fields']")
   })
 
@@ -114,10 +114,10 @@ describe('MCP Tool Schema Consistency', () => {
 describe('MCP Server HTTP endpoints', () => {
   const serverPath = path.join(SRC_ROOT, 'main/mcp/server.ts')
 
-  it('should handle /health endpoint', () => {
+  it('should reject non-POST methods (except OPTIONS and SSE GET)', () => {
     const serverCode = fs.readFileSync(serverPath, 'utf-8')
-    expect(serverCode).toContain("'/health'")
-    expect(serverCode).toContain("status: 'ok'")
+    expect(serverCode).toContain('Method not allowed')
+    expect(serverCode).toContain("req.method !== 'POST'")
   })
 
   it('should handle /mcp endpoint', () => {

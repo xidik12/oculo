@@ -219,6 +219,8 @@ export interface AppSettings {
   performanceMode?: boolean
   tabSuspendAfterMinutes?: number
   networkThrottling?: 'none' | 'slow-3g' | 'fast-3g' | 'regular-4g'
+  /** Auto-approve browser actions when enabled (payments, passwords, shell still require confirm) */
+  autonomousMode?: boolean
 }
 
 // IPC message types
@@ -364,6 +366,7 @@ export interface ElementFingerprint {
   disabled?: boolean
   expanded?: boolean
   required?: boolean
+  domValue?: string
 }
 
 // === Proxy Support ===

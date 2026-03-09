@@ -30,6 +30,26 @@ import http from 'http'
 
 const PORT_FILE = join(homedir(), '.oculo-port')
 
+/** Cached connection to avoid re-reading port file */
+let cachedConn = null
+let cachedAt = 0
+const CACHE_TTL = 30_000 // 30 seconds
+
+function getCachedConnection() {
+  if (cachedConn && Date.now() - cachedAt < CACHE_TTL) return cachedConn
+  cachedConn = getConnection()
+  cachedAt = Date.now()
+  return cachedConn
+}
+
+function invalidateCache() {
+  cachedConn = null
+  cachedAt = 0
+}
+
+/** Unique agent ID for multi-agent tab isolation */
+const agentId = 'agent-' + process.pid + '-' + Date.now()
+
 /**
  * Static tool definitions — always returned by tools/list so Claude Code
  * registers them even when Oculo is not yet running. Errors surface at
@@ -124,7 +144,7 @@ const STATIC_TOOLS = [
   },
   {
     name: 'run',
-    description: 'Execute a multi-step pipeline in Oculo browser. Each step is an object with exactly ONE key: page, act, fill, read, wait, or if. Cached for replay.',
+    description: 'PREFERRED for any task with 2+ actions. Executes a multi-step pipeline in a SINGLE call — use this instead of multiple act/fill calls. Example — post on X: run({steps:[{act:{action:"navigate",url:"https://x.com/compose/post"}},{wait:{timeout:2000}},{act:{action:"type",text:"Hello world",role:"textbox"}},{act:{action:"click",text:"Post",role:"button"}}]}). Each step is an object with exactly ONE key: page, act, fill, read, wait, or if. Cached for replay.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -316,6 +336,25 @@ const STATIC_TOOLS = [
       },
       required: ['question']
     }
+  },
+  {
+    name: 'abort',
+    description: 'Cancel a pending tool call by callId, or pass callId="all" to cancel everything.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        callId: { type: 'string', description: 'The call ID to cancel, or "all" to cancel all pending calls' }
+      },
+      required: ['callId']
+    }
+  },
+  {
+    name: 'status',
+    description: 'List all pending tool calls with their callId, toolName, and elapsed time.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
   }
 ]
 
@@ -373,7 +412,8 @@ function httpPost(port, body, token) {
     const data = JSON.stringify(body)
     const headers = {
       'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(data)
+      'Content-Length': Buffer.byteLength(data),
+      'X-Agent-Id': agentId
     }
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
@@ -444,7 +484,7 @@ Quick reference:
  * forward to get the live (possibly updated) definitions instead.
  */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const conn = getConnection()
+  const conn = getCachedConnection()
   if (!conn) {
     return { tools: STATIC_TOOLS }
   }
@@ -466,7 +506,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  * If Oculo isn't running, return a clear error with instructions.
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const conn = getConnection()
+  let conn = getCachedConnection()
   if (!conn) {
     return {
       content: [
@@ -479,30 +519,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   }
 
-  // Quick liveness check before attempting the (potentially slow) tool call
-  const alive = await verifyConnection(conn)
-  if (!alive) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Oculo browser is not reachable (stale port file cleaned). Launch Oculo and try again.'
-        }
-      ],
-      isError: true
-    }
-  }
-
-  try {
-    const result = await httpPost(conn.port, {
+  // Skip liveness check — httpPost will fail with ECONNREFUSED if dead, and we auto-retry
+  async function attempt(connection) {
+    return await httpPost(connection.port, {
       method: 'tools/call',
       params: {
         name: request.params.name,
         arguments: request.params.arguments
       }
-    }, conn.token)
-    return result
+    }, connection.token)
+  }
+
+  try {
+    return await attempt(conn)
   } catch (err) {
+    if (err.message?.includes('connection refused') || err.code === 'ECONNREFUSED') {
+      // Auto-retry: invalidate cache, re-read port file, wait 1s, retry once
+      invalidateCache()
+      await new Promise(r => setTimeout(r, 1000))
+      conn = getCachedConnection()
+      if (!conn) {
+        return {
+          content: [{ type: 'text', text: 'Oculo browser is not running after retry. Launch Oculo and try again.' }],
+          isError: true
+        }
+      }
+      try {
+        return await attempt(conn)
+      } catch (retryErr) {
+        return {
+          content: [{ type: 'text', text: `Failed to reach Oculo after retry: ${retryErr.message}` }],
+          isError: true
+        }
+      }
+    }
     return {
       content: [
         {

@@ -4,8 +4,8 @@ export default function AboutPage() {
   const version = '0.4.0'
 
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-surface-dark-0 overflow-auto">
-      <div className="max-w-[560px] w-full px-6 py-12 text-center">
+    <div className="absolute inset-0 flex flex-col bg-surface-dark-0 overflow-y-auto">
+      <div className="max-w-[560px] w-full px-6 py-12 text-center m-auto">
         {/* Logo + Name */}
         <div className="flex flex-col items-center gap-3 mb-8">
           <img src={oculoIcon} alt="Oculo" className="w-20 h-20 rounded-2xl shadow-lg" />

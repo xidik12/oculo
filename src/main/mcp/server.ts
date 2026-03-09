@@ -25,9 +25,45 @@ const PORT_FILE = path.join(os.homedir(), '.oculo-port')
 const BASE_PORT = 19516
 const MAX_PORT = 19520
 
-const debugLog = process.env.NODE_ENV !== 'production'
+const debugLog = process.env.OCULO_MCP_DEBUG === '1' || process.env.NODE_ENV !== 'production'
   ? (...args: unknown[]) => console.log('[MCP]', ...args)
   : () => {}
+
+/** Sliding window rate limiter */
+class RateLimiter {
+  private windows = new Map<string, number[]>()
+  private maxRequests: number
+  private windowMs: number
+
+  constructor(maxRequests = 200, windowMs = 60000) {
+    this.maxRequests = maxRequests
+    this.windowMs = windowMs
+  }
+
+  isAllowed(key: string): boolean {
+    const now = Date.now()
+    const timestamps = this.windows.get(key) || []
+    // Remove expired entries
+    const valid = timestamps.filter(t => now - t < this.windowMs)
+    if (valid.length >= this.maxRequests) {
+      this.windows.set(key, valid)
+      return false
+    }
+    valid.push(now)
+    this.windows.set(key, valid)
+    return true
+  }
+
+  // Cleanup old entries periodically
+  cleanup(): void {
+    const now = Date.now()
+    for (const [key, timestamps] of this.windows) {
+      const valid = timestamps.filter(t => now - t < this.windowMs)
+      if (valid.length === 0) this.windows.delete(key)
+      else this.windows.set(key, valid)
+    }
+  }
+}
 
 /**
  * MCP Server Manager — HTTP-based.
@@ -40,6 +76,8 @@ export class McpServerManager {
   private httpServer: http.Server | null = null
   private actualPort: number | null = null
   private authToken: string
+  private rateLimiter = new RateLimiter(200, 60000)
+  private rateLimiterCleanup: NodeJS.Timeout | null = null
   private mainWindow: BrowserWindow
   private security: SecurityManager
   private auditLog: AuditLog
@@ -48,7 +86,10 @@ export class McpServerManager {
   private permissionGate: PermissionGate
 
   /** Pending tool call promises — resolved by IPC from renderer */
-  private pendingToolCalls = new Map<string, { resolve: (result: string) => void; timer: NodeJS.Timeout }>()
+  private pendingToolCalls = new Map<string, { resolve: (result: string) => void; timer: NodeJS.Timeout; startedAt: number; toolName: string }>()
+
+  /** Agent ID → tab ID mapping for multi-agent tab isolation */
+  private agentTabMap = new Map<string, string>()
 
   /** Media generator for image/video generation (runs in main process) */
   private mediaGenerator: MediaGenerator
@@ -76,6 +117,9 @@ export class McpServerManager {
 
   /** DOM snapshots per domain for structural comparison */
   private domSnapshots: Map<string, StructuralSnapshot> = new Map()
+
+  /** Active SSE connections for streaming tool results */
+  private sseConnections = new Map<string, import('http').ServerResponse>()
 
   /** Tool definitions served on `tools/list` */
   private readonly tools = [
@@ -167,7 +211,7 @@ export class McpServerManager {
     },
     {
       name: 'run',
-      description: 'Execute a multi-step pipeline in one call. Each step can page/act/fill/read/wait. Successful runs are cached for instant replay. Use workflow ID to replay.',
+      description: 'PREFERRED for any task with 2+ actions. Executes a multi-step pipeline in a SINGLE call — use this instead of multiple act/fill calls. Example — post on X: run({steps:[{act:{action:"navigate",url:"https://x.com/compose/post"}},{wait:{timeout:2000}},{act:{action:"type",text:"Hello world",role:"textbox"}},{act:{action:"click",text:"Post",role:"button"}}]}). Each step is an object with exactly ONE key: page, act, fill, read, wait, or if. Cached for replay.',
       inputSchema: {
         type: 'object' as const,
         properties: {
@@ -359,6 +403,25 @@ export class McpServerManager {
           question: { type: 'string', description: 'What to analyze in the image' }
         }
       }
+    },
+    {
+      name: 'abort',
+      description: 'Cancel a pending tool call by callId, or pass callId="all" to cancel everything.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {
+          callId: { type: 'string', description: 'The call ID to cancel, or "all" to cancel all pending calls' }
+        },
+        required: ['callId']
+      }
+    },
+    {
+      name: 'status',
+      description: 'List all pending tool calls with their callId, toolName, and elapsed time.',
+      inputSchema: {
+        type: 'object' as const,
+        properties: {}
+      }
     }
   ]
 
@@ -375,7 +438,7 @@ export class McpServerManager {
     this.redactor = redactor
     this.patternDetector = patternDetector || null
     this.antiInjection = new AntiInjection()
-    this.permissionGate = new PermissionGate(mainWindow, auditLog)
+    this.permissionGate = new PermissionGate(mainWindow, auditLog, () => this.security.getSettings())
     this.authToken = crypto.randomBytes(32).toString('hex')
     this.proxyManager = new ProxyManager()
     this.sessionRecorder = new SessionRecorder()
@@ -423,7 +486,7 @@ export class McpServerManager {
         resolve('Error: Tool call timed out after 120 seconds.')
       }, 120_000)
 
-      this.pendingToolCalls.set(callId, { resolve, timer })
+      this.pendingToolCalls.set(callId, { resolve, timer, startedAt: Date.now(), toolName: name })
 
       try {
         this.mainWindow.webContents.send('mcp:tool-call', callId, name, args)
@@ -436,13 +499,98 @@ export class McpServerManager {
   }
 
   /**
+   * Create a new tab for an agent via IPC to the renderer.
+   * Returns the new tab ID, or null if creation failed.
+   */
+  private createAgentTab(): Promise<string | null> {
+    return new Promise((resolve) => {
+      const responseChannel = `mcp:agent-tab-created-${crypto.randomUUID()}`
+      const timeout = setTimeout(() => {
+        ipcMain.removeAllListeners(responseChannel)
+        resolve(null)
+      }, 5000)
+
+      ipcMain.once(responseChannel, (_event, tabId: string) => {
+        clearTimeout(timeout)
+        resolve(tabId || null)
+      })
+
+      try {
+        this.mainWindow.webContents.send('mcp:agent-tab-create', responseChannel)
+      } catch {
+        clearTimeout(timeout)
+        ipcMain.removeAllListeners(responseChannel)
+        resolve(null)
+      }
+    })
+  }
+
+  /**
    * Handle a tool call — permission check, execute via renderer, redact, audit.
    */
   async handleToolCall(
     name: string,
-    args: Record<string, unknown>
+    args: Record<string, unknown>,
+    agentId?: string
   ): Promise<{ content: unknown[]; isError?: boolean }> {
     try {
+      // --- Agent cancellation tools (handled before permission check) ---
+      if (name === 'abort') {
+        const callId = String(args.callId || '')
+        if (!callId) {
+          return { content: [{ type: 'text', text: 'Error: callId is required. Use "all" to cancel everything.' }], isError: true }
+        }
+        if (callId === 'all') {
+          const count = this.pendingToolCalls.size
+          for (const [id, pending] of this.pendingToolCalls) {
+            clearTimeout(pending.timer)
+            pending.resolve('Cancelled by agent')
+          }
+          this.pendingToolCalls.clear()
+          return { content: [{ type: 'text', text: `Cancelled ${count} pending call(s).` }] }
+        }
+        const pending = this.pendingToolCalls.get(callId)
+        if (!pending) {
+          return { content: [{ type: 'text', text: `No pending call with id "${callId}".` }], isError: true }
+        }
+        clearTimeout(pending.timer)
+        pending.resolve('Cancelled by agent')
+        this.pendingToolCalls.delete(callId)
+        return { content: [{ type: 'text', text: `Cancelled call "${callId}" (${pending.toolName}).` }] }
+      }
+
+      if (name === 'status') {
+        const entries = Array.from(this.pendingToolCalls.entries()).map(([id, p]) => ({
+          callId: id,
+          toolName: p.toolName,
+          elapsedMs: Date.now() - p.startedAt
+        }))
+        return { content: [{ type: 'text', text: entries.length === 0 ? 'No pending calls.' : JSON.stringify(entries, null, 2) }] }
+      }
+
+      // --- Multi-agent tab isolation ---
+      if (agentId && !args.tabId) {
+        // Tools that need a tab context
+        const needsTab = ['page', 'act', 'fill', 'read', 'run', 'tabs', 'translate', 'lens'].includes(name)
+        if (needsTab) {
+          const existingTabId = this.agentTabMap.get(agentId)
+          if (existingTabId) {
+            args.tabId = existingTabId
+          } else {
+            // Create a new tab for this agent via IPC to renderer
+            try {
+              const tabId = await this.createAgentTab()
+              if (tabId) {
+                this.agentTabMap.set(agentId, tabId)
+                args.tabId = tabId
+              }
+            } catch {
+              // Fall through to use active tab
+            }
+          }
+        }
+      }
+
       // Permission check
       const actionDesc = name === 'act' ? (args as any)?.action || name : name
       const targetDesc = (args as any)?.text || (args as any)?.url || (args as any)?.what || name
@@ -727,13 +875,86 @@ export class McpServerManager {
 
   async start(): Promise<void> {
     this.httpServer = http.createServer(async (req, res) => {
-      if (req.method === 'GET' && req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ status: 'ok', name: MCP_SERVER_NAME }))
+      // CORS preflight
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, {
+          'Access-Control-Allow-Origin': 'null',
+          'Access-Control-Allow-Methods': 'POST',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization'
+        })
+        res.end()
         return
       }
 
-      if (req.method === 'POST' && req.url === '/mcp') {
+      // Health check endpoint (no auth required — localhost-only liveness probe)
+      if (req.url === '/health' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ status: 'ok', version: '0.4.0' }))
+        return
+      }
+
+      // SSE streaming endpoint for long-running tool results
+      if (req.url?.startsWith('/mcp/stream') && req.method === 'GET') {
+        // Validate auth token from query string
+        const url = new URL(req.url, `http://localhost:${this.actualPort}`)
+        const token = url.searchParams.get('token') || req.headers.authorization?.replace('Bearer ', '')
+        if (token !== this.authToken) {
+          res.writeHead(401, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Unauthorized' }))
+          return
+        }
+
+        // Set up SSE
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': 'null'
+        })
+
+        // Send heartbeat every 30s to keep connection alive
+        const heartbeat = setInterval(() => {
+          try { res.write('event: heartbeat\ndata: {}\n\n') } catch { clearInterval(heartbeat) }
+        }, 30000)
+
+        // Store this SSE connection for sending events
+        const sseId = crypto.randomUUID()
+        this.sseConnections.set(sseId, res)
+
+        // Send initial connection event
+        res.write(`event: connected\ndata: ${JSON.stringify({ id: sseId })}\n\n`)
+
+        req.on('close', () => {
+          clearInterval(heartbeat)
+          this.sseConnections.delete(sseId)
+        })
+        return
+      }
+
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Method not allowed' }))
+        return
+      }
+
+      // CORS: reject requests with non-localhost Origin
+      const origin = req.headers.origin
+      if (origin) {
+        try {
+          const originUrl = new URL(origin)
+          if (!['localhost', '127.0.0.1', '::1'].includes(originUrl.hostname) && origin !== 'null') {
+            res.writeHead(403, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'Forbidden: non-localhost origin' }))
+            return
+          }
+        } catch {
+          res.writeHead(403, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Forbidden: invalid origin' }))
+          return
+        }
+      }
+
+      if (req.url === '/mcp') {
         const authHeader = req.headers['authorization'] || ''
         const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : ''
         if (token !== this.authToken) {
@@ -741,11 +962,48 @@ export class McpServerManager {
           res.end(JSON.stringify({ error: 'Unauthorized' }))
           return
         }
+
+        // Rate limiting
+        if (!this.rateLimiter.isAllowed(token)) {
+          res.writeHead(429, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ error: 'Rate limit exceeded. Max 200 requests per minute.' }))
+          return
+        }
+
         let body = ''
-        req.on('data', (chunk: Buffer) => { body += chunk.toString() })
+        let bodySize = 0
+        const MAX_BODY_SIZE = 10 * 1024 * 1024 // 10MB
+        let destroyed = false
+
+        req.on('data', (chunk: Buffer) => {
+          bodySize += chunk.length
+          if (bodySize > MAX_BODY_SIZE) {
+            if (!destroyed) {
+              destroyed = true
+              res.writeHead(413, { 'Content-Type': 'application/json' })
+              res.end(JSON.stringify({ error: 'Request body too large' }))
+              req.destroy()
+            }
+            return
+          }
+          body += chunk.toString()
+        })
         req.on('end', async () => {
+          if (destroyed) return
           try {
             const request = JSON.parse(body)
+
+            // Validate JSON-RPC structure
+            if (!request.method || typeof request.method !== 'string') {
+              res.writeHead(400, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': 'null' })
+              res.end(JSON.stringify({
+                jsonrpc: '2.0',
+                error: { code: -32600, message: 'Invalid request: missing method' },
+                id: request.id || null
+              }))
+              return
+            }
+
             const { method, params } = request
             let response: unknown
 
@@ -758,7 +1016,9 @@ export class McpServerManager {
                 res.end(JSON.stringify({ error: 'Missing tool name' }))
                 return
               }
-              response = await this.handleToolCall(name, args || {})
+              // Extract agent ID for multi-agent tab isolation
+              const agentId = (req.headers['x-agent-id'] as string) || `anon-${req.socket.remotePort}`
+              response = await this.handleToolCall(name, args || {}, agentId)
             } else {
               res.writeHead(400, { 'Content-Type': 'application/json' })
               res.end(JSON.stringify({ error: `Unknown method: ${method}` }))
@@ -779,6 +1039,8 @@ export class McpServerManager {
       res.end(JSON.stringify({ error: 'Not found' }))
     })
 
+    this.httpServer.setTimeout(120000)
+
     let bound = false
     for (let port = BASE_PORT; port <= MAX_PORT; port++) {
       bound = await this.listenOnPort(this.httpServer, port)
@@ -792,11 +1054,15 @@ export class McpServerManager {
 
     try {
       fs.writeFileSync(PORT_FILE, `${this.actualPort}:${this.authToken}`, { encoding: 'utf-8', mode: 0o600 })
+      fs.chmodSync(PORT_FILE, 0o600)
     } catch (err) {
       console.error('Oculo MCP server: failed to write port file:', err)
     }
 
     console.log(`Oculo MCP server listening on http://127.0.0.1:${this.actualPort}`)
+
+    // Rate limiter cleanup
+    this.rateLimiterCleanup = setInterval(() => this.rateLimiter.cleanup(), 300000)
   }
 
   /** Update provider configs for media generation API key lookup */
@@ -1051,9 +1317,41 @@ export class McpServerManager {
     return this.selectorCache.stats()
   }
 
+  /** Rotate auth token — regenerates and updates port file */
+  rotateToken(): void {
+    this.authToken = crypto.randomBytes(32).toString('hex')
+    if (this.actualPort) {
+      try {
+        fs.writeFileSync(PORT_FILE, `${this.actualPort}:${this.authToken}`)
+        fs.chmodSync(PORT_FILE, 0o600)
+        debugLog('Auth token rotated')
+      } catch (err) {
+        console.error('Failed to write rotated token:', err)
+      }
+    }
+  }
+
+  /** Send an event to all connected SSE clients */
+  private broadcastSSE(event: string, data: unknown): void {
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    for (const [id, res] of this.sseConnections) {
+      try {
+        res.write(payload)
+      } catch {
+        this.sseConnections.delete(id)
+      }
+    }
+  }
+
   stop(): void {
+    // Close SSE connections
+    for (const [, res] of this.sseConnections) {
+      try { res.end() } catch { /* best-effort */ }
+    }
+    this.sseConnections.clear()
     // Flush selector cache on shutdown
     this.selectorCache.flush()
+    if (this.rateLimiterCleanup) { clearInterval(this.rateLimiterCleanup); this.rateLimiterCleanup = null }
     if (this.httpServer) { this.httpServer.close(); this.httpServer = null }
     try { if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE) } catch { /* best-effort */ }
     this.actualPort = null

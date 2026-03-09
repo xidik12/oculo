@@ -164,11 +164,31 @@ export class FormDetector {
             }
             return false;
           }
-          // Contenteditable (DraftJS, ProseMirror, etc.)
+          // Contenteditable (DraftJS, ProseMirror, etc.) — 3-step fallback chain
           if (el.contentEditable === 'true' || el.getAttribute('role') === 'textbox') {
             el.focus();
+            // Clear existing content
             document.execCommand('selectAll', false, null);
             document.execCommand('delete', false, null);
+
+            // Strategy 1: Clipboard paste simulation (most reliable for React/DraftJS)
+            try {
+              const dt = new DataTransfer();
+              dt.setData('text/plain', value);
+              const pasteEvent = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+              el.dispatchEvent(pasteEvent);
+              if (el.textContent && el.textContent.includes(value)) return true;
+            } catch(e) { /* fallback */ }
+
+            // Strategy 2: InputEvent with insertText (works for some React apps)
+            try {
+              el.textContent = '';
+              el.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: value, bubbles: true, cancelable: true }));
+              el.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: value, bubbles: true }));
+              if (el.textContent && el.textContent.includes(value)) return true;
+            } catch(e) { /* fallback */ }
+
+            // Strategy 3: execCommand fallback (works for simple contenteditable)
             document.execCommand('insertText', false, value);
             return true;
           }

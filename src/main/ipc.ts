@@ -27,30 +27,33 @@ import { WatcherStore } from './data/watchers'
 import { ProxyManager } from './network/proxy'
 import { SessionRecorder } from './data/session-recorder'
 
-export function setupIPC(
-  mainWindow: BrowserWindow,
-  security: SecurityManager,
-  audit: AuditLog,
-  redactor: Redactor,
-  agent?: AgentController,
-  bookmarkStore?: BookmarkStore,
-  historyStore?: HistoryStore,
-  downloadManager?: DownloadManager,
-  zoomStore?: ZoomStore,
-  runCache?: RunCache,
-  ptyManager?: PtyManager,
-  mcpClientManager?: McpClientManager,
-  sessionMemoryStore?: SessionMemoryStore,
-  containerStore?: ContainerStore,
-  cardStore?: CardStore,
-  workspaceStore?: WorkspaceStore,
-  macroStore?: MacroStore,
-  pinnedAppStore?: PinnedAppStore,
-  patternDetector?: PatternDetector,
-  watcherStore?: WatcherStore,
-  proxyManager?: ProxyManager,
-  sessionRecorder?: SessionRecorder
-): void {
+export interface StoreRegistry {
+  mainWindow: BrowserWindow
+  security: SecurityManager
+  audit: AuditLog
+  redactor: Redactor
+  agent?: AgentController
+  getBookmarkStore: () => BookmarkStore
+  getHistoryStore: () => HistoryStore
+  getDownloadManager: () => DownloadManager
+  getZoomStore: () => ZoomStore
+  getRunCache: () => RunCache
+  getPtyManager: () => PtyManager
+  getMcpClientManager: () => McpClientManager
+  getSessionMemoryStore: () => SessionMemoryStore
+  getContainerStore: () => ContainerStore
+  getCardStore: () => CardStore
+  getWorkspaceStore: () => WorkspaceStore
+  getMacroStore: () => MacroStore
+  getPinnedAppStore: () => PinnedAppStore
+  getPatternDetector: () => PatternDetector
+  getWatcherStore: () => WatcherStore
+  getProxyManager: () => ProxyManager
+  getSessionRecorder: () => SessionRecorder
+}
+
+export function setupIPC(registry: StoreRegistry): void {
+  const { mainWindow, security, audit, redactor, agent } = registry
   // Tab management - forwarded to renderer
   ipcMain.handle(IPC.TAB_CREATE, async (_, url?: string) => {
     mainWindow.webContents.send(IPC.TAB_CREATE, url)
@@ -230,78 +233,78 @@ export function setupIPC(
 
   // === Bookmarks ===
   ipcMain.handle(IPC.BOOKMARKS_LIST, async () => {
-    return bookmarkStore?.list() || []
+    return registry.getBookmarkStore().list() || []
   })
 
   ipcMain.handle(IPC.BOOKMARKS_ADD, async (_, title: string, url: string, favicon?: string) => {
-    return bookmarkStore?.add(title, url, favicon) || null
+    return registry.getBookmarkStore().add(title, url, favicon) || null
   })
 
   ipcMain.handle(IPC.BOOKMARKS_UPDATE, async (_, id: string, updates: Partial<import('../shared/types').Bookmark>) => {
-    return bookmarkStore?.update(id, updates) || null
+    return registry.getBookmarkStore().update(id, updates) || null
   })
 
   ipcMain.handle(IPC.BOOKMARKS_DELETE, async (_, id: string) => {
-    return bookmarkStore?.delete(id) || false
+    return registry.getBookmarkStore().delete(id) || false
   })
 
   ipcMain.handle(IPC.BOOKMARKS_FIND_URL, async (_, url: string) => {
-    return bookmarkStore?.findByUrl(url) || null
+    return registry.getBookmarkStore().findByUrl(url) || null
   })
 
   // === History ===
   ipcMain.handle(IPC.HISTORY_ADD, async (_, url: string, title: string, favicon?: string) => {
-    historyStore?.addVisit(url, title, favicon)
+    registry.getHistoryStore().addVisit(url, title, favicon)
     return true
   })
 
   ipcMain.handle(IPC.HISTORY_LIST, async (_, query?: string, limit?: number) => {
-    if (query) return historyStore?.search(query, limit) || []
-    return historyStore?.getRecent(limit) || []
+    if (query) return registry.getHistoryStore().search(query, limit) || []
+    return registry.getHistoryStore().getRecent(limit) || []
   })
 
   ipcMain.handle(IPC.HISTORY_CLEAR, async () => {
-    historyStore?.clear()
+    registry.getHistoryStore().clear()
     return true
   })
 
   ipcMain.handle(IPC.HISTORY_DELETE_URL, async (_, url: string) => {
-    historyStore?.deleteUrl(url)
+    registry.getHistoryStore().deleteUrl(url)
     return true
   })
 
   // === Downloads ===
   ipcMain.handle(IPC.DOWNLOADS_LIST, async () => {
-    return downloadManager?.list() || []
+    return registry.getDownloadManager().list() || []
   })
 
   ipcMain.handle(IPC.DOWNLOADS_CANCEL, async (_, id: string) => {
-    downloadManager?.cancel(id)
+    registry.getDownloadManager().cancel(id)
     return true
   })
 
   ipcMain.handle(IPC.DOWNLOADS_OPEN, async (_, savePath: string) => {
-    downloadManager?.openFile(savePath)
+    registry.getDownloadManager().openFile(savePath)
     return true
   })
 
   ipcMain.handle(IPC.DOWNLOADS_SHOW_IN_FOLDER, async (_, savePath: string) => {
-    downloadManager?.showInFolder(savePath)
+    registry.getDownloadManager().showInFolder(savePath)
     return true
   })
 
   // === Zoom ===
   ipcMain.handle(IPC.ZOOM_GET, async (_, domain: string) => {
-    return zoomStore?.getZoom(domain) ?? 1.0
+    return registry.getZoomStore().getZoom(domain) ?? 1.0
   })
 
   ipcMain.handle(IPC.ZOOM_SET, async (_, domain: string, level: number) => {
-    zoomStore?.setZoom(domain, level)
+    registry.getZoomStore().setZoom(domain, level)
     return true
   })
 
   ipcMain.handle(IPC.ZOOM_RESET, async (_, domain: string) => {
-    zoomStore?.resetZoom(domain)
+    registry.getZoomStore().resetZoom(domain)
     return true
   })
 
@@ -595,6 +598,9 @@ export function setupIPC(
 
           // Add properties
           const props: string[] = []
+          if (!value && (role === 'textbox' || role === 'combobox' || role === 'searchbox')) {
+            props.push('value=""')
+          }
           if (value) props.push(`value="${value.substring(0, 40)}"`)
           if (node.properties) {
             for (const prop of node.properties) {
@@ -745,35 +751,35 @@ export function setupIPC(
 
   // === Run Cache (Compile-to-Code) ===
   ipcMain.handle('run-cache:save', async (_, url: string, steps: any[], description?: string) => {
-    return runCache?.saveWorkflow(url, steps, description) || null
+    return registry.getRunCache().saveWorkflow(url, steps, description) || null
   })
 
   ipcMain.handle('run-cache:find', async (_, url: string) => {
-    return runCache?.findForUrl(url) || []
+    return registry.getRunCache().findForUrl(url) || []
   })
 
   ipcMain.handle('run-cache:get', async (_, id: string) => {
-    return runCache?.getWorkflow(id) || null
+    return registry.getRunCache().getWorkflow(id) || null
   })
 
   ipcMain.handle('run-cache:mark-failed', async (_, id: string) => {
-    runCache?.markFailed(id)
+    registry.getRunCache().markFailed(id)
     return true
   })
 
   ipcMain.handle('run-cache:mark-success', async (_, id: string) => {
-    runCache?.markSuccess(id)
+    registry.getRunCache().markSuccess(id)
     return true
   })
 
   ipcMain.handle('run-cache:summary', async (_, domain: string) => {
-    return runCache?.getSummaryForDomain(domain) || ''
+    return registry.getRunCache().getSummaryForDomain(domain) || ''
   })
 
   // === Skills (tested workflows) ===
   ipcMain.handle('run-cache:skills', async (_, domain?: string) => {
-    if (domain) return runCache?.getSkillsForDomain(domain) || []
-    return runCache?.getSkillsSummary() || ''
+    if (domain) return registry.getRunCache().getSkillsForDomain(domain) || []
+    return registry.getRunCache().getSkillsSummary() || ''
   })
 
   // === Print to PDF ===
@@ -897,14 +903,14 @@ export function setupIPC(
     const clients = settings?.mcpClients || []
     clients.push(config)
     security.saveSettings({ mcpClients: clients })
-    if (config.enabled && mcpClientManager) {
-      await mcpClientManager.connect(config)
+    if (config.enabled) {
+      await registry.getMcpClientManager().connect(config)
     }
     return true
   })
 
   ipcMain.handle(IPC.MCP_CLIENT_REMOVE, async (_, serverId: string) => {
-    if (mcpClientManager) await mcpClientManager.disconnect(serverId)
+    await registry.getMcpClientManager().disconnect(serverId)
     const settings = security.getSettings()
     const clients = (settings?.mcpClients || []).filter(c => c.id !== serverId)
     security.saveSettings({ mcpClients: clients })
@@ -918,134 +924,131 @@ export function setupIPC(
     if (!cfg) return false
     cfg.enabled = enabled
     security.saveSettings({ mcpClients: clients })
-    if (mcpClientManager) {
-      if (enabled) await mcpClientManager.connect(cfg)
-      else await mcpClientManager.disconnect(serverId)
-    }
+    if (enabled) await registry.getMcpClientManager().connect(cfg)
+    else await registry.getMcpClientManager().disconnect(serverId)
     return true
   })
 
   ipcMain.handle(IPC.MCP_CLIENT_STATUS, async () => {
-    return mcpClientManager?.getStatus() || []
+    return registry.getMcpClientManager().getStatus() || []
   })
 
   ipcMain.handle(IPC.MCP_CLIENT_TOOLS, async () => {
-    return mcpClientManager?.listAllTools() || []
+    return registry.getMcpClientManager().listAllTools() || []
   })
 
   ipcMain.handle(IPC.MCP_CLIENT_CALL, async (_, namespacedName: string, args: Record<string, unknown>) => {
-    if (!mcpClientManager) return 'Error: MCP client not initialized'
-    return mcpClientManager.callTool(namespacedName, args || {})
+    return registry.getMcpClientManager().callTool(namespacedName, args || {})
   })
 
   // === Session Memory ===
   ipcMain.handle(IPC.MEMORY_LIST, async () => {
-    return sessionMemoryStore?.list() || []
+    return registry.getSessionMemoryStore().list() || []
   })
 
   ipcMain.handle(IPC.MEMORY_ADD, async (_, summary: string, urls: string[], tags?: string[]) => {
-    return sessionMemoryStore?.add(summary, urls, tags) || null
+    return registry.getSessionMemoryStore().add(summary, urls, tags) || null
   })
 
   ipcMain.handle(IPC.MEMORY_CLEAR, async () => {
-    sessionMemoryStore?.clear()
+    registry.getSessionMemoryStore().clear()
     return true
   })
 
   // === Containers ===
   ipcMain.handle(IPC.CONTAINER_LIST, async () => {
-    return containerStore?.list() || []
+    return registry.getContainerStore().list() || []
   })
 
   ipcMain.handle(IPC.CONTAINER_CREATE, async (_, name: string, color: string, icon: string) => {
-    return containerStore?.create(name, color, icon) || null
+    return registry.getContainerStore().create(name, color, icon) || null
   })
 
   ipcMain.handle(IPC.CONTAINER_UPDATE, async (_, id: string, updates: Partial<Pick<import('../shared/types').Container, 'name' | 'color' | 'icon'>>) => {
-    return containerStore?.update(id, updates) || null
+    return registry.getContainerStore().update(id, updates) || null
   })
 
   ipcMain.handle(IPC.CONTAINER_DELETE, async (_, id: string) => {
-    return containerStore?.delete(id) || false
+    return registry.getContainerStore().delete(id) || false
   })
 
   // === Cards / AI Skills ===
   ipcMain.handle(IPC.CARD_LIST, async () => {
-    return cardStore?.list() || []
+    return registry.getCardStore().list() || []
   })
 
   ipcMain.handle(IPC.CARD_CREATE, async (_, name: string, icon: string, systemInstruction: string, triggerDomains?: string[]) => {
-    return cardStore?.create(name, icon, systemInstruction, triggerDomains) || null
+    return registry.getCardStore().create(name, icon, systemInstruction, triggerDomains) || null
   })
 
   ipcMain.handle(IPC.CARD_UPDATE, async (_, id: string, updates: Partial<Omit<import('../shared/types').Card, 'id' | 'createdAt'>>) => {
-    return cardStore?.update(id, updates) || null
+    return registry.getCardStore().update(id, updates) || null
   })
 
   ipcMain.handle(IPC.CARD_DELETE, async (_, id: string) => {
-    return cardStore?.delete(id) || false
+    return registry.getCardStore().delete(id) || false
   })
 
   ipcMain.handle(IPC.CARD_ACTIVATE, async (_, id: string) => {
-    return cardStore?.activate(id) || null
+    return registry.getCardStore().activate(id) || null
   })
 
   // === Workspaces ===
   ipcMain.handle(IPC.WORKSPACE_LIST, async () => {
-    return workspaceStore?.list() || []
+    return registry.getWorkspaceStore().list() || []
   })
 
   ipcMain.handle(IPC.WORKSPACE_CREATE, async (_, name: string, color: string) => {
-    return workspaceStore?.create(name, color) || null
+    return registry.getWorkspaceStore().create(name, color) || null
   })
 
   ipcMain.handle(IPC.WORKSPACE_SWITCH, async (_, id: string) => {
-    return workspaceStore?.get(id) || null
+    return registry.getWorkspaceStore().get(id) || null
   })
 
   ipcMain.handle(IPC.WORKSPACE_DELETE, async (_, id: string) => {
-    return workspaceStore?.delete(id) || false
+    return registry.getWorkspaceStore().delete(id) || false
   })
 
   ipcMain.handle(IPC.WORKSPACE_SAVE, async (_, id: string, tabIds: string[], tabUrls: string[], aiHistory: Array<{ role: string; content: unknown }>) => {
-    workspaceStore?.saveState(id, tabIds, tabUrls, aiHistory)
+    registry.getWorkspaceStore().saveState(id, tabIds, tabUrls, aiHistory)
     return true
   })
 
   // === Macros ===
   ipcMain.handle(IPC.MACRO_LIST, async () => {
-    return macroStore?.list() || []
+    return registry.getMacroStore().list() || []
   })
 
   ipcMain.handle(IPC.MACRO_CREATE, async (_, name: string, steps: import('../shared/types').PipelineStep[], shortcut?: string, description?: string) => {
-    return macroStore?.create(name, steps, shortcut, description) || null
+    return registry.getMacroStore().create(name, steps, shortcut, description) || null
   })
 
   ipcMain.handle(IPC.MACRO_UPDATE, async (_, id: string, updates: Partial<Omit<import('../shared/types').Macro, 'id' | 'createdAt'>>) => {
-    return macroStore?.update(id, updates) || null
+    return registry.getMacroStore().update(id, updates) || null
   })
 
   ipcMain.handle(IPC.MACRO_DELETE, async (_, id: string) => {
-    return macroStore?.delete(id) || false
+    return registry.getMacroStore().delete(id) || false
   })
 
   // === Run Cache (Pipelines Panel) ===
   ipcMain.handle(IPC.RUN_CACHE_LIST, async () => {
-    return runCache?.list() || []
+    return registry.getRunCache().list() || []
   })
 
   ipcMain.handle(IPC.RUN_CACHE_DELETE, async (_, id: string) => {
-    return runCache?.delete(id) || false
+    return registry.getRunCache().delete(id) || false
   })
 
   // === Pipeline Pattern Detection ===
   ipcMain.handle(IPC.PIPELINE_DISMISS, async (_, id: string) => {
-    patternDetector?.dismiss(id)
+    registry.getPatternDetector().dismiss(id)
     return true
   })
 
   ipcMain.handle(IPC.MACRO_EXECUTE, async (_, id: string) => {
-    const macro = macroStore?.get(id)
+    const macro = registry.getMacroStore().get(id)
     if (!macro) return false
     mainWindow.webContents.send(IPC.MACRO_EXECUTE, macro)
     return true
@@ -1053,23 +1056,23 @@ export function setupIPC(
 
   // === Pinned Sidebar Apps ===
   ipcMain.handle(IPC.PINNED_APP_LIST, async () => {
-    return pinnedAppStore?.list() || []
+    return registry.getPinnedAppStore().list() || []
   })
 
   ipcMain.handle(IPC.PINNED_APP_ADD, async (_, url: string, title: string, favicon?: string, width?: number) => {
-    return pinnedAppStore?.add(url, title, favicon, width) || null
+    return registry.getPinnedAppStore().add(url, title, favicon, width) || null
   })
 
   ipcMain.handle(IPC.PINNED_APP_REMOVE, async (_, id: string) => {
-    return pinnedAppStore?.remove(id) || false
+    return registry.getPinnedAppStore().remove(id) || false
   })
 
   ipcMain.handle(IPC.PINNED_APP_UPDATE, async (_, id: string, updates: Partial<Pick<import('../shared/types').PinnedApp, 'title' | 'favicon' | 'width' | 'position'>>) => {
-    return pinnedAppStore?.update(id, updates) || null
+    return registry.getPinnedAppStore().update(id, updates) || null
   })
 
   ipcMain.handle(IPC.PINNED_APP_SAVE, async (_, apps: import('../shared/types').PinnedApp[]) => {
-    pinnedAppStore?.saveAll(apps)
+    registry.getPinnedAppStore().saveAll(apps)
     return true
   })
 
@@ -1144,73 +1147,67 @@ export function setupIPC(
 
   // === Webpage Change Monitoring (v0.3.0) ===
   ipcMain.handle(IPC.WATCHER_LIST, async () => {
-    return watcherStore?.list() || []
+    return registry.getWatcherStore().list() || []
   })
 
   ipcMain.handle(IPC.WATCHER_ADD, async (_, url: string, intervalMs?: number) => {
-    return watcherStore?.add(url, intervalMs) || null
+    return registry.getWatcherStore().add(url, intervalMs) || null
   })
 
   ipcMain.handle(IPC.WATCHER_REMOVE, async (_, id: string) => {
-    return watcherStore?.remove(id) || false
+    return registry.getWatcherStore().remove(id) || false
   })
 
   // === PTY Terminal ===
-  if (ptyManager) {
-    ipcMain.on(IPC.PTY_SPAWN, (_event, cols: number, rows: number) => {
-      ptyManager.spawn(cols, rows)
-    })
+  ipcMain.on(IPC.PTY_SPAWN, (_event, cols: number, rows: number) => {
+    registry.getPtyManager().spawn(cols, rows)
+  })
 
-    ipcMain.on(IPC.PTY_DATA, (_event, data: string) => {
-      ptyManager.write(data)
-    })
+  ipcMain.on(IPC.PTY_DATA, (_event, data: string) => {
+    registry.getPtyManager().write(data)
+  })
 
-    ipcMain.on(IPC.PTY_RESIZE, (_event, cols: number, rows: number) => {
-      ptyManager.resize(cols, rows)
-    })
+  ipcMain.on(IPC.PTY_RESIZE, (_event, cols: number, rows: number) => {
+    registry.getPtyManager().resize(cols, rows)
+  })
 
-    ipcMain.on(IPC.PTY_KILL, () => {
-      ptyManager.kill()
-    })
-  }
+  ipcMain.on(IPC.PTY_KILL, () => {
+    registry.getPtyManager().kill()
+  })
 
   // === Proxy Management ===
-  if (proxyManager) {
-    ipcMain.handle(IPC.PROXY_SET, async (_, config) => {
-      await proxyManager.setProxy(config)
-      return { success: true }
-    })
+  ipcMain.handle(IPC.PROXY_SET, async (_, config) => {
+    await registry.getProxyManager().setProxy(config)
+    return { success: true }
+  })
 
-    ipcMain.handle(IPC.PROXY_CLEAR, async () => {
-      await proxyManager.clearProxy()
-      return { success: true }
-    })
+  ipcMain.handle(IPC.PROXY_CLEAR, async () => {
+    await registry.getProxyManager().clearProxy()
+    return { success: true }
+  })
 
-    ipcMain.handle(IPC.PROXY_GET, () => {
-      return proxyManager.getProxy()
-    })
+  ipcMain.handle(IPC.PROXY_GET, () => {
+    return registry.getProxyManager().getProxy()
+  })
 
-    ipcMain.handle(IPC.PROXY_TEST, async () => {
-      return proxyManager.testProxy()
-    })
-  }
+  ipcMain.handle(IPC.PROXY_TEST, async () => {
+    return registry.getProxyManager().testProxy()
+  })
 
   // === Session Recording ===
-  if (sessionRecorder) {
-    ipcMain.handle(IPC.SESSION_START_RECORDING, () => {
-      return sessionRecorder.start()
-    })
+  ipcMain.handle(IPC.SESSION_START_RECORDING, () => {
+    return registry.getSessionRecorder().start()
+  })
 
-    ipcMain.handle(IPC.SESSION_STOP_RECORDING, () => {
-      return sessionRecorder.stop()
-    })
+  ipcMain.handle(IPC.SESSION_STOP_RECORDING, () => {
+    return registry.getSessionRecorder().stop()
+  })
 
-    ipcMain.handle(IPC.SESSION_LIST, () => {
-      return sessionRecorder.listSessions()
-    })
+  ipcMain.handle(IPC.SESSION_LIST, () => {
+    return registry.getSessionRecorder().listSessions()
+  })
 
-    ipcMain.handle(IPC.SESSION_EXPORT, (_, id: string) => {
-      return sessionRecorder.exportSession(id)
-    })
-  }
+  ipcMain.handle(IPC.SESSION_EXPORT, (_, id: string) => {
+    return registry.getSessionRecorder().exportSession(id)
+  })
 }

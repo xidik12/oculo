@@ -7,6 +7,7 @@ import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+// electron-updater loaded dynamically — may not be available in all builds
 
 // Stabilize GPU process without disabling hardware acceleration
 // (disableHardwareAcceleration breaks webview compositing on macOS Sequoia + Electron 34)
@@ -14,7 +15,7 @@ app.commandLine.appendSwitch('disable-gpu-sandbox')
 app.commandLine.appendSwitch('ignore-gpu-blocklist')
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
 import { isHeadless, headlessLog } from './headless'
-import { setupIPC } from './ipc'
+import { setupIPC, StoreRegistry } from './ipc'
 import { createMenu } from './menu'
 import { McpServerManager } from './mcp/server'
 import { SecurityManager } from './security/vault'
@@ -69,19 +70,9 @@ let securityManager: SecurityManager | null = null
 let auditLog: AuditLog | null = null
 let redactor: Redactor | null = null
 let agentController: AgentController | null = null
-let bookmarkStore: BookmarkStore | null = null
-let historyStore: HistoryStore | null = null
 let downloadManager: DownloadManager | null = null
-let zoomStore: ZoomStore | null = null
-let runCache: RunCache | null = null
 let ptyManager: PtyManager | null = null
 let mcpClientManager: McpClientManager | null = null
-let sessionMemoryStore: SessionMemoryStore | null = null
-let containerStore: ContainerStore | null = null
-let cardStore: CardStore | null = null
-let workspaceStore: WorkspaceStore | null = null
-let macroStore: MacroStore | null = null
-let pinnedAppStore: PinnedAppStore | null = null
 let patternDetector: PatternDetector | null = null
 let watcherStore: WatcherStore | null = null
 
@@ -159,6 +150,14 @@ if (!gotTheLock) {
       mainWindow.focus()
     }
   })
+}
+
+function lazy<T>(factory: () => T): () => T {
+  let instance: T | null = null
+  return () => {
+    if (!instance) instance = factory()
+    return instance
+  }
 }
 
 app.whenReady().then(async () => {
@@ -628,17 +627,17 @@ app.whenReady().then(async () => {
     }
   }
 
-  // Initialize data stores
-  bookmarkStore = new BookmarkStore()
-  historyStore = new HistoryStore()
-  zoomStore = new ZoomStore()
-  runCache = new RunCache()
-  sessionMemoryStore = new SessionMemoryStore()
-  containerStore = new ContainerStore()
-  cardStore = new CardStore()
-  workspaceStore = new WorkspaceStore()
-  macroStore = new MacroStore()
-  pinnedAppStore = new PinnedAppStore()
+  // Lazy data stores — only instantiated on first access
+  const getBookmarkStore = lazy(() => new BookmarkStore())
+  const getHistoryStore = lazy(() => new HistoryStore())
+  const getZoomStore = lazy(() => new ZoomStore())
+  const getRunCache = lazy(() => new RunCache())
+  const getSessionMemoryStore = lazy(() => new SessionMemoryStore())
+  const getContainerStore = lazy(() => new ContainerStore())
+  const getCardStore = lazy(() => new CardStore())
+  const getWorkspaceStore = lazy(() => new WorkspaceStore())
+  const getMacroStore = lazy(() => new MacroStore())
+  const getPinnedAppStore = lazy(() => new PinnedAppStore())
 
   // Create window
   const window = createWindow()
@@ -666,8 +665,18 @@ app.whenReady().then(async () => {
     console.error('MCP server start failed:', err)
   }
 
+  // Auto-updater — check for updates silently after startup
+  if (!is.dev) {
+    try {
+      const { autoUpdater } = require('electron-updater')
+      autoUpdater.logger = null
+      autoUpdater.autoDownload = false
+      autoUpdater.checkForUpdatesAndNotify().catch(() => {})
+    } catch { /* electron-updater not available in this build */ }
+  }
+
   // Initialize AI agent (lazy — only connects when user sends a message)
-  agentController = new AgentController(window, sessionMemoryStore!, cardStore!)
+  agentController = new AgentController(window, getSessionMemoryStore(), getCardStore())
 
   // Wire up persistence — save API keys to settings.json, restore on startup
   const allSettings = securityManager!.getSettings()
@@ -720,7 +729,31 @@ app.whenReady().then(async () => {
   downloadManager!.setAgent(agentController)
 
   // Setup IPC handlers (after agent init so chat handlers are wired)
-  setupIPC(window, securityManager, auditLog, redactor, agentController, bookmarkStore, historyStore, downloadManager, zoomStore, runCache, ptyManager, mcpClientManager, sessionMemoryStore, containerStore, cardStore, workspaceStore, macroStore, pinnedAppStore, patternDetector, watcherStore, mcpServer!.getProxyManager(), mcpServer!.getSessionRecorder())
+  const registry: StoreRegistry = {
+    mainWindow: window,
+    security: securityManager!,
+    audit: auditLog!,
+    redactor: redactor!,
+    agent: agentController,
+    getBookmarkStore,
+    getHistoryStore,
+    getDownloadManager: () => downloadManager!,
+    getZoomStore,
+    getRunCache,
+    getPtyManager: () => ptyManager!,
+    getMcpClientManager: () => mcpClientManager!,
+    getSessionMemoryStore,
+    getContainerStore,
+    getCardStore,
+    getWorkspaceStore,
+    getMacroStore,
+    getPinnedAppStore,
+    getPatternDetector: () => patternDetector!,
+    getWatcherStore: () => watcherStore!,
+    getProxyManager: () => mcpServer!.getProxyManager(),
+    getSessionRecorder: () => mcpServer!.getSessionRecorder()
+  }
+  setupIPC(registry)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

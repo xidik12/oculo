@@ -37,6 +37,16 @@ claude mcp add oculo -- node ~/Desktop/oculo/bin/oculo-mcp.mjs
 
 Tools are always discoverable (static definitions in bridge), but Oculo must be running for tool calls to succeed.
 
+### Minimal prompts (recommended)
+
+```bash
+claude mcp add oculo --allow-all -- node ~/Desktop/oculo/bin/oculo-mcp.mjs
+```
+
+This lets Claude use Oculo tools without per-call approval prompts.
+Combined with Autonomous Mode (Settings → Autonomous Mode), this gives
+zero-friction browser automation.
+
 ### 12 MCP Tools
 
 | Tool | What it does | Token cost |

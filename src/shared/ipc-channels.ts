@@ -239,6 +239,9 @@ export const IPC = {
   SESSION_STOP_RECORDING: 'session:stop-recording',
   SESSION_LIST: 'session:list',
   SESSION_EXPORT: 'session:export',
+
+  // MCP Agent Tab Isolation
+  MCP_AGENT_TAB_CREATE: 'mcp:agent-tab-create',
 } as const
 
 export type IPCChannel = typeof IPC[keyof typeof IPC]

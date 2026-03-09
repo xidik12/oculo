@@ -58,7 +58,7 @@ describe('Constants', () => {
       expect(PERMISSION_MAP['click']).toBe('notify')
       expect(PERMISSION_MAP['type']).toBe('notify')
       expect(PERMISSION_MAP['fill']).toBe('notify')
-      expect(PERMISSION_MAP['login']).toBe('notify')
+      expect(PERMISSION_MAP['login']).toBe('confirm')
     })
 
     it('should classify dangerous actions as confirm', () => {

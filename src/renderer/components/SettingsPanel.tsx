@@ -809,6 +809,10 @@ function PrivacySettings({ settings, onSave }: { settings: AppSettings; onSave: 
       <SettingRow label="MCP Auto-Start" description="Automatically start MCP server on launch">
         <Toggle checked={settings.mcpAutoStart} onChange={v => onSave('mcpAutoStart', v)} />
       </SettingRow>
+
+      <SettingRow label="Autonomous Mode" description="Auto-approve browser actions (click, type, fill, login, download). Payments, password changes, and shell commands still require approval.">
+        <Toggle checked={settings.autonomousMode ?? false} onChange={v => onSave('autonomousMode', v)} />
+      </SettingRow>
     </>
   )
 }

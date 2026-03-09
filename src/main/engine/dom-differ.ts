@@ -211,3 +211,67 @@ function jaccard(a: string[], b: string[]): number {
   const union = new Set([...setA, ...setB]).size
   return union > 0 ? intersection / union : 0
 }
+
+/* ── Visual (pixel-level) screenshot comparison ── */
+
+/**
+ * Compare two screenshots pixel-by-pixel.
+ * pngjs and pixelmatch are loaded lazily — they may not be available in all builds.
+ * @param img1Base64 - Base64 PNG string (before)
+ * @param img2Base64 - Base64 PNG string (after)
+ * @returns Diff percentage (0-100) and diff image as base64 PNG
+ */
+export function compareScreenshots(img1Base64: string, img2Base64: string): {
+  diffPercentage: number
+  diffImageBase64: string
+  width: number
+  height: number
+} {
+  // Lazy require — these native modules may not be bundled in all builds
+  const { PNG } = require('pngjs') as typeof import('pngjs')
+  const pixelmatch = require('pixelmatch') as any
+  const png1 = PNG.sync.read(Buffer.from(img1Base64, 'base64'))
+  const png2 = PNG.sync.read(Buffer.from(img2Base64, 'base64'))
+
+  // Images must be same size
+  const width = Math.min(png1.width, png2.width)
+  const height = Math.min(png1.height, png2.height)
+
+  // Resize to common dimensions if needed
+  const data1 = cropImageData(png1, width, height)
+  const data2 = cropImageData(png2, width, height)
+
+  const diff = new PNG({ width, height })
+
+  const numDiffPixels = pixelmatch(data1, data2, diff.data, width, height, {
+    threshold: 0.1,
+    includeAA: false
+  })
+
+  const totalPixels = width * height
+  const diffPercentage = Math.round((numDiffPixels / totalPixels) * 10000) / 100
+
+  const diffBuffer = PNG.sync.write(diff)
+  const diffImageBase64 = diffBuffer.toString('base64')
+
+  return { diffPercentage, diffImageBase64, width, height }
+}
+
+function cropImageData(png: { width: number; height: number; data: Buffer }, targetWidth: number, targetHeight: number): Buffer {
+  if (png.width === targetWidth && png.height === targetHeight) {
+    return png.data
+  }
+
+  const result = Buffer.alloc(targetWidth * targetHeight * 4)
+  for (let y = 0; y < targetHeight; y++) {
+    for (let x = 0; x < targetWidth; x++) {
+      const srcIdx = (y * png.width + x) * 4
+      const dstIdx = (y * targetWidth + x) * 4
+      result[dstIdx] = png.data[srcIdx]
+      result[dstIdx + 1] = png.data[srcIdx + 1]
+      result[dstIdx + 2] = png.data[srcIdx + 2]
+      result[dstIdx + 3] = png.data[srcIdx + 3]
+    }
+  }
+  return result
+}
