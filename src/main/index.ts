@@ -14,6 +14,8 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 app.commandLine.appendSwitch('disable-gpu-sandbox')
 app.commandLine.appendSwitch('ignore-gpu-blocklist')
 app.commandLine.appendSwitch('disable-blink-features', 'AutomationControlled')
+app.commandLine.appendSwitch('enable-features', 'WebAuthenticationMacOS,WebAuthentication')
+app.commandLine.appendSwitch('enable-web-authentication-platform-support')
 import { isHeadless, headlessLog } from './headless'
 import { setupIPC, StoreRegistry } from './ipc'
 import { createMenu } from './menu'
