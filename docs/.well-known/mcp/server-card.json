@@ -1,0 +1,155 @@
+{
+  "serverInfo": {
+    "name": "Oculo",
+    "version": "0.4.1"
+  },
+  "authentication": {
+    "required": false
+  },
+  "tools": [
+    {
+      "name": "page",
+      "description": "Describe the current page in Oculo browser. Default: compact (~30-80 tokens). Use detail=\"a11y\" for ref-tagged accessibility tree, detail=\"markdown\" for full article content.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "detail": { "type": "string", "enum": ["compact", "a11y", "markdown"] },
+          "screenshot": { "type": "boolean" },
+          "scope": { "type": "string" }
+        }
+      }
+    },
+    {
+      "name": "act",
+      "description": "Perform an action in Oculo browser: click, navigate, scroll, press key, hover, type, login. Elements found by ref (from a11y snapshot), text, role, label, placeholder, or CSS selector.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "action": { "type": "string", "enum": ["click", "navigate", "scroll", "press", "hover", "type", "login", "back", "forward", "reload", "screenshot", "upload", "select", "focus", "clear", "newTab", "switchTab", "closeTab", "download", "evaluate", "wait", "copy", "paste"] },
+          "ref": { "type": "string" },
+          "text": { "type": "string" },
+          "url": { "type": "string" },
+          "selector": { "type": "string" },
+          "key": { "type": "string" }
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "fill",
+      "description": "Fill form fields in Oculo browser by label, placeholder, or data-placeholder text. Handles text, select, checkbox, textarea, and contenteditable (DraftJS, ProseMirror).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "fields": { "type": "object" },
+          "submit": {}
+        },
+        "required": ["fields"]
+      }
+    },
+    {
+      "name": "read",
+      "description": "Extract structured data from the page in Oculo browser (search results, tables, lists, articles).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "what": { "type": "string" },
+          "format": { "type": "string", "enum": ["text", "json"] },
+          "limit": { "type": "number" },
+          "scope": { "type": "string" }
+        },
+        "required": ["what"]
+      }
+    },
+    {
+      "name": "run",
+      "description": "Execute a multi-step pipeline in Oculo browser. PREFERRED for any task with 2+ actions. Each step is an object with exactly ONE key: page, act, fill, read, wait, or if.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "steps": { "type": "array", "items": { "type": "object" } },
+          "description": { "type": "string" },
+          "returnAll": { "type": "boolean" }
+        }
+      }
+    },
+    {
+      "name": "media",
+      "description": "Generate images (Nano Banana / DALL-E 3) or videos (Veo 3.1) via Oculo browser.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "enum": ["image", "video"] },
+          "prompt": { "type": "string" }
+        },
+        "required": ["type", "prompt"]
+      }
+    },
+    {
+      "name": "shell",
+      "description": "Execute shell commands non-interactively via Oculo.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": { "type": "string" }
+        },
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "tabs",
+      "description": "List all open browser tabs in Oculo.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "research",
+      "description": "Deep web research across multiple tabs via Oculo browser.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string" },
+          "depth": { "type": "string", "enum": ["quick", "medium", "deep"] }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "preview",
+      "description": "Pre-fetch URL without navigating in Oculo browser.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string" }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "translate",
+      "description": "Translate page or text to any language via Oculo browser.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string" },
+          "text": { "type": "string" }
+        },
+        "required": ["to"]
+      }
+    },
+    {
+      "name": "lens",
+      "description": "Visual analysis via screenshot in Oculo browser.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string" }
+        }
+      }
+    }
+  ],
+  "resources": [],
+  "prompts": []
+}
