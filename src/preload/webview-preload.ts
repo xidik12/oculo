@@ -724,7 +724,8 @@ window.addEventListener('beforeunload', (e) => {
     // Get position for popup placement
     const range = selection.getRangeAt(0)
     const rect = range.getBoundingClientRect()
-    ipcRenderer.sendToHost('text:selected', {
+    // Use ipcRenderer.send for WebContentsView compatibility (sendToHost only works with <webview>)
+    ipcRenderer.send('text:selected', {
       text,
       x: Math.round(rect.left + rect.width / 2),
       y: Math.round(rect.top)
@@ -793,7 +794,8 @@ window.addEventListener('beforeunload', (e) => {
     const target = e.target as HTMLElement
     if (target.tagName === 'IMG') {
       const img = target as HTMLImageElement
-      ipcRenderer.sendToHost('image:describe', img.src)
+      // Use ipcRenderer.send for WebContentsView compatibility
+      ipcRenderer.send('image:describe', img.src)
     }
   })
 })()

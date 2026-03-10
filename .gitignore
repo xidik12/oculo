@@ -8,6 +8,7 @@ releases/
 *.tsbuildinfo
 **/.DS_Store
 .env
+.mcpregistry_*
 models/
 
 # Stale tsc build artifacts

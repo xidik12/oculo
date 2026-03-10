@@ -230,6 +230,16 @@ const IPC = {
   WATCHER_ADD: 'watcher:add',
   WATCHER_REMOVE: 'watcher:remove',
   WATCHER_CHANGED: 'watcher:changed',
+
+  // WebContentsView Tab Management (v0.4.3)
+  VIEW_CREATE: 'view:create',
+  VIEW_CLOSE: 'view:close',
+  VIEW_ACTIVATE: 'view:activate',
+  VIEW_STATE_UPDATE: 'view:state-update',
+  VIEW_BOUNDS_UPDATE: 'view:bounds-update',
+  VIEW_AI_ACTING: 'view:ai-acting',
+  VIEW_TAB_LIST: 'view:tab-list',
+  VIEW_NAVIGATE: 'view:navigate',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -811,6 +821,54 @@ const api = {
     const handler = (_: any, data: any) => callback(data)
     ipcRenderer.on(IPC.WATCHER_CHANGED, handler)
     return () => ipcRenderer.removeListener(IPC.WATCHER_CHANGED, handler)
+  },
+
+  // === WebContentsView Bridge (v0.4.3 — replaces direct webview DOM access) ===
+  // These proxy calls to main process where WebContentsView instances live.
+
+  viewCreate: (tabId: string, url: string, opts?: { containerId?: string; background?: boolean }): Promise<number> =>
+    ipcRenderer.invoke(IPC.VIEW_CREATE, tabId, url, opts),
+  viewClose: (tabId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.VIEW_CLOSE, tabId),
+  viewActivate: (tabId: string): void =>
+    ipcRenderer.send(IPC.VIEW_ACTIVATE, tabId),
+  viewNavigate: (tabId: string, url: string): void =>
+    ipcRenderer.send(IPC.VIEW_NAVIGATE, tabId, url),
+  viewBoundsUpdate: (bounds: { x: number; y: number; width: number; height: number }): void =>
+    ipcRenderer.send(IPC.VIEW_BOUNDS_UPDATE, bounds),
+  viewSetAiActing: (acting: boolean): void =>
+    ipcRenderer.send(IPC.VIEW_AI_ACTING, acting),
+
+  // Execute JS in a WebContentsView by its webContentsId
+  viewExecuteJS: (wcId: number, code: string): Promise<any> =>
+    ipcRenderer.invoke('view:execute-js', wcId, code),
+  viewSendInput: (wcId: number, event: any): void =>
+    ipcRenderer.send('view:send-input', wcId, event),
+  viewInsertText: (wcId: number, text: string): Promise<void> =>
+    ipcRenderer.invoke('view:insert-text', wcId, text),
+  viewCapturePage: (wcId: number): Promise<any> =>
+    ipcRenderer.invoke('view:capture-page', wcId),
+  viewLoadURL: (wcId: number, url: string): Promise<void> =>
+    ipcRenderer.invoke('view:load-url', wcId, url),
+  viewGoBack: (wcId: number): Promise<void> =>
+    ipcRenderer.invoke('view:nav-back', wcId),
+  viewGoForward: (wcId: number): Promise<void> =>
+    ipcRenderer.invoke('view:nav-forward', wcId),
+  viewReload: (wcId: number): Promise<void> =>
+    ipcRenderer.invoke('view:reload', wcId),
+
+  // Listen for tab state updates from TabManager in main process
+  onViewStateUpdate: (callback: (tabId: string, state: any) => void): (() => void) => {
+    const handler = (_: any, tabId: string, state: any) => callback(tabId, state)
+    ipcRenderer.on(IPC.VIEW_STATE_UPDATE, handler)
+    return () => ipcRenderer.removeListener(IPC.VIEW_STATE_UPDATE, handler)
+  },
+
+  // Listen for tab creation from main process (e.g. window.open → new tab)
+  onViewTabCreate: (callback: (url: string, openerId: number, tabId: string) => void): (() => void) => {
+    const handler = (_: any, url: string, openerId: number, tabId: string) => callback(url, openerId, tabId)
+    ipcRenderer.on('tab:create', handler)
+    return () => ipcRenderer.removeListener('tab:create', handler)
   },
 
   // === Webview preload script path (for <webview preload="..."> attribute) ===

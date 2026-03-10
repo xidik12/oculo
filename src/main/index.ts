@@ -48,6 +48,7 @@ import { MacroStore } from './data/macros'
 import { PinnedAppStore } from './data/pinned-apps'
 import { PatternDetector } from './data/pattern-detector'
 import { WatcherStore } from './data/watchers'
+import { TabManager } from './tab-manager'
 
 /** Clean up temp files older than 1 hour (only transient dirs, NOT ~/Pictures/Oculo) */
 function cleanupTempFiles(): void {
@@ -85,6 +86,7 @@ let ptyManager: PtyManager | null = null
 let mcpClientManager: McpClientManager | null = null
 let patternDetector: PatternDetector | null = null
 let watcherStore: WatcherStore | null = null
+let tabManager: TabManager | null = null
 
 function createWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
@@ -381,6 +383,77 @@ app.whenReady().then(async () => {
         }
       })
     })
+
+    // Google sign-in fallback: Google blocks sign-in inside <webview> (guest pages)
+    // because it detects them as "embedded browsers." When rejection is detected,
+    // re-open sign-in in a proper BrowserWindow (top-level Chromium window) which
+    // Google treats as a real browser. Both share the persist:oculo session, so
+    // cookies carry over automatically after sign-in succeeds.
+    wc.on('did-navigate', (_e, navUrl) => {
+      try {
+        const u = new URL(navUrl)
+        const isGoogleRejection =
+          u.hostname === 'accounts.google.com' &&
+          (u.pathname.includes('/signin/rejected') ||
+           u.pathname.includes('/signin/disallowed') ||
+           u.searchParams.get('disallowed_useragent') === '1')
+
+        if (!isGoogleRejection) return
+
+        // Get the URL to redirect to after sign-in, or default to Google homepage
+        const continueUrl =
+          u.searchParams.get('continue') || 'https://accounts.google.com'
+
+        const signInWin = new BrowserWindow({
+          width: 480,
+          height: 680,
+          autoHideMenuBar: true,
+          parent: mainWindow ?? undefined,
+          modal: false,
+          title: 'Sign in — Google',
+          webPreferences: {
+            partition: 'persist:oculo',
+            nodeIntegration: false,
+            contextIsolation: true,
+          },
+        })
+
+        // UA is already cleaned globally via app.userAgentFallback and session-level
+        // setUserAgent. BrowserWindow inherits the cleaned UA from the session.
+
+        signInWin.loadURL(continueUrl)
+
+        // Auto-close when user finishes sign-in (navigates away from Google accounts)
+        signInWin.webContents.on('did-navigate', (_e2, postUrl) => {
+          try {
+            const postHost = new URL(postUrl).hostname
+            // Still on Google accounts/auth pages → sign-in in progress
+            if (
+              postHost.includes('accounts.google') ||
+              postHost.includes('myaccount.google') ||
+              postHost.includes('accounts.youtube')
+            )
+              return
+            // Left Google accounts → sign-in complete, close window + reload webview
+            setTimeout(() => {
+              if (!signInWin.isDestroyed()) signInWin.close()
+              if (!wc.isDestroyed()) wc.reload()
+            }, 1500)
+          } catch {}
+        })
+
+        // Also handle the window being closed manually by the user
+        signInWin.on('closed', () => {
+          // Reload webview to pick up any cookies set during partial sign-in
+          if (!wc.isDestroyed()) wc.reload()
+        })
+
+        // Navigate webview back so user doesn't see the rejection page
+        if (!wc.isDestroyed()) {
+          wc.goBack()
+        }
+      } catch {}
+    })
   })
 
   // Context menu for webview pages (right-click → Inspect Element, Copy, etc.)
@@ -485,8 +558,14 @@ app.whenReady().then(async () => {
     if (wc) wc.reload()
   })
 
-  // Helper: find the active webview webContents
+  // Helper: find the active tab's webContents (prefers WebContentsView via TabManager, falls back to webview)
   function findActiveWebviewWC(): Electron.WebContents | null {
+    // v0.4.3: Prefer TabManager's active WebContentsView
+    if (tabManager) {
+      const wc = tabManager.getActiveWebContents()
+      if (wc) return wc
+    }
+    // Fallback: legacy webview lookup
     if (activeWebContentsId) {
       try {
         const wc = webContents.fromId(activeWebContentsId)
@@ -658,6 +737,9 @@ app.whenReady().then(async () => {
 
   // Create window
   const window = createWindow()
+
+  // Initialize TabManager (v0.4.3 — manages WebContentsView instances for tabs)
+  tabManager = new TabManager(window, adBlocker)
 
   // Initialize download manager (needs window)
   downloadManager = new DownloadManager(window)

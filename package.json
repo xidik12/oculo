@@ -1,6 +1,6 @@
 {
   "name": "oculo",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "AI-powered native browser — giving AI vision to see and interact with the web",
   "main": "./out/main/index.js",
   "author": "Salakhitdinov Khidayotullo",
@@ -77,6 +77,7 @@
     "productName": "Oculo",
     "npmRebuild": false,
     "beforeBuild": "./scripts/beforeBuild.js",
+    "afterPack": "./build/afterPack.js",
     "mac": {
       "category": "public.app-category.productivity",
       "target": [

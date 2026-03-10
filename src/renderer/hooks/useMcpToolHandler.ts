@@ -38,8 +38,48 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
     const api = oculoApi()
     if (!api?.onMcpToolCall) return
 
-    // Helper: find the active (visible) webview element
+    // ViewHandle — proxies webview-like calls through IPC to WebContentsView in main process.
+    // Provides the same interface as a <webview> DOM element so all existing tool code works unchanged.
+    function createViewHandle(tabId: string, wcId: number): any {
+      return {
+        executeJavaScript: (code: string) => api.viewExecuteJS(wcId, code),
+        sendInputEvent: (event: any) => api.viewSendInput(wcId, event),
+        insertText: (text: string) => api.viewInsertText(wcId, text),
+        capturePage: () => api.viewCapturePage(wcId),
+        loadURL: (url: string) => api.viewLoadURL(wcId, url),
+        goBack: () => api.viewGoBack(wcId),
+        goForward: () => api.viewGoForward(wcId),
+        reload: () => api.viewReload(wcId),
+        canGoBack: () => {
+          const t = tabsRef.current.find(t => t.id === tabId)
+          return t?.canGoBack ?? false
+        },
+        canGoForward: () => {
+          const t = tabsRef.current.find(t => t.id === tabId)
+          return t?.canGoForward ?? false
+        },
+        isLoading: () => {
+          const t = tabsRef.current.find(t => t.id === tabId)
+          return t?.isLoading ?? false
+        },
+        getWebContentsId: () => wcId,
+        getURL: () => {
+          const t = tabsRef.current.find(t => t.id === tabId)
+          return t?.url ?? ''
+        },
+        getTitle: () => {
+          const t = tabsRef.current.find(t => t.id === tabId)
+          return t?.title ?? ''
+        },
+      }
+    }
+
+    // Helper: find the active tab's ViewHandle (replaces webview DOM search)
     function findActiveWebview(): any {
+      const activeId = activeTabIdRef.current
+      const tab = tabsRef.current.find(t => t.id === activeId)
+      if (tab?.webContentsId) return createViewHandle(tab.id, tab.webContentsId)
+      // Fallback: legacy webview DOM search (transition period)
       const webviews = document.querySelectorAll('webview')
       for (const w of webviews) {
         const parent = w.closest('div')
@@ -48,24 +88,22 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
       return null
     }
 
-    // Helper: find webview by tab ID (v0.3.0 — background task execution)
+    // Helper: find ViewHandle by tab ID (v0.3.0 — background task execution)
     function findWebviewByTabId(tabId: string): any {
+      const tab = tabsRef.current.find(t => t.id === tabId)
+      if (tab?.webContentsId) return createViewHandle(tab.id, tab.webContentsId)
+      // Fallback: legacy preload webview registry (transition period)
       const oculo = (window as any).oculo
       if (!oculo) return null
       try {
         const info = oculo.getWebviewInfo?.(tabId)
         if (info) {
-          // Found in preload webview registry — wrap in webview-like interface
           return {
             executeJavaScript: (code: string) => oculo.executeInWebview(tabId, code),
             getWebContentsId: () => oculo.getWebContentsId?.(tabId),
             isLoading: () => {
-              try {
-                const tab = tabsRef.current.find(t => t.id === tabId)
-                return tab?.isLoading ?? false
-              } catch {
-                return false
-              }
+              const t = tabsRef.current.find(t => t.id === tabId)
+              return t?.isLoading ?? false
             }
           }
         }
@@ -187,30 +225,25 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
         // Fallback to active if tabId webview not found
         if (!wv && args?.tabId) wv = findActiveWebview()
 
-        // No webview exists (newtab) — for navigate, update state to trigger React render,
-        // then wait for the webview to mount and the page to load before returning.
+        // No view exists (newtab) — create WebContentsView via main process, then navigate.
         if (!wv && toolName === 'act' && args?.action === 'navigate' && args?.url) {
+          const tabId = activeTabIdRef.current
           const tempTitle = new URL(args.url).hostname.replace('www.', '')
-          setTabs(prev => prev.map(t => t.id === activeTabIdRef.current ? { ...t, url: args.url, title: tempTitle, isLoading: true } : t))
-          // Poll for webview to appear (React needs to render WebViewContainer)
-          let newWv: any = null
-          for (let i = 0; i < 25; i++) { // 25 * 200ms = 5s max
-            await new Promise(r => setTimeout(r, 200))
-            newWv = findActiveWebview()
-            if (newWv) break
-          }
-          if (!newWv) {
-            api.sendMcpToolResult(callId, 'Navigating to ' + args.url + ' — page is loading.')
-            return
-          }
-          // Wait for webview to finish loading
-          await waitForWebviewReady(newWv, 8)
           try {
-            const title = await (newWv as any).executeJavaScript('document.title')
-            const snapshot = await getRefTaggedSnapshot(newWv) || await getPageSnapshot(newWv, true)
-            api.sendMcpToolResult(callId, 'Navigated to ' + (title || tempTitle) + ' | ' + args.url + (snapshot ? '\n---\n' + snapshot : ''))
+            // Create a WebContentsView for this tab and navigate to URL
+            const wcId = await api.viewCreate(tabId, args.url)
+            setTabs(prev => prev.map(t => t.id === tabId ? { ...t, url: args.url, title: tempTitle, isLoading: true, webContentsId: wcId } : t))
+            const newWv = createViewHandle(tabId, wcId)
+            await waitForWebviewReady(newWv, 8)
+            try {
+              const title = await newWv.executeJavaScript('document.title')
+              const snapshot = await getRefTaggedSnapshot(newWv) || await getPageSnapshot(newWv, true)
+              api.sendMcpToolResult(callId, 'Navigated to ' + (title || tempTitle) + ' | ' + args.url + (snapshot ? '\n---\n' + snapshot : ''))
+            } catch {
+              api.sendMcpToolResult(callId, 'Navigated to ' + args.url)
+            }
           } catch {
-            api.sendMcpToolResult(callId, 'Navigated to ' + args.url)
+            api.sendMcpToolResult(callId, 'Failed to navigate to ' + args.url)
           }
           return
         }

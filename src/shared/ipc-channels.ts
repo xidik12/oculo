@@ -242,6 +242,16 @@ export const IPC = {
 
   // MCP Agent Tab Isolation
   MCP_AGENT_TAB_CREATE: 'mcp:agent-tab-create',
+
+  // WebContentsView Tab Management (v0.4.3 — replaces <webview>)
+  VIEW_CREATE: 'view:create',
+  VIEW_CLOSE: 'view:close',
+  VIEW_ACTIVATE: 'view:activate',
+  VIEW_STATE_UPDATE: 'view:state-update',
+  VIEW_BOUNDS_UPDATE: 'view:bounds-update',
+  VIEW_AI_ACTING: 'view:ai-acting',
+  VIEW_TAB_LIST: 'view:tab-list',
+  VIEW_NAVIGATE: 'view:navigate',
 } as const
 
 export type IPCChannel = typeof IPC[keyof typeof IPC]

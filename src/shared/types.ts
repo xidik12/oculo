@@ -11,6 +11,7 @@ export interface Tab {
   canGoForward: boolean
   containerId?: string
   openerId?: number  // webContentsId of the opener tab (for popup/OAuth flow)
+  webContentsId?: number  // v0.4.3: WebContentsView backing this tab (set by main process)
 }
 
 // Page description (what the 'page' MCP tool returns)

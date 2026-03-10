@@ -127,6 +127,44 @@ export default function App() {
       api.onZoomReset?.(() => handleZoomReset()),
       api.onDevToolsResized?.((height: number) => setDevToolsHeight(height)),
       api.onFocusMode?.(() => setFocusMode(prev => !prev)),
+      // v0.4.3: WebContentsView state updates from TabManager in main process
+      api.onViewStateUpdate?.((tabId: string, state: any) => {
+        setTabs(prev => {
+          const next = prev.map(t => {
+            if (t.id !== tabId) return t
+            return {
+              ...t,
+              ...(state.url !== undefined && { url: state.url }),
+              ...(state.title !== undefined && { title: state.title }),
+              ...(state.originalTitle !== undefined && { originalTitle: state.originalTitle }),
+              ...(state.isLoading !== undefined && { isLoading: state.isLoading }),
+              ...(state.canGoBack !== undefined && { canGoBack: state.canGoBack }),
+              ...(state.canGoForward !== undefined && { canGoForward: state.canGoForward }),
+            }
+          })
+          // Record history when title arrives (matches handleWebViewUpdate behavior)
+          if (state.title && state.title !== '[OAuth Complete]') {
+            const tab = next.find(t => t.id === tabId)
+            if (tab && tab.url && !tab.url.startsWith('oculo://')) {
+              recordHistory(tab.url, state.title)
+            }
+          }
+          return next
+        })
+        // Auto-close OAuth popup tabs when flow completes
+        if (state.title === '[OAuth Complete]') {
+          setTimeout(() => handleCloseTab(tabId), 500)
+        }
+      }),
+      // v0.4.3: Handle tab creation from main process (window.open → new tab in TabManager)
+      api.onViewTabCreate?.((url: string, openerId: number, tabId: string) => {
+        const newTab: Tab = {
+          id: tabId, url, title: 'New Tab', isLoading: true,
+          canGoBack: false, canGoForward: false, openerId,
+        }
+        setTabs(prev => [...prev, newTab])
+        setActiveTabId(tabId)
+      }),
       api.onCloseTabByUrl?.((urlPrefix: string) => {
         setTabs(prev => {
           const match = prev.find(t => t.url.startsWith(urlPrefix))
@@ -301,17 +339,27 @@ export default function App() {
 
   // Tab management
   const handleNewTab = useCallback((url?: string, openerId?: number) => {
+    const api = oculoApi()
+    const tabId = newId()
+    const tabUrl = url || NEW_TAB_URL
     const newTab: Tab = {
-      id: newId(), url: url || NEW_TAB_URL, title: 'New Tab',
-      isLoading: false, canGoBack: false, canGoForward: false,
+      id: tabId, url: tabUrl, title: 'New Tab',
+      isLoading: !!url && !tabUrl.startsWith('oculo://'), canGoBack: false, canGoForward: false,
       ...(openerId ? { openerId } : {})
     }
     setTabs(prev => [...prev, newTab])
-    setActiveTabId(newTab.id)
+    setActiveTabId(tabId)
     setReaderModeOpen(false)
+    // v0.4.3: Create WebContentsView in main process for non-internal URLs
+    if (tabUrl && !tabUrl.startsWith('oculo://') && api?.viewCreate) {
+      api.viewCreate(tabId, tabUrl).then((wcId: number) => {
+        setTabs(prev => prev.map(t => t.id === tabId ? { ...t, webContentsId: wcId } : t))
+      }).catch(() => { /* view creation failed */ })
+    }
   }, [])
 
   const handleCloseTab = useCallback((tabId: string) => {
+    const api = oculoApi()
     setTabs(prev => {
       if (prev.length <= 1) return prev
       const closedTab = prev.find(t => t.id === tabId)
@@ -330,6 +378,8 @@ export default function App() {
       })).filter(g => g.tabIds.length > 0))
       return newTabs
     })
+    // v0.4.3: Close WebContentsView in main process
+    api?.viewClose?.(tabId)?.catch?.(() => {})
   }, [])
 
   const handleReopenClosedTab = useCallback(() => {
@@ -340,16 +390,30 @@ export default function App() {
   const handleTabSwitch = useCallback((tabId: string) => {
     setActiveTabId(tabId)
     setReaderModeOpen(false)
+    // v0.4.3: Activate WebContentsView in main process
+    oculoApi()?.viewActivate?.(tabId)
     // Clear stale snapshots so the next page/a11y call gets fresh data for the new tab
     lastPageSnapshot.current = ''
     lastA11ySnapshot.current = ''
   }, [])
 
   const handleNavigate = useCallback((url: string) => {
+    const api = oculoApi()
     const isInternal = url.startsWith('oculo://')
     const currentTabId = activeTabIdRef.current
     setTabs(prev => prev.map(t => t.id === currentTabId ? { ...t, url, isLoading: !isInternal } : t))
     setReaderModeOpen(false)
+    // v0.4.3: Navigate the WebContentsView, or create one if tab doesn't have a view yet
+    if (!isInternal) {
+      const tab = tabsRef.current.find(t => t.id === currentTabId)
+      if (tab?.webContentsId) {
+        api?.viewNavigate?.(currentTabId, url)
+      } else if (api?.viewCreate) {
+        api.viewCreate(currentTabId, url).then((wcId: number) => {
+          setTabs(prev => prev.map(t => t.id === currentTabId ? { ...t, webContentsId: wcId } : t))
+        }).catch(() => {})
+      }
+    }
   }, [])
 
   const handleWebViewUpdate = useCallback((tabId: string, updates: Partial<Tab>): void => {

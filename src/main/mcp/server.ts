@@ -889,7 +889,7 @@ export class McpServerManager {
       // Health check endpoint (no auth required — localhost-only liveness probe)
       if (req.url === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ status: 'ok', version: '0.4.3' }))
+        res.end(JSON.stringify({ status: 'ok', version: '0.4.4' }))
         return
       }
 

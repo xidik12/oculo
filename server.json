@@ -6,7 +6,7 @@
     "url": "https://github.com/xidik12/oculo",
     "source": "github"
   },
-  "version": "0.4.3",
+  "version": "0.4.4",
   "packages": [
     {
       "registryType": "npm",

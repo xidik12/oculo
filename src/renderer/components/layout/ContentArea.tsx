@@ -1,11 +1,12 @@
-import React, { useRef, useCallback } from 'react'
+import React, { useRef, useCallback, useEffect } from 'react'
 import { Tab, PinnedApp } from '../../../shared/types'
-import WebViewContainer from '../WebViewContainer'
 import ChatPanel from '../ChatPanel'
 import NewTabPage from '../common/NewTabPage'
 import AboutPage from '../common/AboutPage'
 import ContactPage from '../common/ContactPage'
 import GuidePage from '../common/GuidePage'
+
+function oculoApi(): any { return (window as any).oculo }
 
 interface ContentAreaProps {
   tabs: Tab[]
@@ -119,6 +120,36 @@ function PinnedPanel({
 
 export default function ContentArea({ tabs, activeTabId, chatOpen, onWebViewUpdate, onCloseChat, isNewTab, isAbout, isContact, isGuide, onNavigate, onTextSelected, suspendedTabs, onCloseTab, pinnedApps, onPinnedAppRemove, onPinnedAppWidthChange, aiActing, onStopAi }: ContentAreaProps) {
   const isInternalPage = isNewTab || isAbout || isContact || isGuide
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // v0.4.3: Report content area bounds to main process for WebContentsView positioning.
+  // The WebContentsView is a native layer painted by the compositor, positioned via setBounds().
+  useEffect(() => {
+    const api = oculoApi()
+    if (!api?.viewBoundsUpdate || !contentRef.current) return
+
+    const reportBounds = () => {
+      const el = contentRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      // Convert to integer pixels (Electron expects integer bounds)
+      api.viewBoundsUpdate({
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      })
+    }
+
+    // Report initial bounds
+    reportBounds()
+
+    // Re-report on resize
+    const observer = new ResizeObserver(reportBounds)
+    observer.observe(contentRef.current)
+
+    return () => observer.disconnect()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="absolute inset-0 flex">
@@ -143,27 +174,13 @@ export default function ContentArea({ tabs, activeTabId, chatOpen, onWebViewUpda
         </>
       )}
 
-      {/* Webview area — absolute positioning guarantees full height */}
-      <div className="flex-1 relative">
+      {/* Content area — WebContentsView from main process is positioned behind this div.
+          Internal pages (newtab, about, etc.) render as React overlays on top. */}
+      <div ref={contentRef} className="flex-1 relative">
         {isNewTab && <NewTabPage onNavigate={onNavigate} />}
         {isAbout && <AboutPage />}
         {isContact && <ContactPage />}
         {isGuide && <GuidePage />}
-
-        {tabs.map(tab => {
-          if (tab.url.startsWith('oculo://')) return null
-          return (
-            <WebViewContainer
-              key={tab.id}
-              tab={tab}
-              isActive={tab.id === activeTabId}
-              onUpdate={(updates) => onWebViewUpdate(tab.id, updates)}
-              onTextSelected={onTextSelected}
-              onClose={tab.openerId ? () => onCloseTab?.(tab.id) : undefined}
-              suspended={suspendedTabs?.has(tab.id)}
-            />
-          )
-        })}
 
         {/* AI Acting overlay (v0.3.0) */}
         {aiActing && (

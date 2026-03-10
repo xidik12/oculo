@@ -1,7 +1,7 @@
 {
   "serverInfo": {
     "name": "Oculo",
-    "version": "0.4.3"
+    "version": "0.4.4"
   },
   "authentication": {
     "required": false

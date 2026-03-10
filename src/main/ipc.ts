@@ -1210,4 +1210,56 @@ export function setupIPC(registry: StoreRegistry): void {
   ipcMain.handle(IPC.SESSION_EXPORT, (_, id: string) => {
     return registry.getSessionRecorder().exportSession(id)
   })
+
+  // === WebContentsView IPC Bridges (v0.4.3) ===
+  // These allow the renderer's tool handler to operate on WebContentsView instances
+  // managed by TabManager in the main process, replacing direct webview DOM access.
+
+  ipcMain.handle('view:execute-js', async (_, wcId: number, code: string) => {
+    const wc = webContents.fromId(wcId)
+    if (!wc || wc.isDestroyed()) throw new Error('WebContents not found: ' + wcId)
+    return wc.executeJavaScript(code)
+  })
+
+  ipcMain.on('view:send-input', (_, wcId: number, event: any) => {
+    const wc = webContents.fromId(wcId)
+    if (wc && !wc.isDestroyed()) wc.sendInputEvent(event)
+  })
+
+  ipcMain.handle('view:insert-text', async (_, wcId: number, text: string) => {
+    const wc = webContents.fromId(wcId)
+    if (!wc || wc.isDestroyed()) throw new Error('WebContents not found')
+    await wc.insertText(text)
+  })
+
+  ipcMain.handle('view:capture-page', async (_, wcId: number) => {
+    const wc = webContents.fromId(wcId)
+    if (!wc || wc.isDestroyed()) throw new Error('WebContents not found')
+    return wc.capturePage()
+  })
+
+  ipcMain.handle('view:load-url', async (_, wcId: number, url: string) => {
+    const wc = webContents.fromId(wcId)
+    if (!wc || wc.isDestroyed()) throw new Error('WebContents not found')
+    await wc.loadURL(url)
+  })
+
+  ipcMain.handle('view:nav-back', async (_, wcId: number) => {
+    const wc = webContents.fromId(wcId)
+    if (wc && !wc.isDestroyed() && wc.navigationHistory.canGoBack()) {
+      wc.navigationHistory.goBack()
+    }
+  })
+
+  ipcMain.handle('view:nav-forward', async (_, wcId: number) => {
+    const wc = webContents.fromId(wcId)
+    if (wc && !wc.isDestroyed() && wc.navigationHistory.canGoForward()) {
+      wc.navigationHistory.goForward()
+    }
+  })
+
+  ipcMain.handle('view:reload', async (_, wcId: number) => {
+    const wc = webContents.fromId(wcId)
+    if (wc && !wc.isDestroyed()) wc.reload()
+  })
 }
