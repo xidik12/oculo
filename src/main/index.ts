@@ -303,6 +303,15 @@ app.whenReady().then(async () => {
     // All anti-bot fingerprint patches are in webview-preload.ts (runs before page scripts).
     // The executeJavaScript approach was too late — ThreatMetrix/PerimeterX run on first script.
 
+    // Handle native dialogs — prevent "beforeunload" from blocking MCP automation.
+    // The webview-preload.ts already overrides window.alert/confirm/prompt and
+    // suppresses beforeunload via event listener, but will-prevent-unload is the
+    // main-process safety net for pages that still manage to trigger the dialog.
+    wc.on('will-prevent-unload', (event) => {
+      // Always allow navigation — don't let "Leave site?" dialogs block automation
+      event.preventDefault()
+    })
+
     // Intercept window.open / target="_blank" → open as new tab, not new window
     // Block popups to known ad/malware domains; allow legitimate ones (OAuth, payment, SSO)
     const OAUTH_DOMAINS = [

@@ -116,6 +116,53 @@ export class FormDetector {
       await new Promise(r => setTimeout(r, 200))
     } catch { /* proceed anyway */ }
 
+    // Hydration-ready check: verify inputs are interactive before filling
+    const fieldLabels = Object.keys(fields)
+    if (fieldLabels.length > 0) {
+      let readyCheckPassed = false
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          readyCheckPassed = await webContents.executeJavaScript(`
+            (function() {
+              if (document.readyState !== 'complete') return false;
+              ${deepQuerySnippet()}
+              const labels = ${JSON.stringify(fieldLabels)};
+              for (const label of labels) {
+                const lower = label.toLowerCase();
+                let el = null;
+                // Quick search for matching input
+                if (label.startsWith('#') || label.startsWith('.') || label.startsWith('[')) {
+                  el = querySelectorDeep(document, label);
+                }
+                if (!el) {
+                  const allLabels = querySelectorAllDeep(document, 'label');
+                  for (const lbl of allLabels) {
+                    if (lbl.textContent.trim().toLowerCase().includes(lower)) {
+                      if (lbl.htmlFor) {
+                        el = document.getElementById(lbl.htmlFor) || querySelectorDeep(document, '#' + CSS.escape(lbl.htmlFor));
+                      }
+                      if (!el) el = lbl.querySelector('input, textarea, select');
+                      if (el) break;
+                    }
+                  }
+                }
+                if (!el) {
+                  const placeholders = querySelectorAllDeep(document, 'input[placeholder], textarea[placeholder]');
+                  for (const inp of placeholders) {
+                    if (inp.placeholder.toLowerCase().includes(lower)) { el = inp; break; }
+                  }
+                }
+                if (el && (el.disabled || el.readOnly)) return false;
+              }
+              return true;
+            })()
+          `)
+          if (readyCheckPassed) break
+        } catch { /* retry */ }
+        await new Promise(r => setTimeout(r, 500))
+      }
+    }
+
     const script = `
       (function() {
         ${deepQuerySnippet()}
@@ -246,48 +293,117 @@ export class FormDetector {
           else errors.push(label);
         }
 
-        // Submit if requested — searches modals/dialogs first, then page
+        // Submit if requested — multi-strategy button search with verification
         let submitResult = '';
         const submitText = ${JSON.stringify(submit)};
         if (submitText) {
           const btnText = typeof submitText === 'string' ? submitText : null;
           let btn = null;
+          let lastFilledInput = null;
 
-          // Build search contexts: visible modals/dialogs first, then document
-          const searchContexts = [];
-          const visibleModals = document.querySelectorAll(
-            '[role="dialog"], [role="alertdialog"], dialog[open], .modal.show, .modal.active, ' +
-            '[class*="modal"][class*="open"], [class*="modal"][class*="show"], [class*="modal"][class*="visible"]'
-          );
-          visibleModals.forEach(m => {
-            if (m.offsetParent !== null || m.closest('[role="dialog"]')) searchContexts.push(m);
-          });
-          searchContexts.push(document);
+          // Track the last filled input for proximity search
+          for (const [label] of Object.entries(fields)) {
+            const inp = findInput(label);
+            if (inp) lastFilledInput = inp;
+          }
 
-          for (const ctx of searchContexts) {
-            if (btn) break;
-            const buttons = ctx.querySelectorAll('button, input[type="submit"], [role="button"], a.btn, a[role="button"]');
-            for (const b of buttons) {
-              // Skip invisible buttons unless inside a dialog
-              if (b.offsetParent === null && !b.closest('[role="dialog"], dialog')) continue;
-              const bText = (b.textContent?.trim() || b.value || b.getAttribute('aria-label') || '').toLowerCase();
-              if (btnText) {
-                if (bText.includes(btnText.toLowerCase())) { btn = b; break; }
-              } else {
-                // No specific text — look for submit-like buttons
-                if (b.type === 'submit' || ['submit', 'save', 'create', 'add', 'ok', 'confirm', 'send', 'done', 'apply', 'update'].some(w => bText === w || bText.startsWith(w + ' '))) {
+          // Strategy 1: Look for submit button inside the closest <form> ancestor
+          if (lastFilledInput) {
+            const formAncestor = lastFilledInput.closest('form');
+            if (formAncestor) {
+              const formBtns = formAncestor.querySelectorAll('button[type="submit"], input[type="submit"], button:not([type])');
+              for (const b of formBtns) {
+                if (b.offsetParent === null) continue;
+                const bText = (b.textContent?.trim() || b.value || b.getAttribute('aria-label') || '').toLowerCase();
+                if (btnText) {
+                  if (bText.includes(btnText.toLowerCase())) { btn = b; break; }
+                } else {
                   btn = b; break;
                 }
               }
             }
           }
 
+          // Strategy 2: Look inside closest modal/dialog ancestor
+          if (!btn && lastFilledInput) {
+            const modalAncestor = lastFilledInput.closest('.modal, [role="dialog"], dialog, .modal-content, [role="alertdialog"]');
+            if (modalAncestor) {
+              const modalBtns = modalAncestor.querySelectorAll('button, input[type="submit"], [role="button"], a.btn, a[role="button"]');
+              for (const b of modalBtns) {
+                if (b.offsetParent === null && !b.closest('[role="dialog"], dialog')) continue;
+                const bText = (b.textContent?.trim() || b.value || b.getAttribute('aria-label') || '').toLowerCase();
+                if (btnText) {
+                  if (bText.includes(btnText.toLowerCase())) { btn = b; break; }
+                } else {
+                  if (b.type === 'submit' || ['submit', 'save', 'create', 'add', 'ok', 'confirm', 'send', 'done', 'apply', 'update'].some(w => bText === w || bText.startsWith(w + ' '))) {
+                    btn = b; break;
+                  }
+                }
+              }
+            }
+          }
+
+          // Strategy 3: Search visible modals/dialogs on page, then full document
+          if (!btn) {
+            const searchContexts = [];
+            const visibleModals = document.querySelectorAll(
+              '[role="dialog"], [role="alertdialog"], dialog[open], .modal.show, .modal.active, ' +
+              '[class*="modal"][class*="open"], [class*="modal"][class*="show"], [class*="modal"][class*="visible"]'
+            );
+            visibleModals.forEach(m => {
+              if (m.offsetParent !== null || m.closest('[role="dialog"]')) searchContexts.push(m);
+            });
+            searchContexts.push(document);
+
+            for (const ctx of searchContexts) {
+              if (btn) break;
+              const buttons = ctx.querySelectorAll('button, input[type="submit"], [role="button"], a.btn, a[role="button"]');
+              for (const b of buttons) {
+                if (b.offsetParent === null && !b.closest('[role="dialog"], dialog')) continue;
+                const bText = (b.textContent?.trim() || b.value || b.getAttribute('aria-label') || '').toLowerCase();
+                if (btnText) {
+                  if (bText.includes(btnText.toLowerCase())) { btn = b; break; }
+                } else {
+                  if (b.type === 'submit' || ['submit', 'save', 'create', 'add', 'ok', 'confirm', 'send', 'done', 'apply', 'update'].some(w => bText === w || bText.startsWith(w + ' '))) {
+                    btn = b; break;
+                  }
+                }
+              }
+            }
+          }
+
+          // Strategy 4: Buttons with common submit text near the last filled field
+          if (!btn && !btnText && lastFilledInput) {
+            const commonTexts = ['submit', 'create', 'save', 'ok', 'confirm', 'apply', 'done', 'add'];
+            const allBtns = document.querySelectorAll('button, input[type="submit"], [role="button"]');
+            let bestBtn = null;
+            let bestDist = Infinity;
+            const inputRect = lastFilledInput.getBoundingClientRect();
+            for (const b of allBtns) {
+              if (b.offsetParent === null) continue;
+              const bText = (b.textContent?.trim() || b.value || '').toLowerCase();
+              if (commonTexts.some(w => bText === w || bText.startsWith(w + ' '))) {
+                const bRect = b.getBoundingClientRect();
+                const dist = Math.abs(bRect.top - inputRect.bottom) + Math.abs(bRect.left - inputRect.left);
+                if (dist < bestDist) { bestDist = dist; bestBtn = b; }
+              }
+            }
+            if (bestBtn) btn = bestBtn;
+          }
+
           if (btn) {
+            // Capture pre-click state for verification
+            const preClickModal = btn.closest('.modal, [role="dialog"], dialog, .modal-content, [role="alertdialog"]');
+            const preClickBtnId = btn.id || null;
+            const preClickBtnText = btn.textContent?.trim() || '';
+
             btn.scrollIntoView({ block: 'center' });
             btn.click();
-            submitResult = ' [submitted]';
+            // Mark for post-click verification by the outer handler
+            submitResult = ' [submit-pending:' + (btnText || preClickBtnText || 'submit') + ']';
           } else {
-            submitResult = ' Submit button not found.';
+            const searchLabel = btnText || 'submit';
+            submitResult = ' [submit failed \\u2014 no button matching "' + searchLabel + '" found]';
           }
         }
 
@@ -297,8 +413,49 @@ export class FormDetector {
     `
     try {
       const result = await webContents.executeJavaScript(script)
+      if (submit && result.includes('[submit-pending:')) {
+        // Wait for submit action to take effect
+        await new Promise(r => setTimeout(r, 500))
+
+        // Verify submit outcome
+        const submitOutcome = await webContents.executeJavaScript(`
+          (function() {
+            // Check if any modal/dialog/form is still visible
+            const modals = document.querySelectorAll(
+              '[role="dialog"], [role="alertdialog"], dialog[open], .modal.show, .modal.active, ' +
+              '[class*="modal"][class*="open"], [class*="modal"][class*="show"], [class*="modal"][class*="visible"]'
+            );
+            let modalStillVisible = false;
+            modals.forEach(m => {
+              if (m.offsetParent !== null || m.closest('[role="dialog"]')) modalStillVisible = true;
+            });
+            // Also check if forms with visible inputs are still present
+            const forms = document.querySelectorAll('form');
+            let formStillVisible = false;
+            forms.forEach(f => {
+              if (f.offsetParent !== null && f.querySelectorAll('input:not([type="hidden"]), textarea, select').length > 0) {
+                formStillVisible = true;
+              }
+            });
+            return { modalStillVisible, formStillVisible };
+          })()
+        `)
+
+        const title = await webContents.executeJavaScript('document.title')
+        const url = webContents.getURL()
+
+        // Replace the pending marker with the actual outcome
+        let finalResult = result
+        if (submitOutcome.modalStillVisible || submitOutcome.formStillVisible) {
+          finalResult = finalResult.replace(/\s*\[submit-pending:[^\]]*\]/, ' [submitted — but form still visible, may need manual verification]')
+        } else {
+          finalResult = finalResult.replace(/\s*\[submit-pending:[^\]]*\]/, ' [submitted]')
+        }
+
+        return finalResult + ` Page: ${title} | ${url}`
+      }
+      // If submit was requested but button was not found (no pending marker), just return result
       if (submit) {
-        await new Promise(r => setTimeout(r, 1000))
         const title = await webContents.executeJavaScript('document.title')
         const url = webContents.getURL()
         return result + ` Page: ${title} | ${url}`

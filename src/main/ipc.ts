@@ -514,8 +514,8 @@ export function setupIPC(registry: StoreRegistry): void {
 
         for (const node of nodes) {
           const role = node.role?.value || ''
-          const name = node.name?.value || ''
-          const value = node.value?.value || ''
+          const name = String(node.name?.value ?? '')
+          const value = String(node.value?.value ?? '')
           const description = node.description?.value || ''
 
           // Skip generic/structural roles
@@ -552,7 +552,8 @@ export function setupIPC(registry: StoreRegistry): void {
             let required: boolean | undefined
             if (node.properties) {
               for (const prop of node.properties) {
-                if (prop.name === 'checked' && prop.value?.value) checked = true
+                // Fix: checked CDP property can be true, false, or "mixed" — only mark checked when truly checked
+                if (prop.name === 'checked' && (prop.value?.value === true || prop.value?.value === 'true')) checked = true
                 if (prop.name === 'disabled' && prop.value?.value) disabled = true
                 if (prop.name === 'expanded' && prop.value?.value !== undefined) expanded = prop.value.value
                 if (prop.name === 'required' && prop.value?.value) required = true
@@ -568,7 +569,7 @@ export function setupIPC(registry: StoreRegistry): void {
                 const pr = parentNode.role?.value || ''
                 if (pr && !['none', 'generic', 'GenericContainer'].includes(pr)) {
                   parentRole = pr
-                  parentName = (parentNode.name?.value || '').substring(0, 40) || undefined
+                  parentName = String(parentNode.name?.value ?? '').substring(0, 40) || undefined
                 }
               }
             }
@@ -601,10 +602,11 @@ export function setupIPC(registry: StoreRegistry): void {
           if (!value && (role === 'textbox' || role === 'combobox' || role === 'searchbox')) {
             props.push('value=""')
           }
-          if (value) props.push(`value="${value.substring(0, 40)}"`)
+          if (value) props.push(`value="${String(value).substring(0, 40)}"`)
           if (node.properties) {
             for (const prop of node.properties) {
-              if (prop.name === 'checked' && prop.value?.value) props.push('checked')
+              // Fix: only show "checked" when truly checked — CDP can return false/"false" for unchecked radios
+              if (prop.name === 'checked' && (prop.value?.value === true || prop.value?.value === 'true')) props.push('checked')
               if (prop.name === 'selected' && prop.value?.value) props.push('selected')
               if (prop.name === 'disabled' && prop.value?.value) props.push('disabled')
               if (prop.name === 'required' && prop.value?.value) props.push('required')

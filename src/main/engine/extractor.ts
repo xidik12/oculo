@@ -1,4 +1,5 @@
 import { WebContents } from 'electron'
+import { deepQuerySnippet } from './deep-query'
 
 export class DataExtractor {
   async extract(
@@ -13,6 +14,7 @@ export class DataExtractor {
 
     const script = `
       (function() {
+        ${deepQuerySnippet()}
         const root = document.querySelector(${JSON.stringify(scope)}) || document.body;
         const limit = ${limit};
         const what = ${JSON.stringify(what.toLowerCase())};
@@ -27,7 +29,7 @@ export class DataExtractor {
         function findContentArea() {
           const excludeSelectors = 'nav, header, footer, aside, [role="navigation"], [role="banner"], [role="contentinfo"]';
           const excludeEls = new Set();
-          root.querySelectorAll(excludeSelectors).forEach(el => excludeEls.add(el));
+          querySelectorAllDeep(root, excludeSelectors).forEach(el => excludeEls.add(el));
 
           function isExcluded(el) {
             let node = el;
@@ -38,16 +40,33 @@ export class DataExtractor {
             return false;
           }
 
-          const candidates = root.querySelectorAll('ul, ol, table, [class*="list"], [class*="grid"], [class*="results"], [class*="items"], [class*="cards"], main, article, [role="list"], [role="main"], [role="feed"], section');
+          // Strong preference: if <main> or [role="main"] exists, use it directly
+          const mainEl = querySelectorDeep(root, 'main, [role="main"]');
+          if (mainEl && !isExcluded(mainEl)) {
+            return mainEl;
+          }
+
+          const candidates = querySelectorAllDeep(root, 'ul, ol, table, [class*="list"], [class*="grid"], [class*="results"], [class*="items"], [class*="cards"], main, article, [role="list"], [role="main"], [role="feed"], section, #content, .content, #main, .main-content, .page-content');
           let best = null;
           let bestScore = 0;
 
           candidates.forEach(container => {
-            if (isExcluded(container)) return;
-
             let score = 0;
             const children = container.children;
             if (children.length < 2) return;
+
+            // Heavy penalty for elements inside navigation/chrome areas
+            let node = container;
+            while (node && node !== root) {
+              const nodeTag = node.tagName.toLowerCase();
+              const nodeRole = (node.getAttribute && node.getAttribute('role')) || '';
+              if (nodeTag === 'nav' || nodeTag === 'aside' || nodeTag === 'header' || nodeTag === 'footer' ||
+                  nodeRole === 'navigation' || nodeRole === 'banner' || nodeRole === 'contentinfo') {
+                score -= 50;
+                break;
+              }
+              node = node.parentElement;
+            }
 
             // Repeated children of same tag (core signal)
             const tagCounts = {};
@@ -60,15 +79,17 @@ export class DataExtractor {
 
             // Semantic tag bonus (strong preference for main content areas)
             const tag = container.tagName.toLowerCase();
-            if (tag === 'main' || container.getAttribute('role') === 'main') score += 15;
-            if (tag === 'article' || container.getAttribute('role') === 'feed') score += 8;
+            if (tag === 'main' || container.getAttribute('role') === 'main') score += 50;
+            if (tag === 'article' || container.getAttribute('role') === 'feed') score += 20;
             if (tag === 'table') score += 3;
             if (tag === 'section') score += 1;
             // Bonus for common content container IDs/classes
             const cid = ((container.className || '') + ' ' + (container.id || '')).toLowerCase();
-            if (/\\bcontent\\b|\\bmain-content\\b|\\bpage-content\\b|\\bbody-content\\b/.test(cid)) score += 8;
+            if (/\\bcontent\\b|\\bmain-content\\b|\\bpage-content\\b|\\bbody-content\\b/.test(cid)) score += 20;
+            if (/\\b(main|page-content)\\b/.test(container.id || '')) score += 25;
+            if (/\\b(content|main-content|page-content)\\b/.test(container.className || '')) score += 20;
             // Penalize sidebar/nav-like containers that slip through
-            if (/sidebar|side-bar|menu|subnav|toc|breadcrumb|toolbar/.test(cid)) score -= 8;
+            if (/sidebar|side-bar|menu|subnav|toc|breadcrumb|toolbar|nav-|navigation/.test(cid)) score -= 30;
 
             // Class/id keyword match against 'what'
             const whatWords = what.split(/\\s+/);

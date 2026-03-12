@@ -1,4 +1,5 @@
 import { WebContents } from 'electron'
+import { deepQuerySnippet } from './deep-query'
 
 /**
  * Generates a minimal page description by executing JS in the webview.
@@ -25,18 +26,19 @@ export class PageDescriber {
     // This entire script runs inside the page — zero MCP tokens
     const script = `
       (function() {
+        ${deepQuerySnippet()}
         const root = document.querySelector(${JSON.stringify(scope)}) || document.body;
         const result = [];
-        
+
         // URL and title
         result.push(document.title + ' | ' + location.href);
         result.push('');
 
         const includes = ${JSON.stringify(include)};
-        
+
         // Headings
         if (includes.includes('headings')) {
-          const headings = root.querySelectorAll('h1, h2, h3');
+          const headings = querySelectorAllDeep(root, 'h1, h2, h3');
           const hTexts = [];
           headings.forEach(h => {
             const text = h.textContent?.trim();
@@ -47,66 +49,104 @@ export class PageDescriber {
 
         // Forms
         if (includes.includes('forms')) {
-          // Find all visible inputs, textareas, selects (even outside <form> tags for SPAs)
-          const inputs = root.querySelectorAll('input:not([type="hidden"]), textarea, select');
+          // Find ALL visible inputs, textareas, selects — including those without <label>,
+          // with only placeholder, aria-label, aria-labelledby, or name attributes.
+          // Also find contenteditable and role-based inputs common in modern SPAs.
+          const inputs = querySelectorAllDeep(root,
+            'input:not([type="hidden"]), textarea, select, ' +
+            '[role="textbox"], [role="combobox"], [role="searchbox"], [role="spinbutton"], ' +
+            '[contenteditable="true"], [contenteditable=""]'
+          );
+          const seen = new Set();
           const fields = [];
           inputs.forEach(el => {
+            // Deduplicate (a real <input> might also match [role="textbox"])
+            if (seen.has(el)) return;
+            seen.add(el);
             {
               const cs = getComputedStyle(el);
-              if (cs.display === 'none' || cs.visibility === 'hidden') return; // skip invisible
+              if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return;
+              // Skip zero-size elements (common hidden inputs)
+              if (el.offsetWidth === 0 && el.offsetHeight === 0) return;
             }
             const input = el;
             let label = '';
-            
-            // Try to find label
+
+            // Label resolution priority: explicit label > implicit label > aria-label > aria-labelledby > placeholder > title > siblings > name
+            // 1. Explicit <label for="id">
             if (input.id) {
-              const labelEl = document.querySelector('label[for="' + input.id + '"]');
-              if (labelEl) label = labelEl.textContent?.trim() || '';
+              try {
+                const labelEl = document.querySelector('label[for="' + CSS.escape(input.id) + '"]');
+                if (labelEl) label = labelEl.textContent?.trim() || '';
+              } catch(e) {}
             }
-            if (!label && input.closest('label')) {
-              label = input.closest('label')?.textContent?.trim() || '';
+            // 2. Implicit label (input inside <label>) — exclude input's own text
+            if (!label && input.closest && input.closest('label')) {
+              var parentLabel = input.closest('label');
+              var clone = parentLabel.cloneNode(true);
+              clone.querySelectorAll('input, textarea, select').forEach(function(c) { c.remove(); });
+              label = clone.textContent?.trim() || '';
             }
+            // 3. aria-label
             if (!label) label = input.getAttribute('aria-label') || '';
+            // 4. aria-labelledby (supports space-separated IDs)
             if (!label) {
-              // Try aria-labelledby
               const labelledBy = input.getAttribute('aria-labelledby');
               if (labelledBy) {
-                const refEl = document.getElementById(labelledBy);
-                if (refEl) label = refEl.textContent?.trim() || '';
+                const parts = labelledBy.split(/\\s+/).map(function(id) {
+                  var refEl = document.getElementById(id);
+                  return refEl ? (refEl.textContent?.trim() || '') : '';
+                }).filter(function(s) { return s.length > 0; });
+                if (parts.length) label = parts.join(' ');
               }
             }
+            // 5. placeholder
             if (!label) label = input.getAttribute('placeholder') || '';
+            // 6. title attribute
+            if (!label) label = input.getAttribute('title') || '';
+            // 7. Preceding sibling text (floating labels, adjacent spans)
             if (!label) {
-              // Try preceding sibling text (floating labels, adjacent spans)
               const prev = input.previousElementSibling;
               if (prev && ['LABEL', 'SPAN', 'DIV', 'P'].includes(prev.tagName)) {
                 const prevText = prev.textContent?.trim() || '';
                 if (prevText.length > 0 && prevText.length < 50) label = prevText;
               }
             }
+            // 8. Following sibling (some forms put label after input)
+            if (!label) {
+              const next = input.nextElementSibling;
+              if (next && ['LABEL', 'SPAN'].includes(next.tagName)) {
+                const nextText = next.textContent?.trim() || '';
+                if (nextText.length > 0 && nextText.length < 50) label = nextText;
+              }
+            }
+            // 9. name attribute as fallback
             if (!label) label = input.getAttribute('name') || '';
-            
-            const type = input.getAttribute('type') || input.tagName.toLowerCase();
+
+            const type = input.getAttribute('type') || (input.tagName === 'TEXTAREA' ? 'textarea' : input.tagName === 'SELECT' ? 'select' : input.getAttribute('role') || input.tagName.toLowerCase());
             let value = '';
             if (type === 'password') {
               value = input.value ? '***' : 'empty';
             } else if (type === 'checkbox' || type === 'radio') {
-              value = input.checked ? 'checked' : 'unchecked';
+              // Fix 2: Use el.checked DOM property (not attribute) — attribute is the default, property is the live state
+              value = (input.checked === true) ? 'checked' : 'unchecked';
             } else if (input.tagName === 'SELECT') {
-              value = input.options?.[input.selectedIndex]?.text || 'empty';
+              value = (input.options && input.options[input.selectedIndex]) ? String(input.options[input.selectedIndex].text) : 'empty';
             } else {
-              value = input.value ? String(input.value).substring(0, 30) : 'empty';
+              // Fix 3: Convert value to string before calling .substring() — number inputs can return numeric values
+              var rawVal = (input.value !== undefined && input.value !== null) ? String(input.value) : '';
+              value = rawVal.length > 0 ? rawVal.substring(0, 30) : 'empty';
             }
-            
+
             const displayLabel = label || input.getAttribute('name') || input.id || type;
-            fields.push(displayLabel.substring(0, 30) + ' (' + type + ', ' + value + ')');
+            fields.push(String(displayLabel).substring(0, 30) + ' (' + type + ', ' + value + ')');
           });
           if (fields.length > 0) result.push('Forms: ' + fields.join(', '));
         }
 
         // Buttons
         if (includes.includes('buttons')) {
-          const buttons = root.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]');
+          const buttons = querySelectorAllDeep(root, 'button, input[type="submit"], input[type="button"], [role="button"]');
           const btnTexts = [];
           buttons.forEach(btn => {
             { const cs = getComputedStyle(btn); if (cs.display === 'none' || cs.visibility === 'hidden') return; }
@@ -119,7 +159,7 @@ export class PageDescriber {
         // Links (region-aware: content links first, then nav links)
         if (includes.includes('links')) {
           const navContainers = new Set();
-          root.querySelectorAll('nav, header, footer, [role="navigation"], [role="banner"], [role="contentinfo"]').forEach(el => navContainers.add(el));
+          querySelectorAllDeep(root, 'nav, header, footer, [role="navigation"], [role="banner"], [role="contentinfo"]').forEach(el => navContainers.add(el));
 
           function isNavLink(a) {
             let el = a.parentElement;
@@ -133,7 +173,7 @@ export class PageDescriber {
           const contentLinks = [];
           const navLinks = [];
           const seen = new Set();
-          root.querySelectorAll('a[href]').forEach(a => {
+          querySelectorAllDeep(root, 'a[href]').forEach(a => {
             { const cs = getComputedStyle(a); if (cs.display === 'none' || cs.visibility === 'hidden') return; }
             let text = a.textContent?.trim();
             if (!text || text.length < 2 || text.length > 120 || text.includes('\\n')) return;
@@ -159,7 +199,7 @@ export class PageDescriber {
 
         // Images
         if (includes.includes('images')) {
-          const imgs = root.querySelectorAll('img[alt]');
+          const imgs = querySelectorAllDeep(root, 'img[alt]');
           const imgTexts = [];
           imgs.forEach(img => {
             { const cs = getComputedStyle(img); if (cs.display === 'none' || cs.visibility === 'hidden') return; }

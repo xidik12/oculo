@@ -1,4 +1,6 @@
-import { WebContents } from 'electron'
+import { WebContents, app } from 'electron'
+import * as path from 'path'
+import * as fs from 'fs'
 import { PipelineStep } from '../../shared/types'
 import { PageDescriber } from './describer'
 import { FormDetector } from './form-detector'
@@ -32,7 +34,11 @@ export class PipelineRunner {
         if (step.page) {
           result = await this.describer.describe(webContents, step.page)
         } else if (step.act) {
-          result = await executeAction(webContents, step.act)
+          if (step.act.action === 'screenshot' as any) {
+            result = await this.captureScreenshot(webContents)
+          } else {
+            result = await executeAction(webContents, step.act)
+          }
         } else if (step.fill) {
           result = await this.formDetector.fillForm(
             webContents,
@@ -51,7 +57,12 @@ export class PipelineRunner {
           result = await this.executeConditional(webContents, step.if)
         }
 
-        results.push(result)
+        if (returnAll) {
+          const stepType = step.page ? 'page' : step.act ? `act:${(step.act as any).action}` : step.fill ? 'fill' : step.read ? 'read' : step.wait ? 'wait' : step.if ? 'if' : 'unknown'
+          results.push(`[step ${i + 1}: ${stepType}]\n${result}`)
+        } else {
+          results.push(result)
+        }
       } catch (err) {
         const errMsg = (err as Error).message
         const partial = results.length > 0 ? '\n' + results.join('\n') : ''
@@ -72,6 +83,20 @@ export class PipelineRunner {
     return header + '\n\n' + lastResult
   }
 
+  private async captureScreenshot(webContents: WebContents): Promise<string> {
+    try {
+      const nativeImage = await webContents.capturePage()
+      const buffer = nativeImage.toPNG()
+      const dir = path.join(app.getPath('pictures'), 'Oculo')
+      fs.mkdirSync(dir, { recursive: true })
+      const filePath = path.join(dir, `screenshot-${Date.now()}.png`)
+      fs.writeFileSync(filePath, buffer)
+      return `Screenshot saved: ${filePath}`
+    } catch (e: any) {
+      return `Error capturing screenshot: ${e.message}`
+    }
+  }
+
   private async executeWait(webContents: WebContents, wait: any): Promise<string> {
     const timeout = wait.timeout || 5000
     const start = Date.now()
@@ -81,7 +106,7 @@ export class PipelineRunner {
         const hasText = await webContents.executeJavaScript(
           `document.body.textContent.toLowerCase().includes(${JSON.stringify(wait.text.toLowerCase())})`
         )
-        if (hasText) return `Text "${wait.text}" found after ${Date.now() - start}ms`
+        if (hasText) return `Found text '${wait.text}' after ${Date.now() - start}ms`
       }
       if (wait.url) {
         const currentUrl = webContents.getURL()
@@ -96,8 +121,11 @@ export class PipelineRunner {
       await new Promise(r => setTimeout(r, 250))
     }
 
-    const target = wait.text ? `text "${wait.text}"` : wait.url ? `url "${wait.url}"` : wait.selector ? `selector "${wait.selector}"` : 'condition'
-    return `Wait timeout: ${target} not found after ${timeout}ms`
+    if (wait.text) {
+      return `Timed out after ${timeout}ms — text '${wait.text}' not found on page`
+    }
+    const target = wait.url ? `url "${wait.url}"` : wait.selector ? `selector "${wait.selector}"` : 'condition'
+    return `Timed out after ${timeout}ms — ${target} not found on page`
   }
 
   private async executeConditional(webContents: WebContents, cond: any): Promise<string> {

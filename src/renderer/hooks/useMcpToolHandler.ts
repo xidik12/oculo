@@ -1033,15 +1033,20 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                 result = await (wv as any).executeJavaScript(pasteCode)
               }
             } else if (action === 'evaluate') {
-              // Execute JavaScript in the page context — supports async/await and multiple statements
+              // Execute JavaScript in the page context — supports async/await and multi-statement expressions
               const expr = args.expression || args.code || args.text || args.selector || ''
               if (!expr) {
                 result = 'Error: provide JS expression in expression parameter'
               } else {
                 try {
-                  const evalResult = await (wv as any).executeJavaScript(
-                    '(async () => { ' + expr + ' })()'
-                  )
+                  // Detect statement-style vs expression-style input:
+                  // If the expression contains semicolons or return statements, treat as statements (no auto-return)
+                  // Otherwise treat as a single expression (add return prefix)
+                  const isStatements = /[;]|\breturn\b/.test(expr)
+                  const wrappedExpr = isStatements
+                    ? '(async () => { try { ' + expr + ' } catch(e) { return "Eval error: " + e.message } })()'
+                    : '(async () => { try { return ' + expr + ' } catch(e) { return "Eval error: " + e.message } })()'
+                  const evalResult = await (wv as any).executeJavaScript(wrappedExpr)
                   if (evalResult === undefined || evalResult === null) {
                     result = 'undefined'
                   } else if (typeof evalResult === 'object') {

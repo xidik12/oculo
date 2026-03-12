@@ -560,7 +560,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   return {
-    content: [{ type: 'text', text: `Failed to reach Oculo after ${BACKOFF_DELAYS.length + 1} attempts: ${lastErr?.message}` }],
+    content: [{ type: 'text', text: `Oculo connection lost after ${BACKOFF_DELAYS.length} retries. Is Oculo running?` }],
     isError: true
   }
 })
@@ -580,6 +580,25 @@ process.stdin.on('error', () => {
   // stdin error (e.g. EPIPE) — schedule exit
   setTimeout(() => process.exit(0), 15_000).unref()
 })
+
+// ── Connection keepalive ping ─────────────────────────────────────────────
+// Every 30 seconds, ping the Oculo HTTP server to keep the connection alive
+// and detect stale connections early. On failure, invalidate the cache so the
+// next tool call re-reads ~/.oculo-port and reconnects.
+
+const KEEPALIVE_INTERVAL = 30_000
+
+const keepaliveTimer = setInterval(async () => {
+  const conn = getCachedConnection()
+  if (!conn) return // Oculo not running, nothing to ping
+  const alive = await verifyConnection(conn)
+  if (!alive) {
+    process.stderr.write('[oculo-mcp] Keepalive ping failed — invalidating connection cache\n')
+    invalidateCache()
+  }
+}, KEEPALIVE_INTERVAL)
+
+keepaliveTimer.unref() // Don't prevent process exit
 
 // ── Connect stdio transport ───────────────────────────────────────────────
 

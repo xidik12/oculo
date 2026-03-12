@@ -300,41 +300,54 @@ export class ElementResolver {
       return resolved.error || 'Element not found'
     }
 
+    // Base64-encode text to prevent $$ or ${} from being shell/template-interpolated
+    const textB64 = Buffer.from(text, 'utf-8').toString('base64')
+
     const script = `
       (function() {
         ${deepQuerySnippet()}
+        const text = decodeURIComponent(escape(atob("${textB64}")));
         const el = document.querySelector(${JSON.stringify(resolved.selector)}) || querySelectorDeep(document, ${JSON.stringify(resolved.selector)});
         if (!el) return 'Element disappeared';
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.focus();
         const isContentEditable = el.contentEditable === 'true' || el.getAttribute('role') === 'textbox';
         if (isContentEditable) {
+          // Detect Lexical editor — rejects programmatic input
+          if (el.hasAttribute('data-lexical-editor') || el.__lexicalEditor) {
+            return 'Warning: Target is a Lexical editor which rejects programmatic input. Use evaluate() with editor.parseEditorState() + editor.setEditorState() instead. See: el.__lexicalEditor';
+          }
           if (${clear ? 'true' : 'false'}) {
             document.execCommand('selectAll', false, null);
             document.execCommand('delete', false, null);
           }
-          document.execCommand('insertText', false, ${JSON.stringify(text)});
+          document.execCommand('insertText', false, text);
+          // Verify content was actually inserted for contenteditable
+          const innerText = el.innerText || el.textContent || '';
+          if (!innerText.includes(text.substring(0, Math.min(10, text.length)))) {
+            return 'Warning: Content may not have been inserted. The contenteditable element may reject programmatic input. Try evaluate() with direct DOM manipulation instead.';
+          }
           return 'ok';
         }
-        // Get native setter for React/Vue compatibility
-        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+        // Use native setter to trigger React onChange
+        const nativeSetter = Object.getOwnPropertyDescriptor(
           window.HTMLInputElement.prototype, 'value'
         )?.set || Object.getOwnPropertyDescriptor(
           window.HTMLTextAreaElement.prototype, 'value'
         )?.set;
         if (${clear ? 'true' : 'false'}) {
-          if (nativeInputValueSetter) nativeInputValueSetter.call(el, '');
+          if (nativeSetter) nativeSetter.call(el, '');
           else el.value = '';
-          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
         }
-        const newValue = ${clear ? 'true' : 'false'} ? ${JSON.stringify(text)} : (el.value || '') + ${JSON.stringify(text)};
-        if (nativeInputValueSetter) {
-          nativeInputValueSetter.call(el, newValue);
+        const newValue = ${clear ? 'true' : 'false'} ? text : (el.value || '') + text;
+        if (nativeSetter) {
+          nativeSetter.call(el, newValue);
         } else {
           el.value = newValue;
         }
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
         return 'ok';
       })()
     `
@@ -369,8 +382,8 @@ export class ElementResolver {
             )?.set;
             if (nativeSetter) nativeSetter.call(el, opt.value);
             else el.value = opt.value;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
             found = true;
             break;
           }
