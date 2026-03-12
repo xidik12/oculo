@@ -106,6 +106,9 @@ export class PermissionGate {
       return true
     }
 
+    // Track focus state — dialog.showMessageBox steals focus on macOS
+    const wasFocused = this.mainWindow.isFocused()
+
     const result = await dialog.showMessageBox(this.mainWindow, {
       type: 'question',
       title: 'Oculo: Confirm Action',
@@ -118,6 +121,12 @@ export class PermissionGate {
 
     const approved = result.response === 0
     this.auditLog.log(action, details, approved ? 'confirmed' : 'denied')
+
+    // Restore focus to previous app if dialog stole it
+    if (!wasFocused && !this.mainWindow.isDestroyed() && this.mainWindow.isFocused()) {
+      this.mainWindow.blur()
+    }
+
     return approved
   }
 }

@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import os from 'os'
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, ipcMain, app } from 'electron'
 import { isHeadless, headlessLog } from '../headless'
 import { SecurityManager } from '../security/vault'
 import { AuditLog } from '../security/audit'
@@ -578,6 +578,7 @@ export class McpServerManager {
             args.tabId = existingTabId
           } else {
             // Create a new tab for this agent with retry (2 attempts)
+            const wasFocusedBeforeTab = this.mainWindow.isFocused()
             let tabId: string | null = null
             for (let attempt = 0; attempt < 2 && !tabId; attempt++) {
               try {
@@ -585,6 +586,10 @@ export class McpServerManager {
               } catch {
                 if (attempt === 0) await new Promise(r => setTimeout(r, 500))
               }
+            }
+            // Restore focus after tab creation
+            if (!wasFocusedBeforeTab && !this.mainWindow.isDestroyed() && this.mainWindow.isFocused()) {
+              this.mainWindow.blur()
             }
             if (tabId) {
               this.agentTabMap.set(agentId, tabId)
@@ -712,6 +717,7 @@ export class McpServerManager {
         const topic = String(args.topic || '')
         if (!topic) return { content: [{ type: 'text', text: 'Error: topic is required.' }], isError: true }
         const maxPages = Number(args.maxPages) || (args.depth === 3 ? 8 : args.depth === 1 ? 3 : 5)
+        const wasFocusedBeforeResearch = this.mainWindow.isFocused()
 
         try {
           // Step 1: Navigate to search
@@ -765,8 +771,15 @@ export class McpServerManager {
           result = this.antiInjection.sanitize(result)
           result = this.antiInjection.wrapContent(result)
           this.auditLog.log('research', topic, 'success', `${sources.length} sources`, 'research')
+          // Restore focus after multi-step research
+          if (!wasFocusedBeforeResearch && !this.mainWindow.isDestroyed() && this.mainWindow.isFocused()) {
+            this.mainWindow.blur()
+          }
           return { content: [{ type: 'text', text: result }] }
         } catch (err) {
+          if (!wasFocusedBeforeResearch && !this.mainWindow.isDestroyed() && this.mainWindow.isFocused()) {
+            this.mainWindow.blur()
+          }
           return { content: [{ type: 'text', text: `Research error: ${(err as Error).message}` }], isError: true }
         }
       }
@@ -809,8 +822,16 @@ export class McpServerManager {
         }
       }
 
+      // Focus guard: prevent window from stealing focus during background MCP operations
+      const wasFocusedBeforeTool = this.mainWindow.isFocused()
+
       // Execute tool via renderer IPC
       let result = await this.executeToolViaRenderer(name, args)
+
+      // Restore focus to previous app if Oculo wasn't focused before this tool call
+      if (!wasFocusedBeforeTool && !this.mainWindow.isDestroyed() && this.mainWindow.isFocused()) {
+        this.mainWindow.blur()
+      }
 
       // --- Selector Cache: record successful actions ---
       const isError = result.startsWith('Error:') || result.includes('not found') || result.includes('Element disappeared')
