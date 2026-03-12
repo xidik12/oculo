@@ -67,7 +67,23 @@ export class PageDescriber {
               label = input.closest('label')?.textContent?.trim() || '';
             }
             if (!label) label = input.getAttribute('aria-label') || '';
+            if (!label) {
+              // Try aria-labelledby
+              const labelledBy = input.getAttribute('aria-labelledby');
+              if (labelledBy) {
+                const refEl = document.getElementById(labelledBy);
+                if (refEl) label = refEl.textContent?.trim() || '';
+              }
+            }
             if (!label) label = input.getAttribute('placeholder') || '';
+            if (!label) {
+              // Try preceding sibling text (floating labels, adjacent spans)
+              const prev = input.previousElementSibling;
+              if (prev && ['LABEL', 'SPAN', 'DIV', 'P'].includes(prev.tagName)) {
+                const prevText = prev.textContent?.trim() || '';
+                if (prevText.length > 0 && prevText.length < 50) label = prevText;
+              }
+            }
             if (!label) label = input.getAttribute('name') || '';
             
             const type = input.getAttribute('type') || input.tagName.toLowerCase();
@@ -79,7 +95,7 @@ export class PageDescriber {
             } else if (input.tagName === 'SELECT') {
               value = input.options?.[input.selectedIndex]?.text || 'empty';
             } else {
-              value = input.value ? input.value.substring(0, 30) : 'empty';
+              value = input.value ? String(input.value).substring(0, 30) : 'empty';
             }
             
             const displayLabel = label || input.getAttribute('name') || input.id || type;

@@ -94,6 +94,25 @@ export async function executeAction(
       if (!args.value) return 'No value specified for select'
       return await resolver.select(webContents, args, args.value)
 
+    case 'type':
+      if (!args.text) return 'No text specified for type action'
+      return await resolver.type(webContents, args, args.text, args.clear)
+
+    case 'evaluate': {
+      if (!args.expression) return 'No expression specified'
+      const expr = String(args.expression)
+      try {
+        // Wrap in async IIFE to support await and multiple statements
+        const evalResult = await webContents.executeJavaScript(
+          `(async () => { ${expr} })()`
+        )
+        if (evalResult === undefined || evalResult === null) return 'undefined'
+        return typeof evalResult === 'object' ? JSON.stringify(evalResult, null, 2) : String(evalResult)
+      } catch (err) {
+        return `Evaluate error: ${(err as Error).message}`
+      }
+    }
+
     case 'login': {
       if (!args.site) return 'No site specified for login'
       if (!security) return 'Security manager not available for login'

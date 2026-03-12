@@ -1,13 +1,15 @@
 import { WebContents } from 'electron'
 import { FormDescription } from '../../shared/types'
+import { deepQuerySnippet } from './deep-query'
 
 export class FormDetector {
   async detectForms(webContents: WebContents): Promise<FormDescription[]> {
     const script = `
       (function() {
+        ${deepQuerySnippet()}
         function getLabel(input) {
           if (input.id) {
-            const lbl = document.querySelector('label[for="' + CSS.escape(input.id) + '"]');
+            const lbl = querySelectorDeep(document, 'label[for="' + CSS.escape(input.id) + '"]');
             if (lbl) return lbl.textContent.trim();
           }
           const parent = input.closest('label');
@@ -101,8 +103,22 @@ export class FormDetector {
     fields: Record<string, string | boolean>,
     submit?: boolean | string
   ): Promise<string> {
+    // Wait for page readiness (React hydration, lazy loading)
+    try {
+      await webContents.executeJavaScript(`
+        new Promise(resolve => {
+          if (document.readyState === 'complete') return resolve(true);
+          window.addEventListener('load', () => resolve(true), { once: true });
+          setTimeout(() => resolve(false), 3000);
+        })
+      `)
+      // Brief pause for framework mounting after load event
+      await new Promise(r => setTimeout(r, 200))
+    } catch { /* proceed anyway */ }
+
     const script = `
       (function() {
+        ${deepQuerySnippet()}
         const fields = ${JSON.stringify(fields)};
         let filled = 0;
         let total = Object.keys(fields).length;
@@ -111,12 +127,17 @@ export class FormDetector {
         function findInput(label) {
           const lower = label.toLowerCase();
           
-          // Try label[for] 
-          const labels = document.querySelectorAll('label');
+          // Try CSS selector directly (for unlabeled fields like "#field-id")
+          if (label.startsWith('#') || label.startsWith('.') || label.startsWith('[')) {
+            const direct = querySelectorDeep(document, label);
+            if (direct) return direct;
+          }
+          // Try label[for] (deep query for Shadow DOM)
+          const labels = querySelectorAllDeep(document, 'label');
           for (const lbl of labels) {
             if (lbl.textContent.trim().toLowerCase().includes(lower)) {
               if (lbl.htmlFor) {
-                const input = document.getElementById(lbl.htmlFor);
+                const input = document.getElementById(lbl.htmlFor) || querySelectorDeep(document, '#' + CSS.escape(lbl.htmlFor));
                 if (input) return input;
               }
               const input = lbl.querySelector('input, textarea, select');
@@ -124,23 +145,30 @@ export class FormDetector {
             }
           }
           // Try placeholder
-          const inputs = document.querySelectorAll('input[placeholder], textarea[placeholder]');
+          const inputs = querySelectorAllDeep(document, 'input[placeholder], textarea[placeholder]');
           for (const input of inputs) {
             if (input.placeholder.toLowerCase().includes(lower)) return input;
           }
           // Try aria-label
-          const ariaEls = document.querySelectorAll('[aria-label]');
+          const ariaEls = querySelectorAllDeep(document, '[aria-label]');
           for (const el of ariaEls) {
             if (el.getAttribute('aria-label').toLowerCase().includes(lower)) return el;
           }
+          // Try aria-labelledby
+          const labelledByEls = querySelectorAllDeep(document, '[aria-labelledby]');
+          for (const el of labelledByEls) {
+            const refId = el.getAttribute('aria-labelledby');
+            const refEl = document.getElementById(refId);
+            if (refEl && (refEl.textContent?.trim() || '').toLowerCase().includes(lower)) return el;
+          }
           // Try data-placeholder / aria-placeholder (contenteditable fields like DraftJS)
-          const cePlaceholders = document.querySelectorAll('[data-placeholder], [aria-placeholder]');
+          const cePlaceholders = querySelectorAllDeep(document, '[data-placeholder], [aria-placeholder]');
           for (const el of cePlaceholders) {
             const ph = (el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '').toLowerCase();
             if (ph.includes(lower)) return el;
           }
           // Try name attribute
-          const namedEls = document.querySelectorAll('[name]');
+          const namedEls = querySelectorAllDeep(document, '[name]');
           for (const el of namedEls) {
             if (el.name.toLowerCase().includes(lower)) return el;
           }
@@ -157,7 +185,13 @@ export class FormDetector {
             const lower = value.toLowerCase();
             for (const opt of el.options) {
               if (opt.text.toLowerCase().includes(lower) || opt.value.toLowerCase().includes(lower)) {
-                el.value = opt.value;
+                // Use native setter for React/Vue compatibility
+                const nativeSelectSetter = Object.getOwnPropertyDescriptor(
+                  window.HTMLSelectElement.prototype, 'value'
+                )?.set;
+                if (nativeSelectSetter) nativeSelectSetter.call(el, opt.value);
+                else el.value = opt.value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 return true;
               }
@@ -212,25 +246,46 @@ export class FormDetector {
           else errors.push(label);
         }
 
-        // Submit if requested
+        // Submit if requested — searches modals/dialogs first, then page
         let submitResult = '';
         const submitText = ${JSON.stringify(submit)};
         if (submitText) {
           const btnText = typeof submitText === 'string' ? submitText : null;
           let btn = null;
-          if (btnText) {
-            const buttons = document.querySelectorAll('button, input[type="submit"], [role="button"]');
+
+          // Build search contexts: visible modals/dialogs first, then document
+          const searchContexts = [];
+          const visibleModals = document.querySelectorAll(
+            '[role="dialog"], [role="alertdialog"], dialog[open], .modal.show, .modal.active, ' +
+            '[class*="modal"][class*="open"], [class*="modal"][class*="show"], [class*="modal"][class*="visible"]'
+          );
+          visibleModals.forEach(m => {
+            if (m.offsetParent !== null || m.closest('[role="dialog"]')) searchContexts.push(m);
+          });
+          searchContexts.push(document);
+
+          for (const ctx of searchContexts) {
+            if (btn) break;
+            const buttons = ctx.querySelectorAll('button, input[type="submit"], [role="button"], a.btn, a[role="button"]');
             for (const b of buttons) {
-              const text = (b.textContent?.trim() || b.value || '').toLowerCase();
-              if (text.includes(btnText.toLowerCase())) { btn = b; break; }
+              // Skip invisible buttons unless inside a dialog
+              if (b.offsetParent === null && !b.closest('[role="dialog"], dialog')) continue;
+              const bText = (b.textContent?.trim() || b.value || b.getAttribute('aria-label') || '').toLowerCase();
+              if (btnText) {
+                if (bText.includes(btnText.toLowerCase())) { btn = b; break; }
+              } else {
+                // No specific text — look for submit-like buttons
+                if (b.type === 'submit' || ['submit', 'save', 'create', 'add', 'ok', 'confirm', 'send', 'done', 'apply', 'update'].some(w => bText === w || bText.startsWith(w + ' '))) {
+                  btn = b; break;
+                }
+              }
             }
-          } else {
-            btn = document.querySelector('button[type="submit"], input[type="submit"]');
-            if (!btn) btn = document.querySelector('form button:not([type="button"])');
           }
+
           if (btn) {
+            btn.scrollIntoView({ block: 'center' });
             btn.click();
-            submitResult = ' Submitted.';
+            submitResult = ' [submitted]';
           } else {
             submitResult = ' Submit button not found.';
           }

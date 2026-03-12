@@ -28,6 +28,13 @@ import { homedir } from 'os'
 import { join } from 'path'
 import http from 'http'
 
+/** HTTP agent with keepalive for persistent connections */
+const httpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 30000,
+  maxSockets: 4
+})
+
 const PORT_FILE = join(homedir(), '.oculo-port')
 
 /** Cached connection to avoid re-reading port file */
@@ -144,7 +151,7 @@ const STATIC_TOOLS = [
   },
   {
     name: 'run',
-    description: 'PREFERRED for any task with 2+ actions. Executes a multi-step pipeline in a SINGLE call — use this instead of multiple act/fill calls. Example — post on X: run({steps:[{act:{action:"navigate",url:"https://x.com/compose/post"}},{wait:{timeout:2000}},{act:{action:"type",text:"Hello world",role:"textbox"}},{act:{action:"click",text:"Post",role:"button"}}]}). Each step is an object with exactly ONE key: page, act, fill, read, wait, or if. Cached for replay.',
+    description: 'PREFERRED for any task with 2+ actions. Executes a multi-step pipeline in a SINGLE call — use this instead of multiple act/fill calls. Example — post on X: run({steps:[{act:{action:"navigate",url:"https://x.com/compose/post"}},{wait:{timeout:2000}},{act:{action:"type",text:"Hello world",role:"textbox"}},{act:{action:"click",text:"Post",role:"button"}}]}). Each step is an object with exactly ONE key: page, act, fill, read, wait, or if. Cached for replay. Manage cached workflows: run({manage:"list"}) or run({manage:"delete", workflow:"id"}).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -221,6 +228,7 @@ const STATIC_TOOLS = [
           }
         },
         workflow: { type: 'string', description: 'Replay a cached workflow by ID' },
+        manage: { type: 'string', enum: ['list', 'delete'], description: 'Manage cached workflows: "list" shows all, "delete" removes a workflow (requires workflow param as ID)' },
         description: { type: 'string', description: 'Short description for caching' },
         returnAll: { type: 'boolean', description: 'Return results from all steps (default: false)' },
         tabId: { type: 'string', description: 'Target a specific tab by ID (for parallel execution). Omit for active tab.' }
@@ -424,7 +432,8 @@ function httpPost(port, body, token) {
         port,
         path: '/mcp',
         method: 'POST',
-        headers
+        headers,
+        agent: httpAgent
       },
       (res) => {
         let chunks = ''
@@ -506,20 +515,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  * If Oculo isn't running, return a clear error with instructions.
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  let conn = getCachedConnection()
-  if (!conn) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Oculo browser is not running. Launch Oculo first — it writes ~/.oculo-port on startup, which this bridge reads to connect.'
-        }
-      ],
-      isError: true
-    }
+  const BACKOFF_DELAYS = [1000, 2000, 4000] // exponential backoff
+
+  function isRetryable(err) {
+    return err.message?.includes('connection refused') ||
+      err.message?.includes('socket hang up') ||
+      err.message?.includes('ECONNRESET') ||
+      err.code === 'ECONNREFUSED' ||
+      err.code === 'ECONNRESET' ||
+      err.code === 'EPIPE'
   }
 
-  // Skip liveness check — httpPost will fail with ECONNREFUSED if dead, and we auto-retry
   async function attempt(connection) {
     return await httpPost(connection.port, {
       method: 'tools/call',
@@ -530,38 +536,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }, connection.token)
   }
 
-  try {
-    return await attempt(conn)
-  } catch (err) {
-    if (err.message?.includes('connection refused') || err.code === 'ECONNREFUSED') {
-      // Auto-retry: invalidate cache, re-read port file, wait 1s, retry once
-      invalidateCache()
-      await new Promise(r => setTimeout(r, 1000))
-      conn = getCachedConnection()
-      if (!conn) {
-        return {
-          content: [{ type: 'text', text: 'Oculo browser is not running after retry. Launch Oculo and try again.' }],
-          isError: true
-        }
-      }
-      try {
-        return await attempt(conn)
-      } catch (retryErr) {
-        return {
-          content: [{ type: 'text', text: `Failed to reach Oculo after retry: ${retryErr.message}` }],
-          isError: true
-        }
+  let lastErr = null
+  for (let i = 0; i <= BACKOFF_DELAYS.length; i++) {
+    let conn = getCachedConnection()
+    if (!conn) {
+      return {
+        content: [{ type: 'text', text: 'Oculo browser is not running. Launch Oculo first — it writes ~/.oculo-port on startup, which this bridge reads to connect.' }],
+        isError: true
       }
     }
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Failed to reach Oculo: ${err.message}`
-        }
-      ],
-      isError: true
+    try {
+      return await attempt(conn)
+    } catch (err) {
+      lastErr = err
+      if (isRetryable(err) && i < BACKOFF_DELAYS.length) {
+        invalidateCache()
+        process.stderr.write(`[oculo-mcp] Connection error (attempt ${i + 1}/${BACKOFF_DELAYS.length + 1}): ${err.message}. Retrying in ${BACKOFF_DELAYS[i]}ms...\n`)
+        await new Promise(r => setTimeout(r, BACKOFF_DELAYS[i]))
+        continue
+      }
+      break
     }
+  }
+
+  return {
+    content: [{ type: 'text', text: `Failed to reach Oculo after ${BACKOFF_DELAYS.length + 1} attempts: ${lastErr?.message}` }],
+    isError: true
   }
 })
 

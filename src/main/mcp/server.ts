@@ -568,7 +568,7 @@ export class McpServerManager {
         return { content: [{ type: 'text', text: entries.length === 0 ? 'No pending calls.' : JSON.stringify(entries, null, 2) }] }
       }
 
-      // --- Multi-agent tab isolation ---
+      // --- Multi-agent tab isolation (Fix #11) ---
       if (agentId && !args.tabId) {
         // Tools that need a tab context
         const needsTab = ['page', 'act', 'fill', 'read', 'run', 'tabs', 'translate', 'lens'].includes(name)
@@ -577,15 +577,25 @@ export class McpServerManager {
           if (existingTabId) {
             args.tabId = existingTabId
           } else {
-            // Create a new tab for this agent via IPC to renderer
-            try {
-              const tabId = await this.createAgentTab()
-              if (tabId) {
-                this.agentTabMap.set(agentId, tabId)
-                args.tabId = tabId
+            // Create a new tab for this agent with retry (2 attempts)
+            let tabId: string | null = null
+            for (let attempt = 0; attempt < 2 && !tabId; attempt++) {
+              try {
+                tabId = await this.createAgentTab()
+              } catch {
+                if (attempt === 0) await new Promise(r => setTimeout(r, 500))
               }
-            } catch {
-              // Fall through to use active tab
+            }
+            if (tabId) {
+              this.agentTabMap.set(agentId, tabId)
+              args.tabId = tabId
+            } else {
+              // Return error instead of silently falling through to active tab
+              debugLog(`Agent ${agentId}: failed to create isolated tab for ${name}`)
+              return {
+                content: [{ type: 'text', text: `Multi-agent isolation: could not create tab for agent "${agentId}". Retry or specify tabId explicitly.` }],
+                isError: true
+              }
             }
           }
         }

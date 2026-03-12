@@ -81,22 +81,23 @@ export class PipelineRunner {
         const hasText = await webContents.executeJavaScript(
           `document.body.textContent.toLowerCase().includes(${JSON.stringify(wait.text.toLowerCase())})`
         )
-        if (hasText) return `Text "${wait.text}" found`
+        if (hasText) return `Text "${wait.text}" found after ${Date.now() - start}ms`
       }
       if (wait.url) {
         const currentUrl = webContents.getURL()
-        if (currentUrl.includes(wait.url)) return `URL matched "${wait.url}"`
+        if (currentUrl.includes(wait.url)) return `URL matched "${wait.url}" after ${Date.now() - start}ms`
       }
       if (wait.selector) {
         const hasEl = await webContents.executeJavaScript(
           `!!document.querySelector(${JSON.stringify(wait.selector)})`
         )
-        if (hasEl) return `Element "${wait.selector}" found`
+        if (hasEl) return `Element "${wait.selector}" found after ${Date.now() - start}ms`
       }
       await new Promise(r => setTimeout(r, 250))
     }
 
-    throw new Error(`Wait timeout after ${timeout}ms`)
+    const target = wait.text ? `text "${wait.text}"` : wait.url ? `url "${wait.url}"` : wait.selector ? `selector "${wait.selector}"` : 'condition'
+    return `Wait timeout: ${target} not found after ${timeout}ms`
   }
 
   private async executeConditional(webContents: WebContents, cond: any): Promise<string> {

@@ -157,6 +157,31 @@ export default function WebViewContainer({ tab, isActive, onUpdate, onTextSelect
           })()
         `).catch(() => {})
       } catch { /* CAPTCHA observer setup failed, non-critical */ }
+
+      // Override native dialog functions to prevent blocking during automation
+      try {
+        ;(wv as any).executeJavaScript(`
+          (function() {
+            if (window.__oculoDialogOverride) return;
+            window.__oculoDialogOverride = true;
+            window.__oculoDialogs = [];
+            var origAlert = window.alert;
+            var origConfirm = window.confirm;
+            var origPrompt = window.prompt;
+            window.alert = function(msg) {
+              window.__oculoDialogs.push({type:'alert', message:String(msg||''), time:Date.now()});
+            };
+            window.confirm = function(msg) {
+              window.__oculoDialogs.push({type:'confirm', message:String(msg||''), time:Date.now()});
+              return true;
+            };
+            window.prompt = function(msg, def) {
+              window.__oculoDialogs.push({type:'prompt', message:String(msg||''), defaultValue:String(def||''), time:Date.now()});
+              return def || '';
+            };
+          })()
+        `).catch(() => {})
+      } catch { /* dialog override setup failed, non-critical */ }
     }
 
     const onDidNavigate = () => {

@@ -58,11 +58,17 @@ export class DataExtractor {
             const maxRepeated = Math.max(...Object.values(tagCounts));
             score += maxRepeated;
 
-            // Semantic tag bonus
+            // Semantic tag bonus (strong preference for main content areas)
             const tag = container.tagName.toLowerCase();
-            if (tag === 'main' || container.getAttribute('role') === 'main') score += 5;
+            if (tag === 'main' || container.getAttribute('role') === 'main') score += 15;
+            if (tag === 'article' || container.getAttribute('role') === 'feed') score += 8;
             if (tag === 'table') score += 3;
-            if (tag === 'article') score += 2;
+            if (tag === 'section') score += 1;
+            // Bonus for common content container IDs/classes
+            const cid = ((container.className || '') + ' ' + (container.id || '')).toLowerCase();
+            if (/\\bcontent\\b|\\bmain-content\\b|\\bpage-content\\b|\\bbody-content\\b/.test(cid)) score += 8;
+            // Penalize sidebar/nav-like containers that slip through
+            if (/sidebar|side-bar|menu|subnav|toc|breadcrumb|toolbar/.test(cid)) score -= 8;
 
             // Class/id keyword match against 'what'
             const whatWords = what.split(/\\s+/);

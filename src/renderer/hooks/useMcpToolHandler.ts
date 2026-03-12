@@ -122,8 +122,16 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
 
 
     // Helper: convert a NativeImage (from capturePage()) to a base64 PNG string
+    // Fix #23: Auto-resize images wider than 2000px to prevent context bloat in subagents
     function nativeImageToBase64(nativeImage: any): string {
-      const pngBuffer = nativeImage.toPNG()
+      let img = nativeImage
+      try {
+        const size = img.getSize?.()
+        if (size && size.width > 2000) {
+          img = img.resize({ width: 2000 })
+        }
+      } catch { /* resize not available, use original */ }
+      const pngBuffer = img.toPNG()
       const bytes = new Uint8Array(pngBuffer)
       let binary = ''
       for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i])
@@ -539,7 +547,8 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
               // Type text into a field — supports both regular inputs (React) and contenteditable
               // Fix 3: Accept name/role from ref resolution (not just selector/label/placeholder)
               // Fix 4: Use InputEvent with insertText for React 18+ compatibility
-              const textToType = args.text || ''
+              // Fix #10: Explicit string coercion — prevents any type-related duplication
+              const textToType = String(args.text || '')
               const shouldClear = !!args.clear
               if (!textToType) {
                 result = 'Error: text parameter required for type action'
@@ -1013,7 +1022,7 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
               result = await (wv as any).executeJavaScript(copyCode)
             } else if (action === 'paste') {
               // Paste text from args into focused element
-              const pasteText = args.text || ''
+              const pasteText = String(args.text || '')
               if (pasteText) {
                 // Use insertText for reliable paste into any editor
                 await (wv as any).insertText(pasteText)
@@ -1024,16 +1033,24 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                 result = await (wv as any).executeJavaScript(pasteCode)
               }
             } else if (action === 'evaluate') {
-              // Execute arbitrary JavaScript in the page context
+              // Execute JavaScript in the page context — supports async/await and multiple statements
               const expr = args.expression || args.code || args.text || args.selector || ''
               if (!expr) {
                 result = 'Error: provide JS expression in expression parameter'
               } else {
                 try {
-                  const evalResult = await (wv as any).executeJavaScript('(function(){try{return String(' + expr + ')}catch(e){return "Error: "+e.message}})()')
-                  result = String(evalResult).substring(0, 2000)
+                  const evalResult = await (wv as any).executeJavaScript(
+                    '(async () => { ' + expr + ' })()'
+                  )
+                  if (evalResult === undefined || evalResult === null) {
+                    result = 'undefined'
+                  } else if (typeof evalResult === 'object') {
+                    result = JSON.stringify(evalResult, null, 2).substring(0, 5000)
+                  } else {
+                    result = String(evalResult).substring(0, 5000)
+                  }
                 } catch (e: any) {
-                  result = 'Eval error: ' + e.message
+                  result = 'Evaluate error: ' + e.message
                 }
               }
             } else if (action === 'getAttribute') {
@@ -1609,11 +1626,12 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
             } else if (action === 'checkDialogs') {
               // Check for intercepted JavaScript dialogs (alert/confirm/prompt)
               const dialogCode = '(function(){' +
-                'if(!window.__oc_dialogs||!window.__oc_dialogs.length)return "No dialogs intercepted";' +
-                'var recent=window.__oc_dialogs.slice(-10);' +
-                'window.__oc_dialogs=[];' +
-                'return "Intercepted dialogs:\\n"+recent.map(function(d){' +
-                'return d.type+" | "+d.message.substring(0,100)+" | response: "+d.response;' +
+                'var dialogs = window.__oculoDialogs || window.__oc_dialogs || [];' +
+                'if(!dialogs.length) return "No dialogs intercepted";' +
+                'var recent = dialogs.slice(-10);' +
+                'window.__oculoDialogs = []; window.__oc_dialogs = [];' +
+                'return "Intercepted dialogs:\\n" + recent.map(function(d){' +
+                'return d.type + " | " + (d.message || "").substring(0,100);' +
                 '}).join("\\n");' +
                 '})()'
               result = await (wv as any).executeJavaScript(dialogCode)
@@ -1828,6 +1846,15 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                 if (snapshot) result += '\n---\n' + snapshot
               }
             }
+            // Capture screenshot if requested
+            if (args.screenshot) {
+              try {
+                const nativeImage = await (wv as any).capturePage()
+                const base64 = nativeImageToBase64(nativeImage)
+                const filePath = await api.screenshotSave(base64)
+                result += '\n[Screenshot: ' + filePath + ']'
+              } catch { /* screenshot failed, non-critical */ }
+            }
             break
           }
 
@@ -1984,6 +2011,15 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                 if (snapshot) result += '\n---\n' + snapshot
               }
             }
+            // Capture screenshot if requested
+            if (args.screenshot) {
+              try {
+                const nativeImage = await (wv as any).capturePage()
+                const base64 = nativeImageToBase64(nativeImage)
+                const filePath = await api.screenshotSave(base64)
+                result += '\n[Screenshot: ' + filePath + ']'
+              } catch { /* screenshot failed, non-critical */ }
+            }
             break
           }
 
@@ -2029,6 +2065,31 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
           }
 
           case 'run': {
+            // Fix #25: Workflow management — list/delete cached workflows
+            if (args.manage) {
+              if (args.manage === 'list') {
+                try {
+                  const workflows = await api.runCacheList()
+                  if (!workflows || workflows.length === 0) {
+                    result = 'No cached workflows.'
+                  } else {
+                    result = 'Cached workflows (' + workflows.length + '):\n' +
+                      workflows.map((w: any) => `  [${w.id}] ${w.description} (${w.domain}, used ${w.successCount}x, failed ${w.failCount}x, last: ${new Date(w.lastUsed).toLocaleDateString()})`).join('\n') +
+                      '\n\nReplay: run({workflow:"id"}) | Delete: run({manage:"delete", workflow:"id"})'
+                  }
+                } catch (e: any) { result = 'Error listing workflows: ' + e.message }
+                break
+              } else if (args.manage === 'delete') {
+                const delId = args.workflow
+                if (!delId) { result = 'Error: specify workflow ID to delete via workflow parameter'; break }
+                try {
+                  const deleted = await api.runCacheDelete(delId)
+                  result = deleted ? 'Deleted workflow: ' + delId : 'Workflow not found: ' + delId
+                } catch (e: any) { result = 'Error deleting workflow: ' + e.message }
+                break
+              }
+            }
+
             // Workflow replay: if args.workflow is provided, load cached steps
             let steps = args.steps || []
             let workflowId: string | null = args.workflow || null
@@ -2071,13 +2132,14 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                       await new Promise(r => setTimeout(r, 2000))
                       results.push('act: Navigated to ' + sa.url)
                     } else if (action === 'type') {
+                      const typeText = String(sa.text || '')
                       if (sa.selector) {
                         const focusCode = '(function(){var el=document.querySelector(' + JSON.stringify(sa.selector) + ');if(el){el.focus();return "focused";}return "not found"})()'
                         await (wv as any).executeJavaScript(focusCode)
                         await new Promise(r => setTimeout(r, 100))
                       }
-                      await (wv as any).insertText(sa.text || '')
-                      results.push('act: Typed ' + (sa.text || '').length + ' chars')
+                      await (wv as any).insertText(typeText)
+                      results.push('act: Typed ' + typeText.length + ' chars')
                     } else if (action === 'press') {
                       const key = sa.key || 'Enter'
                       ;(wv as any).sendInputEvent({ type: 'keyDown', keyCode: key })
@@ -2233,10 +2295,16 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
               if (!expr) { result = 'No expression provided'; break }
               try {
                 const evalResult = await (wv as any).executeJavaScript(
-                  '(function(){try{var r=eval(' + JSON.stringify(expr) + ');return typeof r==="object"?JSON.stringify(r,null,2):String(r)}catch(e){return "Error: "+e.message}})()'
+                  '(async () => { ' + expr + ' })()'
                 )
-                result = evalResult
-              } catch (e: any) { result = 'Eval error: ' + e.message }
+                if (evalResult === undefined || evalResult === null) {
+                  result = 'undefined'
+                } else if (typeof evalResult === 'object') {
+                  result = JSON.stringify(evalResult, null, 2).substring(0, 5000)
+                } else {
+                  result = String(evalResult).substring(0, 5000)
+                }
+              } catch (e: any) { result = 'Evaluate error: ' + e.message }
             } else if (dtAction === 'errors') {
               const errCode = '(function(){' +
                 'var errors=[];' +

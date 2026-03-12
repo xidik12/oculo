@@ -1,4 +1,5 @@
 import { WebContents } from 'electron'
+import { deepQuerySnippet } from './deep-query'
 
 export interface ResolveTarget {
   text?: string
@@ -23,10 +24,17 @@ export class ElementResolver {
   async resolve(webContents: WebContents, target: ResolveTarget): Promise<{ found: boolean; selector?: string; error?: string }> {
     const script = `
       (function() {
+        ${deepQuerySnippet()}
         const target = ${JSON.stringify(target)};
         const nth = target.nth || 0;
-        
+
         function getUniqueSelector(el) {
+          // Shadow DOM element — tag with unique ref for cross-call re-finding
+          if (el.getRootNode() !== document) {
+            const ref = 'oculo-' + Math.random().toString(36).slice(2, 8);
+            el.setAttribute('data-oculo-ref', ref);
+            return '[data-oculo-ref="' + ref + '"]';
+          }
           if (el.id) return '#' + CSS.escape(el.id);
           const path = [];
           let current = el;
@@ -69,7 +77,7 @@ export class ElementResolver {
         function findByText(text) {
           const lower = text.toLowerCase();
           // Phase 1: search interactive elements first (faster, more specific)
-          const interactive = document.querySelectorAll('button, a, [role="button"], [role="link"], input[type="submit"], input[type="button"], label');
+          const interactive = querySelectorAllDeep(document, 'button, a, [role="button"], [role="link"], input[type="submit"], input[type="button"], label');
           const matches = [];
           interactive.forEach(el => {
             if (!isVisible(el)) return;
@@ -92,7 +100,7 @@ export class ElementResolver {
           if (matches[nth]) return matches[nth];
 
           // Phase 2: broader fallback if no interactive match
-          const broader = document.querySelectorAll('span, p, h1, h2, h3, h4, h5, h6, div, li, td, th');
+          const broader = querySelectorAllDeep(document, 'span, p, h1, h2, h3, h4, h5, h6, div, li, td, th');
           const fallback = [];
           broader.forEach(el => {
             if (!isVisible(el)) return;
@@ -144,7 +152,7 @@ export class ElementResolver {
             'row': 'tr, [role="row"]'
           };
           const selectorStr = roleMap[role] || '[role="' + role + '"]';
-          const candidates = document.querySelectorAll(selectorStr);
+          const candidates = querySelectorAllDeep(document, selectorStr);
           const matches = [];
           candidates.forEach(el => {
             if (!isVisible(el)) return;
@@ -161,12 +169,12 @@ export class ElementResolver {
         function findByLabel(label) {
           const lower = label.toLowerCase();
           // Try label[for] association
-          const labels = document.querySelectorAll('label');
+          const labels = querySelectorAllDeep(document, 'label');
           for (const lbl of labels) {
             if ((lbl.textContent?.trim() || '').toLowerCase().includes(lower)) {
               const forId = lbl.getAttribute('for');
               if (forId) {
-                const target = document.getElementById(forId);
+                const target = document.getElementById(forId) || querySelectorDeep(document, '#' + CSS.escape(forId));
                 if (target && isVisible(target)) return target;
               }
               // Wrapped input
@@ -175,7 +183,7 @@ export class ElementResolver {
             }
           }
           // Try aria-label
-          const ariaEls = document.querySelectorAll('[aria-label]');
+          const ariaEls = querySelectorAllDeep(document, '[aria-label]');
           for (const el of ariaEls) {
             if (el.getAttribute('aria-label').toLowerCase().includes(lower) && isVisible(el)) return el;
           }
@@ -184,12 +192,12 @@ export class ElementResolver {
 
         function findByPlaceholder(placeholder) {
           const lower = placeholder.toLowerCase();
-          const inputs = document.querySelectorAll('input[placeholder], textarea[placeholder]');
+          const inputs = querySelectorAllDeep(document, 'input[placeholder], textarea[placeholder]');
           for (const input of inputs) {
             if (input.getAttribute('placeholder').toLowerCase().includes(lower) && isVisible(input)) return input;
           }
           // Contenteditable elements with data-placeholder or aria-placeholder
-          const ceInputs = document.querySelectorAll('[data-placeholder], [aria-placeholder]');
+          const ceInputs = querySelectorAllDeep(document, '[data-placeholder], [aria-placeholder]');
           for (const el of ceInputs) {
             const ph = (el.getAttribute('data-placeholder') || el.getAttribute('aria-placeholder') || '').toLowerCase();
             if (ph.includes(lower) && isVisible(el)) return el;
@@ -199,7 +207,7 @@ export class ElementResolver {
 
         function getSimilarElements(target) {
           // Find similar interactive elements to suggest
-          const interactive = document.querySelectorAll('button, a, input[type="submit"], [role="button"]');
+          const interactive = querySelectorAllDeep(document, 'button, a, input[type="submit"], [role="button"]');
           const suggestions = [];
           interactive.forEach(el => {
             if (!isVisible(el)) return;
@@ -263,7 +271,8 @@ export class ElementResolver {
 
     const script = `
       (function() {
-        const el = document.querySelector(${JSON.stringify(resolved.selector)});
+        ${deepQuerySnippet()}
+        const el = document.querySelector(${JSON.stringify(resolved.selector)}) || querySelectorDeep(document, ${JSON.stringify(resolved.selector)});
         if (!el) return 'Element disappeared';
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.click();
@@ -272,7 +281,7 @@ export class ElementResolver {
     `
     const result = await webContents.executeJavaScript(script)
     if (result !== 'ok') return result
-    
+
     // Wait a moment for any navigation/DOM update
     await new Promise(r => setTimeout(r, 500))
     
@@ -293,7 +302,8 @@ export class ElementResolver {
 
     const script = `
       (function() {
-        const el = document.querySelector(${JSON.stringify(resolved.selector)});
+        ${deepQuerySnippet()}
+        const el = document.querySelector(${JSON.stringify(resolved.selector)}) || querySelectorDeep(document, ${JSON.stringify(resolved.selector)});
         if (!el) return 'Element disappeared';
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.focus();
@@ -306,16 +316,17 @@ export class ElementResolver {
           document.execCommand('insertText', false, ${JSON.stringify(text)});
           return 'ok';
         }
-        if (${clear ? 'true' : 'false'}) {
-          el.value = '';
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        // Set value and dispatch events for React/Vue compatibility
+        // Get native setter for React/Vue compatibility
         const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
           window.HTMLInputElement.prototype, 'value'
         )?.set || Object.getOwnPropertyDescriptor(
           window.HTMLTextAreaElement.prototype, 'value'
         )?.set;
+        if (${clear ? 'true' : 'false'}) {
+          if (nativeInputValueSetter) nativeInputValueSetter.call(el, '');
+          else el.value = '';
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
         const newValue = ${clear ? 'true' : 'false'} ? ${JSON.stringify(text)} : (el.value || '') + ${JSON.stringify(text)};
         if (nativeInputValueSetter) {
           nativeInputValueSetter.call(el, newValue);
@@ -345,13 +356,20 @@ export class ElementResolver {
 
     const script = `
       (function() {
-        const el = document.querySelector(${JSON.stringify(resolved.selector)});
+        ${deepQuerySnippet()}
+        const el = document.querySelector(${JSON.stringify(resolved.selector)}) || querySelectorDeep(document, ${JSON.stringify(resolved.selector)});
         if (!el || el.tagName !== 'SELECT') return 'Element is not a select dropdown';
         const lower = ${JSON.stringify(value.toLowerCase())};
         let found = false;
         for (const opt of el.options) {
           if (opt.text.toLowerCase().includes(lower) || opt.value.toLowerCase().includes(lower)) {
-            el.value = opt.value;
+            // Use native setter for React/Vue compatibility
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+              window.HTMLSelectElement.prototype, 'value'
+            )?.set;
+            if (nativeSetter) nativeSetter.call(el, opt.value);
+            else el.value = opt.value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
             found = true;
             break;
