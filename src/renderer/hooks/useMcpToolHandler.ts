@@ -145,6 +145,7 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
         executeJavaScript: (code: string) => api.viewExecuteJS(wcId, code),
         sendInputEvent: (event: any) => api.viewSendInput(wcId, event),
         insertText: (text: string) => api.viewInsertText(wcId, text),
+        cdpType: (text: string) => api.viewCdpType(wcId, text),
         capturePage: () => api.viewCapturePage(wcId),
         loadURL: (url: string) => api.viewLoadURL(wcId, url),
         goBack: () => api.viewGoBack(wcId),
@@ -811,7 +812,35 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                       // For contenteditable: multi-strategy approach with verification.
                       // Many modern editors (Reddit/Shreddit, Lexical, etc.) reject insertText IME events.
 
-                      // Strategy 0: Dispatch InputEvent with inputType:'insertText' — this is what
+                      // Strategy 0: CDP trusted keyboard events via debugger API.
+                      // Sends Input.dispatchKeyEvent through Chrome DevTools Protocol,
+                      // generating fully trusted events (isTrusted: true) that pass Lexical/Shreddit checks.
+                      if ((wv as any).cdpType) {
+                        try {
+                          const cdpResult = await (wv as any).cdpType(textToType)
+                          if (cdpResult?.success) {
+                            await new Promise(r => setTimeout(r, 200))
+                            // Verify text appeared
+                            let cdpVerify: any = { has: false }
+                            try {
+                              const cdpVerifyCode = '(function(){var el=document.activeElement;' +
+                                'if(!el)return "{}";' +
+                                'var isCE=el.contentEditable==="true"||el.getAttribute("role")==="textbox";' +
+                                'if(!isCE){var p=el.closest("[contenteditable=true],[role=textbox]");if(p)el=p;}' +
+                                'var t=(el.innerText||el.textContent||"").trim();' +
+                                'return JSON.stringify({len:t.length,has:t.includes(' + JSON.stringify(textToType.substring(0, Math.min(20, textToType.length))) + ')});})()'
+                              cdpVerify = JSON.parse(await (wv as any).executeJavaScript(cdpVerifyCode))
+                            } catch { /* ignore */ }
+
+                            if (cdpVerify.has) {
+                              result = 'Typed ' + textToType.length + ' chars into editable area (CDP trusted events)'
+                            }
+                          }
+                        } catch { /* CDP typing failed, fall through */ }
+                      }
+
+                      if (!result || result.includes('Error')) {
+                      // Strategy 1: Dispatch InputEvent with inputType:'insertText' — this is what
                       // Lexical, ProseMirror, and modern contenteditable frameworks listen for.
                       const inputEventCode = '(function(){' +
                         'var el=document.activeElement;' +
@@ -850,9 +879,10 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                           result = 'Typed ' + textToType.length + ' chars into editable area (InputEvent)'
                         }
                       }
+                      } // end Strategy 1 guard
 
                       if (!result || result.includes('Error')) {
-                      // Strategy 1: insertText (native Electron IME — works for DraftJS/ProseMirror/Slate)
+                      // Strategy 2: insertText (native Electron IME — works for DraftJS/ProseMirror/Slate)
                       await (wv as any).insertText(textToType)
                       await new Promise(r => setTimeout(r, 150))
 
@@ -876,7 +906,7 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                       if (ceVerify.has) {
                         result = 'Typed ' + textToType.length + ' chars into editable area'
                       } else {
-                        // Strategy 2: document.execCommand('insertText') — works for many contenteditable editors
+                        // Strategy 3: document.execCommand('insertText') — works for many contenteditable editors
                         // including Reddit's Shreddit and basic contenteditable divs
                         const execCmdCode = '(function(){' +
                           'var el=document.activeElement;' +
@@ -898,7 +928,7 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                         if (execCmdOk) {
                           result = 'Typed ' + textToType.length + ' chars into editable area (execCommand)'
                         } else {
-                          // Strategy 3: Character-by-character keyboard events via sendInputEvent
+                          // Strategy 4: Character-by-character keyboard events via sendInputEvent
                           // This is the most reliable fallback — simulates real keyboard input
                           // Re-click to ensure focus
                           ;(wv as any).sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
@@ -930,7 +960,7 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                           }
                         }
                       }
-                      } // end if (!result || result.includes('Error')) — Strategy 0 failed
+                      } // end if (!result || result.includes('Error')) — Strategy 1 failed
                     } else {
                       // For regular inputs: use insertText which triggers proper InputEvent
                       // This fires InputEvent with inputType="insertText" — React 18+ compatible

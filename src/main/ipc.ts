@@ -1269,4 +1269,150 @@ export function setupIPC(registry: StoreRegistry): void {
     const wc = webContents.fromId(wcId)
     if (wc && !wc.isDestroyed()) wc.reload()
   })
+
+  // === CDP Typing — trusted keyboard events for contenteditable editors (Lexical/Shreddit) ===
+  // Uses Electron's webContents.debugger API to send Chrome DevTools Protocol
+  // Input.dispatchKeyEvent commands, which generate fully trusted events (isTrusted: true).
+  ipcMain.handle(IPC.VIEW_CDP_TYPE, async (_, wcId: number, text: string) => {
+    const wc = webContents.fromId(wcId)
+    if (!wc || wc.isDestroyed()) return { success: false, error: 'WebContents not found' }
+
+    // Attach debugger (CDP)
+    let wasAttached = false
+    try {
+      wc.debugger.attach('1.3')
+    } catch {
+      // Already attached — that's fine
+      wasAttached = true
+    }
+
+    try {
+      for (let i = 0; i < text.length; i++) {
+        const char = text[i]
+
+        // Determine key, code, and windowsVirtualKeyCode for CDP Input.dispatchKeyEvent
+        let key: string
+        let code: string
+        let keyText: string
+        let vkCode: number
+        let modifiers = 0
+
+        if (char === '\n' || char === '\r') {
+          key = 'Enter'
+          code = 'Enter'
+          keyText = '\r'
+          vkCode = 13
+        } else if (char === '\t') {
+          key = 'Tab'
+          code = 'Tab'
+          keyText = '\t'
+          vkCode = 9
+        } else if (char === ' ') {
+          key = ' '
+          code = 'Space'
+          keyText = ' '
+          vkCode = 32
+        } else if (char === '\b') {
+          key = 'Backspace'
+          code = 'Backspace'
+          keyText = ''
+          vkCode = 8
+        } else {
+          key = char
+          keyText = char
+          const upper = char.toUpperCase()
+          const lower = char.toLowerCase()
+
+          // Letters
+          if (lower >= 'a' && lower <= 'z') {
+            code = 'Key' + upper
+            vkCode = upper.charCodeAt(0) // 65-90
+            if (char === upper && char !== lower) {
+              modifiers = 8 // Shift
+            }
+          } else if (char >= '0' && char <= '9') {
+            code = 'Digit' + char
+            vkCode = char.charCodeAt(0) // 48-57
+          } else {
+            // Punctuation / symbols — use char code as vkCode, generic code
+            code = ''
+            vkCode = char.charCodeAt(0)
+
+            // Map common shifted symbols to their base key
+            const shiftMap: Record<string, [string, number]> = {
+              '!': ['Digit1', 49], '@': ['Digit2', 50], '#': ['Digit3', 51],
+              '$': ['Digit4', 52], '%': ['Digit5', 53], '^': ['Digit6', 54],
+              '&': ['Digit7', 55], '*': ['Digit8', 56], '(': ['Digit9', 57],
+              ')': ['Digit0', 48], '_': ['Minus', 189], '+': ['Equal', 187],
+              '{': ['BracketLeft', 219], '}': ['BracketRight', 221],
+              '|': ['Backslash', 220], ':': ['Semicolon', 186],
+              '"': ['Quote', 222], '<': ['Comma', 188], '>': ['Period', 190],
+              '?': ['Slash', 191], '~': ['Backquote', 192],
+            }
+            const unshiftMap: Record<string, [string, number]> = {
+              '-': ['Minus', 189], '=': ['Equal', 187],
+              '[': ['BracketLeft', 219], ']': ['BracketRight', 221],
+              '\\': ['Backslash', 220], ';': ['Semicolon', 186],
+              "'": ['Quote', 222], ',': ['Comma', 188], '.': ['Period', 190],
+              '/': ['Slash', 191], '`': ['Backquote', 192],
+            }
+
+            if (shiftMap[char]) {
+              code = shiftMap[char][0]
+              vkCode = shiftMap[char][1]
+              modifiers = 8 // Shift
+            } else if (unshiftMap[char]) {
+              code = unshiftMap[char][0]
+              vkCode = unshiftMap[char][1]
+            }
+          }
+        }
+
+        const baseParams = {
+          key,
+          code,
+          windowsVirtualKeyCode: vkCode,
+          nativeVirtualKeyCode: vkCode,
+          modifiers,
+        }
+
+        // keyDown
+        await wc.debugger.sendCommand('Input.dispatchKeyEvent', {
+          type: 'keyDown',
+          ...baseParams,
+          text: keyText,
+        })
+
+        // char event — skip for Enter, Backspace, Tab (non-printable control keys)
+        if (char !== '\n' && char !== '\r' && char !== '\b' && char !== '\t') {
+          await wc.debugger.sendCommand('Input.dispatchKeyEvent', {
+            type: 'char',
+            ...baseParams,
+            text: keyText,
+          })
+        }
+
+        // keyUp
+        await wc.debugger.sendCommand('Input.dispatchKeyEvent', {
+          type: 'keyUp',
+          ...baseParams,
+          text: keyText,
+        })
+
+        // Small delay between characters to let the editor process
+        if (i < text.length - 1) {
+          await new Promise(r => setTimeout(r, 2))
+        }
+      }
+
+      return { success: true }
+    } catch (err: any) {
+      return { success: false, error: err?.message || String(err) }
+    } finally {
+      // Detach debugger if we attached it
+      if (!wasAttached) {
+        try { wc.debugger.detach() } catch { /* already detached */ }
+      }
+    }
+  })
 }

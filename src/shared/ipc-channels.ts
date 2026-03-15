@@ -253,6 +253,9 @@ export const IPC = {
   VIEW_AI_ACTING: 'view:ai-acting',
   VIEW_TAB_LIST: 'view:tab-list',
   VIEW_NAVIGATE: 'view:navigate',
+
+  // CDP Typing (trusted keyboard events for contenteditable editors like Lexical/Shreddit)
+  VIEW_CDP_TYPE: 'view:cdp-type',
 } as const
 
 export type IPCChannel = typeof IPC[keyof typeof IPC]

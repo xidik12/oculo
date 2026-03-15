@@ -241,6 +241,9 @@ const IPC = {
   VIEW_AI_ACTING: 'view:ai-acting',
   VIEW_TAB_LIST: 'view:tab-list',
   VIEW_NAVIGATE: 'view:navigate',
+
+  // CDP Typing (trusted keyboard events for contenteditable editors like Lexical/Shreddit)
+  VIEW_CDP_TYPE: 'view:cdp-type',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -859,6 +862,10 @@ const api = {
     ipcRenderer.invoke('view:nav-forward', wcId),
   viewReload: (wcId: number): Promise<void> =>
     ipcRenderer.invoke('view:reload', wcId),
+
+  // CDP-based typing — sends trusted keyboard events that pass isTrusted checks
+  viewCdpType: (wcId: number, text: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.VIEW_CDP_TYPE, wcId, text),
 
   // Listen for tab state updates from TabManager in main process
   onViewStateUpdate: (callback: (tabId: string, state: any) => void): (() => void) => {
