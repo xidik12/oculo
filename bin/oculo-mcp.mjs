@@ -29,9 +29,9 @@ import { join } from 'path'
 import http from 'http'
 
 /** HTTP agent with keepalive for persistent connections */
-const httpAgent = new http.Agent({
+let httpAgent = new http.Agent({
   keepAlive: true,
-  keepAliveMsecs: 30000,
+  keepAliveMsecs: 10000,
   maxSockets: 4
 })
 
@@ -52,6 +52,13 @@ function getCachedConnection() {
 function invalidateCache() {
   cachedConn = null
   cachedAt = 0
+  // Destroy stale sockets to prevent ECONNRESET on retry
+  httpAgent.destroy()
+  httpAgent = new http.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 10000,
+    maxSockets: 4
+  })
 }
 
 /** Unique agent ID for multi-agent tab isolation */

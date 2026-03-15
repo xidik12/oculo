@@ -106,6 +106,7 @@ const IPC = {
 
   // Screenshot
   SCREENSHOT_SAVE: 'screenshot:save',
+  SCREENSHOT_COMPARE: 'screenshot:compare',
 
   // File Upload via CDP
   FILE_UPLOAD: 'file:upload',
@@ -595,6 +596,8 @@ const api = {
   // === Screenshot (Phase 1) ===
   screenshotSave: (base64Png: string): Promise<string> =>
     ipcRenderer.invoke(IPC.SCREENSHOT_SAVE, base64Png),
+  compareScreenshots: (a: string, b: string): Promise<{diffPercentage: number; diffImageBase64: string; width: number; height: number}> =>
+    ipcRenderer.invoke(IPC.SCREENSHOT_COMPARE, a, b),
 
   // === File Upload via CDP (Phase 2) ===
   fileUpload: (webContentsId: number, selector: string, filePaths: string[]): Promise<string> =>

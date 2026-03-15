@@ -27,8 +27,12 @@ import { readFileSync, existsSync, unlinkSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import http from 'http'
+import crypto from 'crypto'
 
 const PORT_FILE = join(homedir(), '.oculo-port')
+
+/** Stable session ID — generated once at module startup, sent on every request */
+const SESSION_ID = crypto.randomUUID()
 
 /**
  * Static tool definitions — always returned by tools/list so Claude Code
@@ -373,7 +377,8 @@ function httpPost(port, body, token) {
     const data = JSON.stringify(body)
     const headers = {
       'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(data)
+      'Content-Length': Buffer.byteLength(data),
+      'X-Agent-Id': SESSION_ID
     }
     if (token) {
       headers['Authorization'] = `Bearer ${token}`

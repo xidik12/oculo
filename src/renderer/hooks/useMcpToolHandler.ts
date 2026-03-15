@@ -3,6 +3,106 @@ import type { Tab } from '../../shared/types'
 import type { ElementFingerprint } from '../../shared/types'
 import { buildClickCode, buildFillCode, buildReadCode, buildWaitForStableCode, buildConsoleCapture, buildSlimStateCode, buildPageCode, buildFingerprintMatchCode, fuzzyMatchCode, gaussianDelay } from '../utils/webview-scripts'
 
+// Canvas app detection — inline JS for webview execution
+const CANVAS_DETECT_JS = `(function(){
+  var hostname = location.hostname;
+  var knownApps = {
+    'figma.com': 'figma', 'www.figma.com': 'figma',
+    'canva.com': 'canva', 'www.canva.com': 'canva',
+    'excalidraw.com': 'excalidraw', 'www.excalidraw.com': 'excalidraw',
+    'tldraw.com': 'tldraw', 'www.tldraw.com': 'tldraw',
+    'miro.com': 'miro', 'www.miro.com': 'miro',
+    'photopea.com': 'photopea', 'www.photopea.com': 'photopea',
+    'pixlr.com': 'pixlr', 'www.pixlr.com': 'pixlr'
+  };
+  var appType = knownApps[hostname] || null;
+  if (!appType && hostname.includes('docs.google.com') && location.pathname.includes('/presentation')) appType = 'google_slides';
+  var els = Array.from(document.querySelectorAll('canvas, svg'));
+  var canvasElements = [];
+  var totalArea = 0;
+  els.forEach(function(el) {
+    var r = el.getBoundingClientRect();
+    if (r.width > 50 && r.height > 50) {
+      canvasElements.push({tag: el.tagName.toLowerCase(), x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height)});
+      totalArea += r.width * r.height;
+    }
+  });
+  var coverage = Math.round(totalArea / (innerWidth * innerHeight) * 100);
+  var overlays = Array.from(document.querySelectorAll('button, [role=button], [role=toolbar], input, select')).filter(function(el) {
+    var s = getComputedStyle(el);
+    return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+  }).length;
+  return JSON.stringify({
+    isCanvasApp: coverage > 30 || !!appType,
+    appType: appType,
+    canvasElements: canvasElements,
+    overlayElements: overlays,
+    viewportCoverage: coverage
+  });
+})()`
+
+const CANVAS_SHORTCUTS: Record<string, Record<string, string>> = {
+  figma: { V: 'Select', T: 'Text', R: 'Rectangle', F: 'Frame', L: 'Line', P: 'Pen', O: 'Ellipse', H: 'Hand' },
+  excalidraw: { '1': 'Select', '3': 'Rectangle', '4': 'Diamond', '5': 'Ellipse', '6': 'Arrow', '7': 'Line', '8': 'Text', '9': 'Freedraw', '0': 'Eraser' },
+  canva: { T: 'Text', R: 'Rectangle', L: 'Line' },
+  photopea: { V: 'Move', M: 'Marquee', L: 'Lasso', W: 'Magic Wand', C: 'Crop', B: 'Brush', E: 'Eraser', T: 'Type', P: 'Pen' },
+  tldraw: { V: 'Select', D: 'Draw', E: 'Eraser', A: 'Arrow', T: 'Text', N: 'Note', F: 'Frame' },
+  miro: { V: 'Select', T: 'Text', S: 'Sticky note', P: 'Pen', L: 'Line', R: 'Rectangle' },
+  google_slides: { 'Ctrl+M': 'New slide', 'Ctrl+D': 'Duplicate', Delete: 'Delete slide' }
+}
+
+const CANVAS_API_HINTS: Record<string, string> = {
+  excalidraw: 'window.excalidrawAPI',
+  photopea: 'app.activeDocument',
+  tldraw: 'window.tldrawApp'
+}
+
+function formatCanvasHeader(info: any): string {
+  let header = '[CANVAS APP' + (info.appType ? ': ' + info.appType : '') + '] — ' + info.viewportCoverage + '% of viewport is canvas\n'
+  for (const el of info.canvasElements) {
+    header += 'Canvas: ' + el.tag + ' at (' + el.x + ',' + el.y + ') ' + el.w + 'x' + el.h + '\n'
+  }
+  header += 'DOM overlay: ' + info.overlayElements + ' interactive elements (toolbars, menus)\n'
+  if (info.appType && CANVAS_SHORTCUTS[info.appType]) {
+    header += '\nKeyboard shortcuts for ' + info.appType + ':\n'
+    const sc = CANVAS_SHORTCUTS[info.appType]
+    header += Object.entries(sc).map(([k, v]) => '  ' + k + ' — ' + v).join('    ') + '\n'
+  }
+  if (info.appType && CANVAS_API_HINTS[info.appType]) {
+    header += '\nJS API: ' + CANVAS_API_HINTS[info.appType] + '\n'
+  } else if (info.appType) {
+    header += '\nJS API: Not accessible from browser console — use keyboard shortcuts.\n'
+  }
+  header += '\nTIP: Use clickAtPoint(x,y) for canvas content. Use press(key) for tools.\nUse screenshotSoM for coordinate grid. DOM menus/toolbars work normally via click/fill.'
+  return header
+}
+
+const GRID_OVERLAY_JS = `(function(){
+  var c = document.createElement('canvas');
+  c.id = 'oculo-grid-overlay';
+  c.width = innerWidth;
+  c.height = innerHeight;
+  c.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999997;';
+  document.body.appendChild(c);
+  var ctx = c.getContext('2d');
+  ctx.strokeStyle = 'rgba(0,150,255,0.3)';
+  ctx.lineWidth = 0.5;
+  ctx.font = '9px monospace';
+  ctx.fillStyle = 'rgba(0,150,255,0.5)';
+  for (var x = 0; x <= innerWidth; x += 100) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, innerHeight); ctx.stroke();
+    if (x > 0) ctx.fillText(x.toString(), x + 2, 12);
+  }
+  for (var y = 0; y <= innerHeight; y += 100) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(innerWidth, y); ctx.stroke();
+    if (y > 0) ctx.fillText(y.toString(), 2, y - 2);
+  }
+  ctx.font = '11px monospace';
+  ctx.fillStyle = 'rgba(0,150,255,0.7)';
+  ctx.fillText(innerWidth + 'x' + innerHeight, innerWidth - 80, innerHeight - 6);
+  return 'Grid overlay injected';
+})()`
+
 function oculoApi(): any {
   return (window as any).oculo
 }
@@ -336,6 +436,23 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
             } catch { /* no enrichment data */ }
             // Auto-inject console capture so errors are always available
             try { await (wv as any).executeJavaScript(buildConsoleCapture()) } catch { /* injection failed */ }
+            // Canvas detection — auto-enhance response for canvas apps
+            try {
+              const canvasJson = await (wv as any).executeJavaScript(CANVAS_DETECT_JS)
+              const canvasInfo = JSON.parse(canvasJson)
+              if (canvasInfo.isCanvasApp) {
+                result = formatCanvasHeader(canvasInfo) + '\n---\n' + result
+                // Auto-include screenshot (AI needs visual context for canvas apps)
+                if (!args.screenshot) {
+                  try {
+                    const nativeImage = await (wv as any).capturePage()
+                    const base64 = nativeImageToBase64(nativeImage)
+                    const filePath = await api.screenshotSave(base64)
+                    result += '\n[Auto-screenshot (canvas app): ' + filePath + ']'
+                  } catch { /* screenshot failed, non-critical */ }
+                }
+              }
+            } catch { /* canvas detection failed, proceed normally */ }
             // Vision grounding: attach screenshot for LLM visual analysis
             if (args.screenshot) {
               try {
@@ -437,6 +554,38 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                 } catch { /* pre-sim failed, proceed anyway */ }
               }
               result = await (wv as any).executeJavaScript(buildClickCode(args.text || '', args.selector || '', args.nth || 0, args.modifiers))
+              // File input interception — if click landed on a file input, auto-upload if value is provided
+              if (result.startsWith('[FILE_INPUT:')) {
+                const selectorMatch = result.match(/\[FILE_INPUT:([^\]]+)\]/)
+                const fileSelector = selectorMatch ? selectorMatch[1] : 'input[type=file]'
+                if (args.value) {
+                  const filePaths = String(args.value).split(',').map((p: string) => p.trim())
+                  let wcId2: number | null = null
+                  try { wcId2 = wv ? (wv as any).getWebContentsId?.() ?? null : null } catch {}
+                  if (wcId2) {
+                    result = await api.fileUpload(wcId2, fileSelector, filePaths)
+                  } else {
+                    result = `File input detected at "${fileSelector}". Use: act({action:"upload",selector:"${fileSelector}",value:"/path/to/file"})`
+                  }
+                } else {
+                  result = `File input detected at "${fileSelector}". Use: act({action:"upload",selector:"${fileSelector}",value:"/path/to/file"})`
+                }
+              }
+              // Detect blocked file dialogs — when a button click triggered a hidden file input
+              if (!result.startsWith('[FILE_INPUT:') && result.startsWith('Clicked')) {
+                try {
+                  const blocked = await (wv as any).executeJavaScript(
+                    '(function(){var b=window.__oculoFileDialogBlocked;window.__oculoFileDialogBlocked=null;' +
+                    'if(b&&Date.now()-b.ts<2000)return JSON.stringify(b);return "";})()'
+                  )
+                  if (blocked) {
+                    const info = JSON.parse(blocked)
+                    result += `\n\n[File dialog intercepted — native OS file picker was blocked]`
+                    result += `\nFile input: ${info.selector}`
+                    result += `\nUse: act({action:"upload",selector:"${info.selector}",value:"/path/to/file"})`
+                  }
+                } catch {}
+              }
               // Auto-retry with different strategy if element not found
               if (result.startsWith('Element not found') && (args.text || args.selector)) {
                 // Strategy 1: Try via a11y tree
@@ -484,6 +633,25 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                     }
                   } catch { /* scroll retry failed */ }
                 }
+              }
+              // Strategy 3: Canvas fallback — visual guidance instead of bare error
+              if (result.startsWith('Element not found')) {
+                try {
+                  const canvasJson3 = await (wv as any).executeJavaScript(CANVAS_DETECT_JS)
+                  const canvasInfo3 = JSON.parse(canvasJson3)
+                  if (canvasInfo3.isCanvasApp) {
+                    const nativeImg = await (wv as any).capturePage()
+                    const b64 = nativeImageToBase64(nativeImg)
+                    const fp = await api.screenshotSave(b64)
+                    result += '\n\n[CANVAS APP — element is likely rendered on canvas, not in DOM]'
+                    result += '\nScreenshot: ' + fp
+                    result += '\nUse: act({action:"clickAtPoint",x:<num>,y:<num>})'
+                    result += '\nOr: act({action:"screenshotSoM"}) for coordinate grid'
+                    if (canvasInfo3.appType && CANVAS_SHORTCUTS[canvasInfo3.appType]) {
+                      result += '\nKeyboard shortcuts: act({action:"press",key:"<key>"})'
+                    }
+                  }
+                } catch {}
               }
               if (preSimContext) result = preSimContext + '\n' + result
             } else if (action === 'scroll') {
@@ -640,10 +808,129 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                     }
 
                     if (isCE) {
-                      // For contenteditable, use insertText (works with DraftJS/ProseMirror/Slate)
+                      // For contenteditable: multi-strategy approach with verification.
+                      // Many modern editors (Reddit/Shreddit, Lexical, etc.) reject insertText IME events.
+
+                      // Strategy 0: Dispatch InputEvent with inputType:'insertText' — this is what
+                      // Lexical, ProseMirror, and modern contenteditable frameworks listen for.
+                      const inputEventCode = '(function(){' +
+                        'var el=document.activeElement;' +
+                        'if(!el)return false;' +
+                        'var isCE=el.contentEditable==="true"||el.getAttribute("role")==="textbox";' +
+                        'if(!isCE){var p=el.closest("[contenteditable=true],[role=textbox]");if(p){p.focus();el=p;}else return false;}' +
+                        'try{' +
+                        'var be=new InputEvent("beforeinput",{inputType:"insertText",data:' + JSON.stringify(textToType) + ',bubbles:true,cancelable:true,composed:true});' +
+                        'var ok=el.dispatchEvent(be);' +
+                        'if(ok){' +
+                        'var ie=new InputEvent("input",{inputType:"insertText",data:' + JSON.stringify(textToType) + ',bubbles:true,cancelable:false,composed:true});' +
+                        'el.dispatchEvent(ie);}' +
+                        'return true;' +
+                        '}catch(e){return false;}' +
+                        '})()'
+                      let inputEventOk = false
+                      try {
+                        inputEventOk = await (wv as any).executeJavaScript(inputEventCode)
+                      } catch { /* InputEvent dispatch failed */ }
+
+                      if (inputEventOk) {
+                        await new Promise(r => setTimeout(r, 200))
+                        // Verify text appeared
+                        let s0Verify: any = { has: false }
+                        try {
+                          const s0Code = '(function(){var el=document.activeElement;' +
+                            'if(!el)return "{}";' +
+                            'var isCE=el.contentEditable==="true"||el.getAttribute("role")==="textbox";' +
+                            'if(!isCE){var p=el.closest("[contenteditable=true],[role=textbox]");if(p)el=p;}' +
+                            'var t=(el.innerText||el.textContent||"").trim();' +
+                            'return JSON.stringify({len:t.length,has:t.includes(' + JSON.stringify(textToType.substring(0, Math.min(20, textToType.length))) + ')});})()'
+                          s0Verify = JSON.parse(await (wv as any).executeJavaScript(s0Code))
+                        } catch { /* ignore */ }
+
+                        if (s0Verify.has) {
+                          result = 'Typed ' + textToType.length + ' chars into editable area (InputEvent)'
+                        }
+                      }
+
+                      if (!result || result.includes('Error')) {
+                      // Strategy 1: insertText (native Electron IME — works for DraftJS/ProseMirror/Slate)
                       await (wv as any).insertText(textToType)
-                      await new Promise(r => setTimeout(r, 100))
-                      result = 'Typed ' + textToType.length + ' chars into editable area'
+                      await new Promise(r => setTimeout(r, 150))
+
+                      // Verify text appeared in the contenteditable element
+                      const ceVerifyCode = '(function(){' +
+                        'var el=document.activeElement;' +
+                        'if(!el)return "no_focus";' +
+                        'var isCE=el.contentEditable==="true"||el.getAttribute("role")==="textbox";' +
+                        'if(!isCE){' +
+                        // Walk up to find the contenteditable ancestor
+                        'var p=el.closest("[contenteditable=true],[role=textbox]");' +
+                        'if(p)el=p;else return "no_ce";}' +
+                        'var text=(el.innerText||el.textContent||"").trim();' +
+                        'return JSON.stringify({len:text.length,has:text.includes(' + JSON.stringify(textToType.substring(0, Math.min(20, textToType.length))) + ')});' +
+                        '})()'
+                      let ceVerify: any = { has: false, len: 0 }
+                      try {
+                        ceVerify = JSON.parse(await (wv as any).executeJavaScript(ceVerifyCode))
+                      } catch { /* verification parse failed */ }
+
+                      if (ceVerify.has) {
+                        result = 'Typed ' + textToType.length + ' chars into editable area'
+                      } else {
+                        // Strategy 2: document.execCommand('insertText') — works for many contenteditable editors
+                        // including Reddit's Shreddit and basic contenteditable divs
+                        const execCmdCode = '(function(){' +
+                          'var el=document.activeElement;' +
+                          'if(!el)return false;' +
+                          'var isCE=el.contentEditable==="true"||el.getAttribute("role")==="textbox";' +
+                          'if(!isCE){var p=el.closest("[contenteditable=true],[role=textbox]");if(p){p.focus();el=p;}else return false;}' +
+                          'try{' +
+                          'var ok=document.execCommand("insertText",false,' + JSON.stringify(textToType) + ');' +
+                          'if(ok){var t=(el.innerText||el.textContent||"").trim();' +
+                          'return t.includes(' + JSON.stringify(textToType.substring(0, Math.min(20, textToType.length))) + ');}' +
+                          'return false;' +
+                          '}catch(e){return false;}' +
+                          '})()'
+                        let execCmdOk = false
+                        try {
+                          execCmdOk = await (wv as any).executeJavaScript(execCmdCode)
+                        } catch { /* execCommand failed */ }
+
+                        if (execCmdOk) {
+                          result = 'Typed ' + textToType.length + ' chars into editable area (execCommand)'
+                        } else {
+                          // Strategy 3: Character-by-character keyboard events via sendInputEvent
+                          // This is the most reliable fallback — simulates real keyboard input
+                          // Re-click to ensure focus
+                          ;(wv as any).sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 })
+                          ;(wv as any).sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
+                          await new Promise(r => setTimeout(r, 100))
+
+                          for (let ci = 0; ci < textToType.length; ci++) {
+                            const ch = textToType[ci]
+                            const isUpper = ch !== ch.toLowerCase() && ch === ch.toUpperCase()
+                            const mods: string[] = isUpper ? ['shift'] : []
+                            ;(wv as any).sendInputEvent({ type: 'keyDown', keyCode: ch, modifiers: mods })
+                            ;(wv as any).sendInputEvent({ type: 'char', keyCode: ch, modifiers: mods })
+                            ;(wv as any).sendInputEvent({ type: 'keyUp', keyCode: ch, modifiers: mods })
+                            // Small delay every 5 chars to let the editor process
+                            if (ci % 5 === 4) await new Promise(r => setTimeout(r, 10))
+                          }
+                          await new Promise(r => setTimeout(r, 150))
+
+                          // Final verification
+                          let finalVerify: any = { has: false }
+                          try {
+                            finalVerify = JSON.parse(await (wv as any).executeJavaScript(ceVerifyCode))
+                          } catch { /* ignore */ }
+
+                          if (finalVerify.has) {
+                            result = 'Typed ' + textToType.length + ' chars into editable area (keyboard)'
+                          } else {
+                            result = 'Typed ' + textToType.length + ' chars into editable area (keyboard fallback — verify content appeared)'
+                          }
+                        }
+                      }
+                      } // end if (!result || result.includes('Error')) — Strategy 0 failed
                     } else {
                       // For regular inputs: use insertText which triggers proper InputEvent
                       // This fires InputEvent with inputType="insertText" — React 18+ compatible
@@ -947,6 +1234,30 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                 'resolve("Timeout: network still active after "+timeout+"ms ("+pending+" pending)");}},timeout);' +
                 'checkIdle();});})()'
               result = await (wv as any).executeJavaScript(waitNetCode)
+            } else if (action === 'waitForVisualChange') {
+              const timeout4 = Math.min(args.amount || 5000, 15000)
+              const threshold = args.value ? parseFloat(args.value) : 2.0
+              const start = Date.now()
+
+              const beforeImage = await (wv as any).capturePage()
+              const beforeBase64 = nativeImageToBase64(beforeImage)
+
+              let diffPercent = 0
+              let changed = false
+              while (Date.now() - start < timeout4) {
+                await new Promise(r => setTimeout(r, 300))
+                const afterImage = await (wv as any).capturePage()
+                const afterBase64 = nativeImageToBase64(afterImage)
+                if (beforeBase64.length !== afterBase64.length ||
+                    beforeBase64.substring(0, 500) !== afterBase64.substring(0, 500)) {
+                  const cmp = await api.compareScreenshots(beforeBase64, afterBase64)
+                  diffPercent = cmp.diffPercentage
+                  if (diffPercent >= threshold) { changed = true; break }
+                }
+              }
+              result = changed
+                ? 'Visual change detected after ' + (Date.now() - start) + 'ms (' + diffPercent.toFixed(1) + '% pixels changed)'
+                : 'Timeout: no visual change after ' + timeout4 + 'ms (threshold: ' + threshold + '%, actual: ' + diffPercent.toFixed(1) + '%)'
             } else if (action === 'smartScroll') {
               // Smart scroll: scroll until element found, handle infinite scroll, trigger lazy loading
               const targetText = args.text || ''
@@ -1216,6 +1527,17 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                 const mapJson = await (wv as any).executeJavaScript(markerCode)
                 const mapData = JSON.parse(mapJson)
 
+                // Canvas grid overlay — add coordinate grid for canvas apps
+                let isCanvasPage = false
+                try {
+                  const canvasJson2 = await (wv as any).executeJavaScript(CANVAS_DETECT_JS)
+                  const canvasInfo2 = JSON.parse(canvasJson2)
+                  if (canvasInfo2.isCanvasApp) {
+                    isCanvasPage = true
+                    await (wv as any).executeJavaScript(GRID_OVERLAY_JS)
+                  }
+                } catch {}
+
                 // Wait for paint
                 await new Promise(r => setTimeout(r, 100))
 
@@ -1227,7 +1549,16 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
                 // Remove markers
                 await (wv as any).executeJavaScript('(function(){var c=document.getElementById("oculo-som-container");if(c)c.remove();var s=document.getElementById("oculo-som-style");if(s)s.remove();})()')
 
-                result = 'Set-of-Mark screenshot saved: ' + filePath + '\nMarked ' + mapData.count + ' elements:\n' + (mapData.elements as string[]).join('\n')
+                // Remove grid overlay too
+                if (isCanvasPage) {
+                  try { await (wv as any).executeJavaScript('(function(){var g=document.getElementById("oculo-grid-overlay");if(g)g.remove();})()') } catch {}
+                }
+
+                if (isCanvasPage) {
+                  result = 'Grid+SoM screenshot: ' + filePath + '\nViewport: ' + mapData.count + ' DOM elements marked | Grid: 100px spacing\n' + (mapData.elements as string[]).join('\n') + '\n\nCanvas content: use clickAtPoint(x,y) with grid coordinates.'
+                } else {
+                  result = 'Set-of-Mark screenshot saved: ' + filePath + '\nMarked ' + mapData.count + ' elements:\n' + (mapData.elements as string[]).join('\n')
+                }
               } catch (e: any) {
                 result = 'Error capturing SoM screenshot: ' + e.message
                 // Cleanup markers on error
@@ -2580,9 +2911,21 @@ export function useMcpToolHandler(params: McpToolHandlerParams): void {
   useEffect(() => {
     const api = oculoApi()
     if (!api?.onMcpAgentTabCreate) return
-    const cleanup = api.onMcpAgentTabCreate((responseChannel: string) => {
+    const cleanup = api.onMcpAgentTabCreate(async (responseChannel: string) => {
       const tabUrl = NEW_TAB_URL
       const newTabObj: Tab = { id: newId(), url: tabUrl, title: 'Agent Tab', isLoading: false, canGoBack: false, canGoForward: false }
+
+      // Create an actual WebContentsView so the tab has a real browser view
+      if (api.viewCreate) {
+        try {
+          const wcId = await api.viewCreate(newTabObj.id, tabUrl, { background: true })
+          newTabObj.webContentsId = wcId
+        } catch {
+          // View creation failed — tab will still exist but without a view.
+          // The navigate fallback (lines ~337-357) will create the view on first navigation.
+        }
+      }
+
       setTabs(prev => [...prev, newTabObj])
       // Open in background — don't switch to it
       api.sendMcpAgentTabCreated(responseChannel, newTabObj.id)

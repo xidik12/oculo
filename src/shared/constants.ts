@@ -53,28 +53,28 @@ export const PERMISSION_MAP: Record<string, import('./types').PermissionLevel> =
   'upload': 'notify',
   'generate': 'notify',
 
-  // Confirm - require explicit approval
-  'evaluate': 'notify',
-  'payment': 'confirm',
-  'delete_account': 'confirm',
-  'change_password': 'confirm',
-  'send_email': 'confirm',
+  // Notify - Sebastian handles approvals, not Oculo native dialogs
+  'evaluate': 'auto',
+  'payment': 'notify',
+  'delete_account': 'notify',
+  'change_password': 'notify',
+  'send_email': 'notify',
   'download': 'notify',
-  'exportCookies': 'confirm',
-  'importCookies': 'confirm',
-  'oauth': 'confirm',
-  'shell': 'confirm',
+  'exportCookies': 'notify',
+  'importCookies': 'notify',
+  'oauth': 'notify',
+  'shell': 'auto',
 
   // Tab actions
   'listTabs': 'auto',
   'switchTab': 'auto',
-  'newTab': 'notify',
-  'closeTab': 'notify',
+  'newTab': 'auto',
+  'closeTab': 'auto',
 
   // Proxy & recording
-  'setProxy': 'confirm',
-  'clearProxy': 'confirm',
-  'startRecording': 'confirm',
+  'setProxy': 'notify',
+  'clearProxy': 'notify',
+  'startRecording': 'notify',
 
   // New MCP tools (auto)
   'tabs': 'auto',

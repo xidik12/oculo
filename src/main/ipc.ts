@@ -357,6 +357,11 @@ export function setupIPC(registry: StoreRegistry): void {
     return filePath
   })
 
+  ipcMain.handle(IPC.SCREENSHOT_COMPARE, async (_event, img1Base64: string, img2Base64: string) => {
+    const { compareScreenshots } = await import('./engine/dom-differ')
+    return compareScreenshots(img1Base64, img2Base64)
+  })
+
   // === File Upload via CDP (Phase 2) ===
   ipcMain.handle(IPC.FILE_UPLOAD, async (_, wcId: number, selector: string, filePaths: string[]) => {
     // Validate file paths — only allow pictures, temp, downloads, desktop

@@ -154,6 +154,18 @@ export function buildClickCode(text: string, selector: string, nth: number, modi
     '}' +
     // Multiple matches -- click best, report others
     'var el=els[nth]||els[0];' +
+    // File input detection — prevent native OS file picker from opening
+    'if(el.tagName==="INPUT"&&el.type==="file"){' +
+    'var fSel=el.id?"#"+el.id:el.name?"input[name=\\""+el.name+"\\"]":"input[type=file]";' +
+    'return "[FILE_INPUT:"+fSel+"] File input detected. Use act({action:\\"upload\\",selector:\\""+fSel+"\\",value:\\"/path/to/file\\"}) instead.";}' +
+    // Check if clicking this element would trigger a hidden file input (common pattern: label/button wrapping input[type=file])
+    'var hiddenFile=el.querySelector&&el.querySelector("input[type=file]");' +
+    'if(!hiddenFile&&el.htmlFor){hiddenFile=document.getElementById(el.htmlFor);if(hiddenFile&&hiddenFile.type!=="file")hiddenFile=null;}' +
+    'if(!hiddenFile){var par=el.closest?el.closest("label,button,[role=button],.upload,.dropzone,[class*=upload],[class*=file]"):null;' +
+    'if(par)hiddenFile=par.querySelector("input[type=file]");}' +
+    'if(hiddenFile){' +
+    'var fSel2=hiddenFile.id?"#"+hiddenFile.id:hiddenFile.name?"input[name=\\""+hiddenFile.name+"\\"]":"input[type=file]";' +
+    'return "[FILE_INPUT:"+fSel2+"] Upload button detected (wraps file input). Use act({action:\\"upload\\",selector:\\""+fSel2+"\\",value:\\"/path/to/file\\"}) instead.";}' +
     'el.scrollIntoView({block:"center"});' +
     'var r1=el.getBoundingClientRect();var cx1=r1.left+r1.width/2+Math.random()*4-2,cy1=r1.top+r1.height/2+Math.random()*4-2;' +
     'el.dispatchEvent(new MouseEvent("mouseover",' + mf1 + '));' +

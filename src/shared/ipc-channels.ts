@@ -102,6 +102,7 @@ export const IPC = {
 
   // Screenshot (Phase 1)
   SCREENSHOT_SAVE: 'screenshot:save',
+  SCREENSHOT_COMPARE: 'screenshot:compare',
 
   // File Upload via CDP (Phase 2)
   FILE_UPLOAD: 'file:upload',

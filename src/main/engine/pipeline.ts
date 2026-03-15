@@ -101,6 +101,22 @@ export class PipelineRunner {
     const timeout = wait.timeout || 5000
     const start = Date.now()
 
+    // Visual change detection — compare screenshots over time
+    if (wait.visual) {
+      const { compareScreenshots } = await import('./dom-differ')
+      const beforePng = (await webContents.capturePage()).toPNG().toString('base64')
+      const vThreshold = wait.threshold || 2.0
+      while (Date.now() - start < timeout) {
+        await new Promise(r => setTimeout(r, 300))
+        const afterPng = (await webContents.capturePage()).toPNG().toString('base64')
+        const { diffPercentage } = compareScreenshots(beforePng, afterPng)
+        if (diffPercentage >= vThreshold) {
+          return `Visual change detected after ${Date.now() - start}ms (${diffPercentage.toFixed(1)}% changed)`
+        }
+      }
+      return `Timeout: no visual change after ${timeout}ms (threshold: ${vThreshold}%)`
+    }
+
     while (Date.now() - start < timeout) {
       if (wait.text) {
         const hasText = await webContents.executeJavaScript(

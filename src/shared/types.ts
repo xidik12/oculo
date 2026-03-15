@@ -102,7 +102,7 @@ export interface PipelineStep {
   act?: ActRequest
   fill?: FillRequest
   read?: ReadRequest
-  wait?: { text?: string; url?: string; selector?: string; timeout?: number }
+  wait?: { text?: string; url?: string; selector?: string; timeout?: number; visual?: boolean; threshold?: number }
   if?: { text?: string; url?: string; then: PipelineStep; else?: PipelineStep }
 }
 

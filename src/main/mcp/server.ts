@@ -91,6 +91,12 @@ export class McpServerManager {
   /** Agent ID → tab ID mapping for multi-agent tab isolation */
   private agentTabMap = new Map<string, string>()
 
+  /** Agent ID → last activity timestamp (ms) for stale session cleanup */
+  private agentLastActivity = new Map<string, number>()
+
+  /** Timer for periodic stale agent cleanup */
+  private agentCleanupTimer: NodeJS.Timeout | null = null
+
   /** Media generator for image/video generation (runs in main process) */
   private mediaGenerator: MediaGenerator
 
@@ -569,6 +575,10 @@ export class McpServerManager {
       }
 
       // --- Multi-agent tab isolation (Fix #11) ---
+      // Track last activity for stale session cleanup
+      if (agentId) {
+        this.agentLastActivity.set(agentId, Date.now())
+      }
       if (agentId && !args.tabId) {
         // Tools that need a tab context
         const needsTab = ['page', 'act', 'fill', 'read', 'run', 'tabs', 'translate', 'lens'].includes(name)
@@ -1071,6 +1081,8 @@ export class McpServerManager {
     })
 
     this.httpServer.setTimeout(120000)
+    this.httpServer.keepAliveTimeout = 65_000   // must be > bridge's keepAliveMsecs (30s)
+    this.httpServer.headersTimeout = 66_000     // must be > keepAliveTimeout
 
     let bound = false
     for (let port = BASE_PORT; port <= MAX_PORT; port++) {
@@ -1094,6 +1106,18 @@ export class McpServerManager {
 
     // Rate limiter cleanup
     this.rateLimiterCleanup = setInterval(() => this.rateLimiter.cleanup(), 300000)
+
+    // Stale agent session cleanup — remove entries with no activity for 5+ minutes
+    this.agentCleanupTimer = setInterval(() => {
+      const staleThreshold = Date.now() - 5 * 60 * 1000
+      for (const [agentId, lastActive] of this.agentLastActivity) {
+        if (lastActive < staleThreshold) {
+          debugLog(`Cleaning up stale agent session: ${agentId}`)
+          this.agentTabMap.delete(agentId)
+          this.agentLastActivity.delete(agentId)
+        }
+      }
+    }, 60000)
   }
 
   /** Update provider configs for media generation API key lookup */
@@ -1383,6 +1407,9 @@ export class McpServerManager {
     // Flush selector cache on shutdown
     this.selectorCache.flush()
     if (this.rateLimiterCleanup) { clearInterval(this.rateLimiterCleanup); this.rateLimiterCleanup = null }
+    if (this.agentCleanupTimer) { clearInterval(this.agentCleanupTimer); this.agentCleanupTimer = null }
+    this.agentTabMap.clear()
+    this.agentLastActivity.clear()
     if (this.httpServer) { this.httpServer.close(); this.httpServer = null }
     try { if (fs.existsSync(PORT_FILE)) fs.unlinkSync(PORT_FILE) } catch { /* best-effort */ }
     this.actualPort = null

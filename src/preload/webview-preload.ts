@@ -703,6 +703,27 @@ try {
   }
 })()
 
+// ── File Chooser Interception ────────────────────────────────────────────
+// Prevent native OS file dialog from opening during MCP automation.
+// When AI clicks a file input (or a button that triggers one), the dialog
+// would block the automation pipeline. Instead, we suppress it and record
+// the event so the MCP tool handler can guide the AI to use the upload action.
+;(function setupFileInputInterception() {
+  const origClick = HTMLInputElement.prototype.click
+  HTMLInputElement.prototype.click = function() {
+    if (this.type === 'file') {
+      // Record the intercepted file dialog for MCP tool handler to detect
+      ;(window as any).__oculoFileDialogBlocked = {
+        selector: this.id ? '#' + this.id : this.name ? 'input[name="' + this.name + '"]' : 'input[type=file]',
+        ts: Date.now()
+      }
+      // Don't call original — prevents native file picker
+      return
+    }
+    return origClick.call(this)
+  }
+})()
+
 // ── Beforeunload Suppression ─────────────────────────────────────────────
 window.addEventListener('beforeunload', (e) => {
   e.stopImmediatePropagation()

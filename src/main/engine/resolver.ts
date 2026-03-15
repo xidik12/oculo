@@ -303,33 +303,36 @@ export class ElementResolver {
     // Base64-encode text to prevent $$ or ${} from being shell/template-interpolated
     const textB64 = Buffer.from(text, 'utf-8').toString('base64')
 
+    // Phase 1: Detect element type and attempt execCommand for contenteditable
     const script = `
       (function() {
         ${deepQuerySnippet()}
         const text = decodeURIComponent(escape(atob("${textB64}")));
         const el = document.querySelector(${JSON.stringify(resolved.selector)}) || querySelectorDeep(document, ${JSON.stringify(resolved.selector)});
-        if (!el) return 'Element disappeared';
+        if (!el) return JSON.stringify({status:'disappeared'});
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
         el.focus();
         const isContentEditable = el.contentEditable === 'true' || el.getAttribute('role') === 'textbox';
         if (isContentEditable) {
-          // Detect Lexical editor — rejects programmatic input
-          if (el.hasAttribute('data-lexical-editor') || el.__lexicalEditor) {
-            return 'Warning: Target is a Lexical editor which rejects programmatic input. Use evaluate() with editor.parseEditorState() + editor.setEditorState() instead. See: el.__lexicalEditor';
-          }
+          const rect = el.getBoundingClientRect();
+          const isLexical = el.hasAttribute('data-lexical-editor') || !!el.__lexicalEditor;
           if (${clear ? 'true' : 'false'}) {
             document.execCommand('selectAll', false, null);
             document.execCommand('delete', false, null);
           }
+          // Try execCommand insertText first
           document.execCommand('insertText', false, text);
-          // Verify content was actually inserted for contenteditable
           const innerText = el.innerText || el.textContent || '';
-          if (!innerText.includes(text.substring(0, Math.min(10, text.length)))) {
-            return 'Warning: Content may not have been inserted. The contenteditable element may reject programmatic input. Try evaluate() with direct DOM manipulation instead.';
-          }
-          return 'ok';
+          const inserted = innerText.includes(text.substring(0, Math.min(10, text.length)));
+          return JSON.stringify({
+            status: inserted ? 'ok' : 'ce_failed',
+            isCE: true,
+            isLexical: isLexical,
+            x: Math.round(rect.left + rect.width / 2),
+            y: Math.round(rect.top + rect.height / 2)
+          });
         }
-        // Use native setter to trigger React onChange
+        // Regular input/textarea
         const nativeSetter = Object.getOwnPropertyDescriptor(
           window.HTMLInputElement.prototype, 'value'
         )?.set || Object.getOwnPropertyDescriptor(
@@ -348,11 +351,71 @@ export class ElementResolver {
         }
         el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
         el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-        return 'ok';
+        return JSON.stringify({status:'ok', isCE: false});
       })()
     `
-    const result = await webContents.executeJavaScript(script)
-    if (result !== 'ok') return result
+    const rawResult = await webContents.executeJavaScript(script)
+    let parsed: any
+    try {
+      parsed = JSON.parse(rawResult)
+    } catch {
+      // Legacy string result
+      parsed = { status: rawResult === 'ok' ? 'ok' : 'error', message: rawResult }
+    }
+
+    if (parsed.status === 'disappeared') return 'Element disappeared'
+
+    if (parsed.status === 'ce_failed' && parsed.isCE) {
+      // Phase 2: insertText via Electron's native webContents.insertText()
+      // This sends IME composition events which some editors accept
+      try {
+        await webContents.insertText(text)
+        await new Promise(r => setTimeout(r, 150))
+
+        // Verify
+        const verifyScript = `
+          (function() {
+            ${deepQuerySnippet()}
+            const el = document.querySelector(${JSON.stringify(resolved.selector)}) || querySelectorDeep(document, ${JSON.stringify(resolved.selector)});
+            if (!el) return false;
+            const t = (el.innerText || el.textContent || '').trim();
+            return t.includes(${JSON.stringify(text.substring(0, Math.min(10, text.length)))});
+          })()
+        `
+        const verified = await webContents.executeJavaScript(verifyScript)
+        if (verified) {
+          const targetDesc = target.text || target.label || target.placeholder || ''
+          return `Typed "${text.substring(0, 20)}${text.length > 20 ? '...' : ''}" into "${targetDesc}" (insertText)`
+        }
+      } catch { /* insertText failed, try keyboard fallback */ }
+
+      // Phase 3: Character-by-character keyboard events
+      // Click to ensure focus, then type via input events
+      const { x, y } = parsed
+      if (x && y) {
+        webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 } as any)
+        webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 } as any)
+        await new Promise(r => setTimeout(r, 100))
+      }
+
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i]
+        const isUpper = ch !== ch.toLowerCase() && ch === ch.toUpperCase()
+        const mods: string[] = isUpper ? ['shift'] : []
+        webContents.sendInputEvent({ type: 'keyDown', keyCode: ch, modifiers: mods } as any)
+        webContents.sendInputEvent({ type: 'char', keyCode: ch, modifiers: mods } as any)
+        webContents.sendInputEvent({ type: 'keyUp', keyCode: ch, modifiers: mods } as any)
+        if (i % 5 === 4) await new Promise(r => setTimeout(r, 10))
+      }
+      await new Promise(r => setTimeout(r, 150))
+
+      const targetDesc = target.text || target.label || target.placeholder || ''
+      return `Typed "${text.substring(0, 20)}${text.length > 20 ? '...' : ''}" into "${targetDesc}" (keyboard fallback)`
+    }
+
+    if (parsed.status !== 'ok') {
+      return parsed.message || 'Type failed: unknown error'
+    }
 
     const targetDesc = target.text || target.label || target.placeholder || ''
     return `Typed "${text.substring(0, 20)}${text.length > 20 ? '...' : ''}" into "${targetDesc}"`
