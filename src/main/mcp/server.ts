@@ -1016,6 +1016,16 @@ export class McpServerManager {
         const MAX_BODY_SIZE = 10 * 1024 * 1024 // 10MB
         let destroyed = false
 
+        // Handle stream errors to prevent unhandled exceptions on disconnect
+        req.on('error', (err: Error) => {
+          console.error('[MCP] Request stream error:', err.message)
+          destroyed = true
+          try { if (!res.writableEnded) res.end() } catch {}
+        })
+        res.on('error', (err: Error) => {
+          console.error('[MCP] Response stream error:', err.message)
+        })
+
         req.on('data', (chunk: Buffer) => {
           bodySize += chunk.length
           if (bodySize > MAX_BODY_SIZE) {
@@ -1080,9 +1090,14 @@ export class McpServerManager {
       res.end(JSON.stringify({ error: 'Not found' }))
     })
 
-    this.httpServer.setTimeout(120000)
+    this.httpServer.setTimeout(0)              // disable — individual requests have their own timeouts
     this.httpServer.keepAliveTimeout = 65_000   // must be > bridge's keepAliveMsecs (30s)
     this.httpServer.headersTimeout = 66_000     // must be > keepAliveTimeout
+
+    // Prevent unhandled 'error' from crashing the process
+    this.httpServer.on('error', (err: NodeJS.ErrnoException) => {
+      console.error('[MCP] HTTP server error:', err.code, err.message)
+    })
 
     let bound = false
     for (let port = BASE_PORT; port <= MAX_PORT; port++) {
