@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.xidik12/oculo",
-  "description": "AI-powered native browser with 12 MCP tools. ~30 tokens per page.",
+  "description": "AI-powered native browser with 16 MCP tools for browser automation. Navigate, click, fill forms, extract data, run pipelines, generate media. ~30 tokens per page description.",
   "repository": {
     "url": "https://github.com/xidik12/oculo",
     "source": "github"
@@ -11,7 +11,7 @@
     {
       "registryType": "npm",
       "identifier": "oculo-mcp",
-      "version": "0.4.2",
+      "version": "0.4.4",
       "runtime": "node",
       "transport": {
         "type": "stdio"

@@ -1,0 +1,10 @@
+{
+  "name": "oculo",
+  "description": "AI-powered native browser with 16 MCP tools. Control the live browser: navigate, click, fill forms, extract data, run multi-step pipelines, generate images/videos.",
+  "command": "npx",
+  "args": ["-y", "oculo-mcp"],
+  "env": {},
+  "requirements": {
+    "description": "Oculo browser must be running. Download from https://getoculo.com"
+  }
+}

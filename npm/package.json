@@ -1,7 +1,7 @@
 {
   "name": "oculo-mcp",
-  "version": "0.4.0",
-  "description": "MCP server bridge for Oculo — AI-powered browser automation",
+  "version": "0.4.4",
+  "description": "MCP server for Oculo — AI-powered browser automation. Control the live browser with 16 tools: navigate, click, fill forms, extract data, run pipelines, generate media, and more.",
   "type": "module",
   "bin": {
     "oculo-mcp": "./bin/oculo-mcp.mjs"
@@ -13,12 +13,20 @@
   ],
   "keywords": [
     "mcp",
+    "mcp-server",
+    "model-context-protocol",
     "browser-automation",
     "ai",
     "claude",
+    "claude-code",
+    "claude-desktop",
+    "cursor",
     "electron",
     "oculo",
-    "model-context-protocol"
+    "web-scraping",
+    "browser-control",
+    "ai-agent",
+    "llm-tools"
   ],
   "author": "Salakhitdinov Khidayotullo",
   "license": "MIT",

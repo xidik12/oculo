@@ -27,12 +27,42 @@ import { readFileSync, existsSync, unlinkSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import http from 'http'
-import crypto from 'crypto'
+
+/** HTTP agent with keepalive for persistent connections */
+let httpAgent = new http.Agent({
+  keepAlive: true,
+  keepAliveMsecs: 10000,
+  maxSockets: 4
+})
 
 const PORT_FILE = join(homedir(), '.oculo-port')
 
-/** Stable session ID — generated once at module startup, sent on every request */
-const SESSION_ID = crypto.randomUUID()
+/** Cached connection to avoid re-reading port file */
+let cachedConn = null
+let cachedAt = 0
+const CACHE_TTL = 30_000 // 30 seconds
+
+function getCachedConnection() {
+  if (cachedConn && Date.now() - cachedAt < CACHE_TTL) return cachedConn
+  cachedConn = getConnection()
+  cachedAt = Date.now()
+  return cachedConn
+}
+
+function invalidateCache() {
+  cachedConn = null
+  cachedAt = 0
+  // Destroy stale sockets to prevent ECONNRESET on retry
+  httpAgent.destroy()
+  httpAgent = new http.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 10000,
+    maxSockets: 4
+  })
+}
+
+/** Unique agent ID for multi-agent tab isolation */
+const agentId = 'agent-' + process.pid + '-' + Date.now()
 
 /**
  * Static tool definitions — always returned by tools/list so Claude Code
@@ -128,7 +158,7 @@ const STATIC_TOOLS = [
   },
   {
     name: 'run',
-    description: 'Execute a multi-step pipeline in Oculo browser. Each step is an object with exactly ONE key: page, act, fill, read, wait, or if. Cached for replay.',
+    description: 'PREFERRED for any task with 2+ actions. Executes a multi-step pipeline in a SINGLE call — use this instead of multiple act/fill calls. Example — post on X: run({steps:[{act:{action:"navigate",url:"https://x.com/compose/post"}},{wait:{timeout:2000}},{act:{action:"type",text:"Hello world",role:"textbox"}},{act:{action:"click",text:"Post",role:"button"}}]}). Each step is an object with exactly ONE key: page, act, fill, read, wait, or if. Cached for replay. Manage cached workflows: run({manage:"list"}) or run({manage:"delete", workflow:"id"}).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -205,6 +235,7 @@ const STATIC_TOOLS = [
           }
         },
         workflow: { type: 'string', description: 'Replay a cached workflow by ID' },
+        manage: { type: 'string', enum: ['list', 'delete'], description: 'Manage cached workflows: "list" shows all, "delete" removes a workflow (requires workflow param as ID)' },
         description: { type: 'string', description: 'Short description for caching' },
         returnAll: { type: 'boolean', description: 'Return results from all steps (default: false)' },
         tabId: { type: 'string', description: 'Target a specific tab by ID (for parallel execution). Omit for active tab.' }
@@ -320,6 +351,25 @@ const STATIC_TOOLS = [
       },
       required: ['question']
     }
+  },
+  {
+    name: 'abort',
+    description: 'Cancel a pending tool call by callId, or pass callId="all" to cancel everything.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        callId: { type: 'string', description: 'The call ID to cancel, or "all" to cancel all pending calls' }
+      },
+      required: ['callId']
+    }
+  },
+  {
+    name: 'status',
+    description: 'List all pending tool calls with their callId, toolName, and elapsed time.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
   }
 ]
 
@@ -378,7 +428,7 @@ function httpPost(port, body, token) {
     const headers = {
       'Content-Type': 'application/json',
       'Content-Length': Buffer.byteLength(data),
-      'X-Agent-Id': SESSION_ID
+      'X-Agent-Id': agentId
     }
     if (token) {
       headers['Authorization'] = `Bearer ${token}`
@@ -389,7 +439,8 @@ function httpPost(port, body, token) {
         port,
         path: '/mcp',
         method: 'POST',
-        headers
+        headers,
+        agent: httpAgent
       },
       (res) => {
         let chunks = ''
@@ -425,7 +476,7 @@ function httpPost(port, body, token) {
 // ── MCP Server (stdio side) ───────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'oculo', version: '0.4.0' },
+  { name: 'oculo', version: '0.4.4' },
   {
     capabilities: { tools: {} },
     instructions: `You are connected to Oculo, an AI-powered native browser. Your oculo tools (page, act, fill, read, run, media, shell) control the LIVE browser the user is currently looking at — not a headless browser or separate session.
@@ -449,7 +500,7 @@ Quick reference:
  * forward to get the live (possibly updated) definitions instead.
  */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  const conn = getConnection()
+  const conn = getCachedConnection()
   if (!conn) {
     return { tools: STATIC_TOOLS }
   }
@@ -471,52 +522,53 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  * If Oculo isn't running, return a clear error with instructions.
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const conn = getConnection()
-  if (!conn) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Oculo browser is not running. Launch Oculo first — it writes ~/.oculo-port on startup, which this bridge reads to connect.'
-        }
-      ],
-      isError: true
-    }
+  const BACKOFF_DELAYS = [1000, 2000, 4000] // exponential backoff
+
+  function isRetryable(err) {
+    return err.message?.includes('connection refused') ||
+      err.message?.includes('socket hang up') ||
+      err.message?.includes('ECONNRESET') ||
+      err.code === 'ECONNREFUSED' ||
+      err.code === 'ECONNRESET' ||
+      err.code === 'EPIPE'
   }
 
-  // Quick liveness check before attempting the (potentially slow) tool call
-  const alive = await verifyConnection(conn)
-  if (!alive) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: 'Oculo browser is not reachable (stale port file cleaned). Launch Oculo and try again.'
-        }
-      ],
-      isError: true
-    }
-  }
-
-  try {
-    const result = await httpPost(conn.port, {
+  async function attempt(connection) {
+    return await httpPost(connection.port, {
       method: 'tools/call',
       params: {
         name: request.params.name,
         arguments: request.params.arguments
       }
-    }, conn.token)
-    return result
-  } catch (err) {
-    return {
-      content: [
-        {
-          type: 'text',
-          text: `Failed to reach Oculo: ${err.message}`
-        }
-      ],
-      isError: true
+    }, connection.token)
+  }
+
+  let lastErr = null
+  for (let i = 0; i <= BACKOFF_DELAYS.length; i++) {
+    let conn = getCachedConnection()
+    if (!conn) {
+      return {
+        content: [{ type: 'text', text: 'Oculo browser is not running. Launch Oculo first — it writes ~/.oculo-port on startup, which this bridge reads to connect.' }],
+        isError: true
+      }
     }
+    try {
+      return await attempt(conn)
+    } catch (err) {
+      lastErr = err
+      if (isRetryable(err) && i < BACKOFF_DELAYS.length) {
+        invalidateCache()
+        process.stderr.write(`[oculo-mcp] Connection error (attempt ${i + 1}/${BACKOFF_DELAYS.length + 1}): ${err.message}. Retrying in ${BACKOFF_DELAYS[i]}ms...\n`)
+        await new Promise(r => setTimeout(r, BACKOFF_DELAYS[i]))
+        continue
+      }
+      break
+    }
+  }
+
+  return {
+    content: [{ type: 'text', text: `Oculo connection lost after ${BACKOFF_DELAYS.length} retries. Is Oculo running?` }],
+    isError: true
   }
 })
 
@@ -535,6 +587,25 @@ process.stdin.on('error', () => {
   // stdin error (e.g. EPIPE) — schedule exit
   setTimeout(() => process.exit(0), 15_000).unref()
 })
+
+// ── Connection keepalive ping ─────────────────────────────────────────────
+// Every 30 seconds, ping the Oculo HTTP server to keep the connection alive
+// and detect stale connections early. On failure, invalidate the cache so the
+// next tool call re-reads ~/.oculo-port and reconnects.
+
+const KEEPALIVE_INTERVAL = 30_000
+
+const keepaliveTimer = setInterval(async () => {
+  const conn = getCachedConnection()
+  if (!conn) return // Oculo not running, nothing to ping
+  const alive = await verifyConnection(conn)
+  if (!alive) {
+    process.stderr.write('[oculo-mcp] Keepalive ping failed — invalidating connection cache\n')
+    invalidateCache()
+  }
+}, KEEPALIVE_INTERVAL)
+
+keepaliveTimer.unref() // Don't prevent process exit
 
 // ── Connect stdio transport ───────────────────────────────────────────────
 
