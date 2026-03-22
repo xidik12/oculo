@@ -178,14 +178,13 @@ export class TabManager {
    * Switch active tab — show the target view, hide all others.
    */
   activateTab(tabId: string): void {
-    const targetView = this.views.get(tabId)
-    if (!targetView) return
-
     this.activeTabId = tabId
+
+    const targetView = this.views.get(tabId)
 
     // Hide all views, show only the active one
     for (const [id, view] of this.views) {
-      if (id === tabId) {
+      if (targetView && id === tabId) {
         view.setBounds(this.contentBounds)
         // Bring to front by re-adding
         try {
@@ -193,6 +192,7 @@ export class TabManager {
         } catch { /* not attached */ }
         this.mainWindow.contentView.addChildView(view)
       } else {
+        // Hide: set to zero bounds (for non-active tabs, or ALL tabs if target has no view)
         view.setBounds({ x: 0, y: 0, width: 0, height: 0 })
       }
     }
