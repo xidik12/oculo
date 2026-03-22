@@ -486,11 +486,11 @@ export class McpServerManager {
     return new Promise((resolve) => {
       const callId = crypto.randomUUID()
 
-      // 120 second timeout (generous for screenshot capture, CDP uploads, etc.)
+      // 5 minute timeout for big tasks (research, multi-step pipelines, screenshots)
       const timer = setTimeout(() => {
         this.pendingToolCalls.delete(callId)
-        resolve('Error: Tool call timed out after 120 seconds.')
-      }, 120_000)
+        resolve('Error: Tool call timed out after 5 minutes.')
+      }, 300_000)
 
       this.pendingToolCalls.set(callId, { resolve, timer, startedAt: Date.now(), toolName: name })
 
@@ -587,31 +587,9 @@ export class McpServerManager {
           if (existingTabId) {
             args.tabId = existingTabId
           } else {
-            // Create a new tab for this agent with retry (2 attempts)
-            const wasFocusedBeforeTab = this.mainWindow.isFocused()
-            let tabId: string | null = null
-            for (let attempt = 0; attempt < 2 && !tabId; attempt++) {
-              try {
-                tabId = await this.createAgentTab()
-              } catch {
-                if (attempt === 0) await new Promise(r => setTimeout(r, 500))
-              }
-            }
-            // Restore focus after tab creation
-            if (!wasFocusedBeforeTab && !this.mainWindow.isDestroyed() && this.mainWindow.isFocused()) {
-              this.mainWindow.blur()
-            }
-            if (tabId) {
-              this.agentTabMap.set(agentId, tabId)
-              args.tabId = tabId
-            } else {
-              // Return error instead of silently falling through to active tab
-              debugLog(`Agent ${agentId}: failed to create isolated tab for ${name}`)
-              return {
-                content: [{ type: 'text', text: `Multi-agent isolation: could not create tab for agent "${agentId}". Retry or specify tabId explicitly.` }],
-                isError: true
-              }
-            }
+            // Use active tab instead of creating new ones -- new tab creation
+            // often fails and the tools work on the active tab anyway
+            debugLog(`Agent ${agentId}: using active tab for ${name} (no isolated tab)`)
           }
         }
       }
@@ -930,7 +908,7 @@ export class McpServerManager {
       // Health check endpoint (no auth required — localhost-only liveness probe)
       if (req.url === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ status: 'ok', version: '0.4.4' }))
+        res.end(JSON.stringify({ status: 'ok', version: '0.5.0' }))
         return
       }
 

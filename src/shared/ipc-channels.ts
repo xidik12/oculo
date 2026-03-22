@@ -256,6 +256,22 @@ export const IPC = {
 
   // CDP Typing (trusted keyboard events for contenteditable editors like Lexical/Shreddit)
   VIEW_CDP_TYPE: 'view:cdp-type',
+
+  // System Browser Auth (login in Safari, import cookies back)
+  AUTH_OPEN_SYSTEM_BROWSER: 'auth:open-system-browser',
+  AUTH_IMPORT_SYSTEM_COOKIES: 'auth:import-system-cookies',
+
+  // Chrome Extensions
+  EXTENSIONS_LIST: 'extensions:list',
+  EXTENSIONS_INSTALL: 'extensions:install',
+  EXTENSIONS_REMOVE: 'extensions:remove',
+  EXTENSIONS_TOGGLE: 'extensions:toggle',
+  EXTENSIONS_OPEN_FOLDER: 'extensions:open-folder',
+  EXTENSIONS_OPEN_POPUP: 'extensions:open-popup',
+
+  // Web3 Wallet Relay
+  WALLET_RELAY_STATUS: 'wallet:relay-status',
+  WALLET_RELAY_CONNECT: 'wallet:relay-connect',
 } as const
 
 export type IPCChannel = typeof IPC[keyof typeof IPC]

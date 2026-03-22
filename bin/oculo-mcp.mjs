@@ -476,7 +476,7 @@ function httpPost(port, body, token) {
 // ── MCP Server (stdio side) ───────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'oculo', version: '0.4.4' },
+  { name: 'oculo', version: '0.5.0' },
   {
     capabilities: { tools: {} },
     instructions: `You are connected to Oculo, an AI-powered native browser. Your oculo tools (page, act, fill, read, run, media, shell) control the LIVE browser the user is currently looking at — not a headless browser or separate session.
@@ -522,15 +522,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
  * If Oculo isn't running, return a clear error with instructions.
  */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const BACKOFF_DELAYS = [1000, 2000, 4000] // exponential backoff
+  const BACKOFF_DELAYS = [1000, 2000, 4000, 8000, 16000] // 5 retries with exponential backoff
 
   function isRetryable(err) {
     return err.message?.includes('connection refused') ||
       err.message?.includes('socket hang up') ||
       err.message?.includes('ECONNRESET') ||
+      err.message?.includes('timed out') ||
+      err.message?.includes('ETIMEDOUT') ||
       err.code === 'ECONNREFUSED' ||
       err.code === 'ECONNRESET' ||
-      err.code === 'EPIPE'
+      err.code === 'EPIPE' ||
+      err.code === 'ETIMEDOUT'
   }
 
   async function attempt(connection) {

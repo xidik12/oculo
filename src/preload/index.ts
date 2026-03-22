@@ -244,6 +244,18 @@ const IPC = {
 
   // CDP Typing (trusted keyboard events for contenteditable editors like Lexical/Shreddit)
   VIEW_CDP_TYPE: 'view:cdp-type',
+
+  // System Browser Auth (login in Safari, import cookies back)
+  AUTH_OPEN_SYSTEM_BROWSER: 'auth:open-system-browser',
+  AUTH_IMPORT_SYSTEM_COOKIES: 'auth:import-system-cookies',
+
+  // Chrome Extensions
+  EXTENSIONS_LIST: 'extensions:list',
+  EXTENSIONS_INSTALL: 'extensions:install',
+  EXTENSIONS_REMOVE: 'extensions:remove',
+  EXTENSIONS_TOGGLE: 'extensions:toggle',
+  EXTENSIONS_OPEN_FOLDER: 'extensions:open-folder',
+  EXTENSIONS_OPEN_POPUP: 'extensions:open-popup',
 } as const
 
 // Webview registry - stores references to webview DOM elements
@@ -580,6 +592,22 @@ const api = {
   authLogout: (providerId: string) => ipcRenderer.invoke(IPC.AUTH_LOGOUT, providerId),
   authStatus: () => ipcRenderer.invoke(IPC.AUTH_STATUS),
 
+  // === System Browser Auth (login in Safari, import cookies) ===
+  authOpenSystemBrowser: (): Promise<{ success: boolean; url?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.AUTH_OPEN_SYSTEM_BROWSER),
+  authImportSystemCookies: (): Promise<{ success: boolean; imported: number; errors?: number; domain?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.AUTH_IMPORT_SYSTEM_COOKIES),
+  onAuthOpenSystemBrowser: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on(IPC.AUTH_OPEN_SYSTEM_BROWSER, handler)
+    return () => { ipcRenderer.removeListener(IPC.AUTH_OPEN_SYSTEM_BROWSER, handler) }
+  },
+  onAuthImportSystemCookies: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on(IPC.AUTH_IMPORT_SYSTEM_COOKIES, handler)
+    return () => { ipcRenderer.removeListener(IPC.AUTH_IMPORT_SYSTEM_COOKIES, handler) }
+  },
+
   // === DevTools panel resize events ===
   onDevToolsResized: (callback: (height: number) => void) => {
     const handler = (_: any, height: number) => callback(height)
@@ -880,6 +908,20 @@ const api = {
     ipcRenderer.on('tab:create', handler)
     return () => ipcRenderer.removeListener('tab:create', handler)
   },
+
+  // === Chrome Extensions ===
+  extensionsList: (): Promise<any[]> =>
+    ipcRenderer.invoke(IPC.EXTENSIONS_LIST),
+  extensionsInstall: (extPath?: string): Promise<any> =>
+    ipcRenderer.invoke(IPC.EXTENSIONS_INSTALL, extPath),
+  extensionsRemove: (id: string): Promise<any> =>
+    ipcRenderer.invoke(IPC.EXTENSIONS_REMOVE, id),
+  extensionsToggle: (id: string): Promise<any> =>
+    ipcRenderer.invoke(IPC.EXTENSIONS_TOGGLE, id),
+  extensionsOpenFolder: (): Promise<any> =>
+    ipcRenderer.invoke(IPC.EXTENSIONS_OPEN_FOLDER),
+  extensionsOpenPopup: (id: string): Promise<any> =>
+    ipcRenderer.invoke(IPC.EXTENSIONS_OPEN_POPUP, id),
 
   // === Webview preload script path (for <webview preload="..."> attribute) ===
   webviewPreloadPath: path.join(__dirname, 'webview-preload.js'),

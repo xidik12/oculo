@@ -1,6 +1,6 @@
 {
   "name": "oculo-mcp",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "MCP server for Oculo — AI-powered browser automation. Control the live browser with 16 tools: navigate, click, fill forms, extract data, run pipelines, generate media, and more.",
   "type": "module",
   "bin": {

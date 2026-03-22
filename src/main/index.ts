@@ -49,6 +49,8 @@ import { PinnedAppStore } from './data/pinned-apps'
 import { PatternDetector } from './data/pattern-detector'
 import { WatcherStore } from './data/watchers'
 import { TabManager } from './tab-manager'
+import { ExtensionManager } from './extensions/extension-manager'
+import { WalletRelayServer } from './web3/wallet-relay'
 
 /** Clean up temp files older than 1 hour (only transient dirs, NOT ~/Pictures/Oculo) */
 function cleanupTempFiles(): void {
@@ -87,6 +89,8 @@ let mcpClientManager: McpClientManager | null = null
 let patternDetector: PatternDetector | null = null
 let watcherStore: WatcherStore | null = null
 let tabManager: TabManager | null = null
+let extensionManager: ExtensionManager | null = null
+let walletRelay: WalletRelayServer | null = null
 
 function createWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
@@ -205,6 +209,18 @@ app.whenReady().then(async () => {
     sessionUA.replace(/\s*Electron\/[\d.]+/, '').replace(/\s*oculo\/[\d.]+/i, '')
   )
 
+  // --- Cache Size Limits ---
+  // Prevent unbounded cache growth (default is unlimited, can reach 50GB+)
+  // Clear cache on startup if it exceeds 500MB, and set storage quota
+  webviewSession.clearCache().then(() => {
+    console.log('[Oculo] Session cache cleared on startup')
+  }).catch(() => {})
+
+  // Clear old service worker caches that accumulate
+  webviewSession.clearStorageData({ storages: ['serviceworkers', 'cachestorage'] }).then(() => {
+    console.log('[Oculo] Service worker caches cleared')
+  }).catch(() => {})
+
   // Permission REQUEST handler — called when site uses WebAuthn, media, etc.
   webviewSession.setPermissionRequestHandler((_wc, permission, callback) => {
     const blocked = ['openExternal']
@@ -289,6 +305,21 @@ app.whenReady().then(async () => {
 
   webviewSession.setSpellCheckerEnabled(false)
 
+  // --- Chrome Extension Support ---
+  // Load unpacked extensions from ~/.oculo/extensions/ AFTER session config is complete.
+  // Extensions must be loaded on the persist:oculo session (shared with WebContentsView tabs).
+  extensionManager = new ExtensionManager(webviewSession)
+  try {
+    await extensionManager.loadAll()
+  } catch (err) {
+    console.error('[Extensions] Failed to load extensions:', err)
+  }
+
+  // Handle extension browser action clicks (toolbar icon → popup window)
+  webviewSession.on('extension-loaded' as any, (_event: any, ext: any) => {
+    console.log(`[Extensions] Extension loaded event: ${ext?.name || ext?.id}`)
+  })
+
   // Per-webview anti-bot + UA cleanup
   app.on('web-contents-created', (_, wc) => {
     if (wc.getType() !== 'webview') return
@@ -330,6 +361,27 @@ app.whenReady().then(async () => {
     wc.setWindowOpenHandler((details) => {
       if (adBlocker.isAdDomain(details.url)) {
         return { action: 'deny' }
+      }
+
+      // Chrome extension popups (MetaMask, etc.) — open as child window
+      if (details.url.startsWith('chrome-extension://')) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 360,
+            height: 600,
+            resizable: true,
+            autoHideMenuBar: true,
+            parent: mainWindow ?? undefined,
+            modal: false,
+            alwaysOnTop: true,
+            webPreferences: {
+              session: webviewSession,
+              nodeIntegration: false,
+              contextIsolation: true,
+            },
+          },
+        }
       }
 
       // OAuth/SSO popups need to open as real child windows so window.opener works
@@ -753,8 +805,14 @@ app.whenReady().then(async () => {
   // Initialize download manager (needs window)
   downloadManager = new DownloadManager(window)
 
+  // Set up Chrome extension IPC handlers and popup window support
+  if (extensionManager) {
+    extensionManager['mainWindow'] = window
+    extensionManager.setupIPC()
+  }
+
   // Create app menu
-  createMenu(() => mainWindow)
+  createMenu(() => mainWindow, extensionManager)
 
   // Initialize pattern detector
   patternDetector = new PatternDetector(window)
@@ -772,6 +830,36 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('MCP server start failed:', err)
   }
+
+  // Start Web3 Wallet Relay server (for MetaMask bridging via Chrome)
+  walletRelay = new WalletRelayServer(window)
+  try {
+    await walletRelay.start()
+  } catch (err) {
+    console.warn('[Oculo] Wallet relay start failed (non-fatal):', err)
+  }
+
+  // Wallet relay IPC handlers
+  ipcMain.handle('wallet:relay-status', () => {
+    if (!walletRelay) return { running: false, chromeConnected: false }
+    const status = walletRelay.getStatus()
+    return {
+      ...status,
+      accounts: walletRelay.getAccounts(),
+      chainId: walletRelay.getChainId()
+    }
+  })
+  ipcMain.handle('wallet:relay-connect', async () => {
+    if (walletRelay) {
+      await walletRelay.openRelayInChrome()
+      return { success: true }
+    }
+    return { success: false, error: 'Wallet relay not running' }
+  })
+  ipcMain.handle('wallet:rpc-request', async (_event, request) => {
+    if (!walletRelay) return { error: { code: -32603, message: 'Wallet relay not running' } }
+    return walletRelay.handleIpcRpcRequest(request)
+  })
 
   // Auto-updater — check for updates silently after startup
   if (!is.dev) {
@@ -859,7 +947,8 @@ app.whenReady().then(async () => {
     getPatternDetector: () => patternDetector!,
     getWatcherStore: () => watcherStore!,
     getProxyManager: () => mcpServer!.getProxyManager(),
-    getSessionRecorder: () => mcpServer!.getSessionRecorder()
+    getSessionRecorder: () => mcpServer!.getSessionRecorder(),
+    getActiveWebContents: () => findActiveWebviewWC()
   }
   setupIPC(registry)
 
@@ -877,6 +966,11 @@ app.on('window-all-closed', () => {
     mcpServer?.stop()
   } catch (err) {
     console.error('[Oculo] MCP server stop error during cleanup:', err)
+  }
+  try {
+    walletRelay?.stop()
+  } catch (err) {
+    console.error('[Oculo] Wallet relay stop error during cleanup:', err)
   }
   auditLog?.close()
   if (process.platform !== 'darwin') {

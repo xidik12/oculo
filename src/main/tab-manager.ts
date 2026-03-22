@@ -368,6 +368,27 @@ export class TabManager {
         return { action: 'deny' as const }
       }
 
+      // Chrome extension popups (MetaMask, etc.) — open as child window
+      if (details.url.startsWith('chrome-extension://')) {
+        return {
+          action: 'allow' as const,
+          overrideBrowserWindowOptions: {
+            width: 360,
+            height: 600,
+            resizable: true,
+            autoHideMenuBar: true,
+            parent: this.mainWindow,
+            modal: false,
+            alwaysOnTop: true,
+            webPreferences: {
+              partition: 'persist:oculo',
+              nodeIntegration: false,
+              contextIsolation: true,
+            },
+          },
+        }
+      }
+
       const url = details.url.toLowerCase()
       const isOAuth = OAUTH_DOMAINS.some(d => url.includes(d))
 

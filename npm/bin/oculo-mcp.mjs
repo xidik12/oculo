@@ -476,7 +476,7 @@ function httpPost(port, body, token) {
 // ── MCP Server (stdio side) ───────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'oculo', version: '0.4.4' },
+  { name: 'oculo', version: '0.5.0' },
   {
     capabilities: { tools: {} },
     instructions: `You are connected to Oculo, an AI-powered native browser. Your oculo tools (page, act, fill, read, run, media, shell) control the LIVE browser the user is currently looking at — not a headless browser or separate session.

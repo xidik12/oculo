@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, shell, app, nativeImage, clipboard, webContents, dialog } from 'electron'
+import { BrowserWindow, ipcMain, shell, app, nativeImage, clipboard, webContents, dialog, session } from 'electron'
 import fs from 'fs'
 import os from 'os'
 import path from 'path'
@@ -26,6 +26,7 @@ import { PatternDetector } from './data/pattern-detector'
 import { WatcherStore } from './data/watchers'
 import { ProxyManager } from './network/proxy'
 import { SessionRecorder } from './data/session-recorder'
+import { getSystemCookiesForDomain, extractBaseDomain } from './auth/system-browser-auth'
 
 export interface StoreRegistry {
   mainWindow: BrowserWindow
@@ -50,6 +51,7 @@ export interface StoreRegistry {
   getWatcherStore: () => WatcherStore
   getProxyManager: () => ProxyManager
   getSessionRecorder: () => SessionRecorder
+  getActiveWebContents?: () => Electron.WebContents | null
 }
 
 export function setupIPC(registry: StoreRegistry): void {
@@ -1414,5 +1416,98 @@ export function setupIPC(registry: StoreRegistry): void {
         try { wc.debugger.detach() } catch { /* already detached */ }
       }
     }
+  })
+
+  // === System Browser Auth — login in Safari, import cookies back ===
+
+  /** Helper: find the active tab's WebContents (prefers TabManager, falls back to webContents scan) */
+  function findActiveWC(): Electron.WebContents | null {
+    // Prefer TabManager via registry
+    if (registry.getActiveWebContents) {
+      const wc = registry.getActiveWebContents()
+      if (wc) return wc
+    }
+    // Fallback: scan all webContents for the focused non-main-window one
+    const allWC = webContents.getAllWebContents()
+    let fallback: Electron.WebContents | null = null
+    for (const wc of allWC) {
+      if (wc.id === mainWindow.webContents.id) continue
+      if (wc.isDestroyed()) continue
+      const url = wc.getURL()
+      if (url && url.startsWith('http')) {
+        if (wc.isFocused()) return wc
+        fallback = wc
+      }
+    }
+    return fallback
+  }
+
+  ipcMain.handle(IPC.AUTH_OPEN_SYSTEM_BROWSER, async () => {
+    const wc = findActiveWC()
+    const activeUrl = wc?.getURL() || null
+
+    if (!activeUrl || !activeUrl.startsWith('http')) {
+      return { success: false, error: 'No active tab with a web page found' }
+    }
+
+    try {
+      await shell.openExternal(activeUrl)
+      return { success: true, url: activeUrl }
+    } catch (err: any) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle(IPC.AUTH_IMPORT_SYSTEM_COOKIES, async () => {
+    const activeWC = findActiveWC()
+    const activeUrl = activeWC?.getURL() || null
+
+    if (!activeUrl || !activeUrl.startsWith('http')) {
+      return { success: false, error: 'No active tab with a web page found', imported: 0 }
+    }
+
+    const domain = extractBaseDomain(activeUrl)
+    console.log(`[SystemBrowserAuth] Importing cookies for domain: ${domain}`)
+
+    const systemCookies = await getSystemCookiesForDomain(domain)
+    if (systemCookies.length === 0) {
+      return { success: false, error: `No cookies found in system browser for "${domain}". Make sure you completed login in Safari first.`, imported: 0 }
+    }
+
+    const oculoSession = session.fromPartition('persist:oculo')
+    let imported = 0
+    let errors = 0
+
+    for (const cookie of systemCookies) {
+      try {
+        const cookieDomain = cookie.domain.replace(/^\./, '')
+        const url = `http${cookie.secure ? 's' : ''}://${cookieDomain}${cookie.path || '/'}`
+
+        await oculoSession.cookies.set({
+          url,
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path || '/',
+          secure: cookie.secure,
+          httpOnly: cookie.httpOnly,
+          sameSite: 'lax',
+          expirationDate: cookie.expirationDate
+        })
+        imported++
+      } catch (err) {
+        errors++
+        console.warn(`[SystemBrowserAuth] Failed to set cookie "${cookie.name}":`, err)
+      }
+    }
+
+    console.log(`[SystemBrowserAuth] Imported ${imported} cookies (${errors} errors)`)
+
+    // Reload the active tab to pick up the new cookies
+    if (activeWC && !activeWC.isDestroyed()) {
+      activeWC.reload()
+    }
+
+    return { success: true, imported, errors, domain }
   })
 }

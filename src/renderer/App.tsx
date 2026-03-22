@@ -127,6 +127,26 @@ export default function App() {
       api.onZoomReset?.(() => handleZoomReset()),
       api.onDevToolsResized?.((height: number) => setDevToolsHeight(height)),
       api.onFocusMode?.(() => setFocusMode(prev => !prev)),
+      // System Browser Auth — login in Safari, import cookies back
+      api.onAuthOpenSystemBrowser?.(() => {
+        api.authOpenSystemBrowser().then((result: any) => {
+          if (result?.success) {
+            addToast('Opened in system browser — complete login there, then press Cmd+Shift+O to import session', 'info', 5000)
+          } else {
+            addToast(result?.error || 'Failed to open in system browser', 'error', 3000)
+          }
+        })
+      }),
+      api.onAuthImportSystemCookies?.(() => {
+        addToast('Importing cookies from system browser...', 'info', 2000)
+        api.authImportSystemCookies().then((result: any) => {
+          if (result?.success) {
+            addToast(`Imported ${result.imported} cookies for ${result.domain} — page reloaded`, 'success', 4000)
+          } else {
+            addToast(result?.error || 'Failed to import cookies', 'error', 4000)
+          }
+        })
+      }),
       // v0.4.3: WebContentsView state updates from TabManager in main process
       api.onViewStateUpdate?.((tabId: string, state: any) => {
         setTabs(prev => {

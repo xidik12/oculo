@@ -5,7 +5,7 @@
 ## Quick Reference
 
 - **App ID:** `com.oculo.browser`
-- **Version:** 0.4.0
+- **Version:** 0.5.0
 - **Stack:** Electron 34, TypeScript, React 19, Tailwind CSS 3, electron-vite
 - **Package manager:** npm (not pnpm)
 - **Dev:** `npm run dev` (electron-vite hot reload)

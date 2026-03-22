@@ -1,6 +1,6 @@
 {
   "name": "oculo",
-  "version": "0.4.4",
+  "version": "0.5.0",
   "description": "AI-powered native browser — giving AI vision to see and interact with the web",
   "main": "./out/main/index.js",
   "author": "Salakhitdinov Khidayotullo",
@@ -43,6 +43,7 @@
     "pixelmatch": "^7.1.0",
     "pngjs": "^7.0.0",
     "turndown": "^7.2.2",
+    "ws": "^8.20.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
@@ -54,6 +55,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/turndown": "^5.0.6",
+    "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^8.56.1",
     "@typescript-eslint/parser": "^8.56.1",
     "@vitejs/plugin-react": "^4.3.4",
@@ -94,11 +96,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icons/icon.ico"

@@ -821,6 +821,248 @@ window.addEventListener('beforeunload', (e) => {
   })
 })()
 
+// ── Web3 Wallet Relay Provider (EIP-1193) ────────────────────────────────
+// Injects window.ethereum that proxies RPC calls via postMessage to the main process
+// relay server. Uses a message channel since webview-preload can't access ipcRenderer.
+;(function setupWeb3WalletRelay() {
+  // Don't inject if a real wallet extension is already present
+  if ((window as any).ethereum) return
+
+  let requestId = 1
+  const eventListeners = new Map<string, Set<(...args: any[]) => void>>()
+  let connected = false
+  let currentAccounts: string[] = []
+  let currentChainId = '0x1'
+
+  // Listen for wallet state updates injected by main process via executeJavaScript
+  ;(window as any).__oculoWalletUpdate = function(data: any) {
+    if (data.type === 'state') {
+      connected = true
+      currentAccounts = data.accounts || []
+      currentChainId = data.chainId || '0x1'
+      if ((window as any).ethereum) {
+        ;(window as any).ethereum.chainId = currentChainId
+        ;(window as any).ethereum.selectedAddress = currentAccounts[0] || null
+      }
+      emitEvent('connect', { chainId: currentChainId })
+      if (currentAccounts.length > 0) {
+        emitEvent('accountsChanged', currentAccounts)
+      }
+    } else if (data.type === 'accountsChanged') {
+      currentAccounts = data.data || []
+      if ((window as any).ethereum) {
+        ;(window as any).ethereum.selectedAddress = currentAccounts[0] || null
+      }
+      emitEvent('accountsChanged', currentAccounts)
+    } else if (data.type === 'chainChanged') {
+      currentChainId = data.data || '0x1'
+      if ((window as any).ethereum) {
+        ;(window as any).ethereum.chainId = currentChainId
+      }
+      emitEvent('chainChanged', currentChainId)
+    } else if (data.type === 'rpc-response') {
+      // Resolve a pending request
+      const pending = (window as any).__oculoPendingRequests?.get(data.id)
+      if (pending) {
+        ;(window as any).__oculoPendingRequests.delete(data.id)
+        clearTimeout(pending.timer)
+        if (data.error) {
+          const err: any = new Error(data.error.message || 'Unknown error')
+          err.code = data.error.code || -32603
+          pending.reject(err)
+        } else {
+          pending.resolve(data.result)
+        }
+      }
+    }
+  }
+  ;(window as any).__oculoPendingRequests = new Map()
+
+  function emitEvent(event: string, ...args: any[]): void {
+    const listeners = eventListeners.get(event)
+    if (listeners) {
+      for (const fn of listeners) {
+        try { fn(...args) } catch { /* listener error */ }
+      }
+    }
+  }
+
+  // EIP-1193 provider interface
+  interface EIP1193Provider {
+    isMetaMask: boolean
+    isOculoRelay: boolean
+    _events: Record<string, unknown>
+    isConnected: () => boolean
+    chainId: string
+    selectedAddress: string | null
+    networkVersion: string
+    request: (args: { method: string; params?: any[] }) => Promise<any>
+    on: (event: string, handler: (...args: any[]) => void) => EIP1193Provider
+    removeListener: (event: string, handler: (...args: any[]) => void) => EIP1193Provider
+    removeAllListeners: (event?: string) => EIP1193Provider
+    enable: () => Promise<any>
+    send: (methodOrPayload: any, paramsOrCallback?: any) => any
+    sendAsync: (payload: any, callback: (err: any, result: any) => void) => void
+  }
+
+  const provider: EIP1193Provider = {
+    isMetaMask: true,
+    isOculoRelay: true,
+    _events: {},
+
+    isConnected: () => connected,
+
+    get chainId() { return currentChainId },
+    set chainId(v: string) { currentChainId = v },
+
+    get selectedAddress() { return currentAccounts[0] || null },
+    set selectedAddress(v: string | null) {
+      if (v) currentAccounts = [v, ...currentAccounts.slice(1)]
+    },
+
+    get networkVersion() {
+      // Convert hex chainId to decimal string
+      try { return String(parseInt(currentChainId, 16)) } catch { return '1' }
+    },
+
+    request: async ({ method, params }: { method: string; params?: any[] }): Promise<any> => {
+      const id = requestId++
+
+      // Some methods can be answered locally without the relay
+      if (method === 'eth_chainId') {
+        if (currentChainId && connected) return currentChainId
+      }
+      if (method === 'eth_accounts') {
+        if (currentAccounts.length > 0 && connected) return currentAccounts
+      }
+
+      // Route through HTTP fetch to the local relay server
+      // fetch to localhost is allowed from HTTPS pages (unlike WebSocket)
+      try {
+        const resp = await fetch('http://127.0.0.1:19517/rpc', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, method, params: params || [] })
+        })
+        const data = await resp.json()
+        if (data.error) {
+          const err: any = new Error(data.error.message || 'Unknown error')
+          err.code = data.error.code || -32603
+          throw err
+        }
+        // Update local state
+        if (method === 'eth_requestAccounts' || method === 'eth_accounts') {
+          if (Array.isArray(data.result)) {
+            currentAccounts = data.result
+            connected = true
+            ;(provider as any).selectedAddress = currentAccounts[0] || null
+          }
+        }
+        if (method === 'eth_chainId' && data.result) {
+          currentChainId = data.result
+          ;(provider as any).chainId = currentChainId
+        }
+        return data.result
+      } catch (err: any) {
+        const error: any = new Error(err.message || 'Relay request failed')
+        error.code = err.code || -32603
+        throw error
+      }
+    },
+
+    on: (event: string, handler: (...args: any[]) => void): EIP1193Provider => {
+      if (!eventListeners.has(event)) {
+        eventListeners.set(event, new Set())
+      }
+      eventListeners.get(event)!.add(handler)
+      return provider
+    },
+
+    removeListener: (event: string, handler: (...args: any[]) => void): EIP1193Provider => {
+      eventListeners.get(event)?.delete(handler)
+      return provider
+    },
+
+    removeAllListeners: (event?: string): EIP1193Provider => {
+      if (event) {
+        eventListeners.delete(event)
+      } else {
+        eventListeners.clear()
+      }
+      return provider
+    },
+
+    // Legacy methods (EIP-1193 deprecated but some dApps still use them)
+    enable: async () => {
+      return provider.request({ method: 'eth_requestAccounts' })
+    },
+
+    send: (methodOrPayload: any, paramsOrCallback?: any): any => {
+      if (typeof methodOrPayload === 'string') {
+        return provider.request({ method: methodOrPayload, params: paramsOrCallback || [] })
+      }
+      // Legacy: send({ method, params }, callback)
+      if (typeof paramsOrCallback === 'function') {
+        provider.request({ method: methodOrPayload.method, params: methodOrPayload.params || [] })
+          .then((result: any) => paramsOrCallback(null, { id: methodOrPayload.id, jsonrpc: '2.0', result }))
+          .catch((err: any) => paramsOrCallback(err))
+        return
+      }
+      return provider.request({ method: methodOrPayload.method, params: methodOrPayload.params || [] })
+    },
+
+    sendAsync: (payload: any, callback: (err: any, result: any) => void): void => {
+      provider.request({ method: payload.method, params: payload.params || [] })
+        .then((result: any) => callback(null, { id: payload.id, jsonrpc: '2.0', result }))
+        .catch((err: any) => callback(err, null))
+    }
+  }
+
+  // Define as non-configurable so dApps can't accidentally overwrite it
+  Object.defineProperty(window, 'ethereum', {
+    value: provider,
+    writable: false,
+    configurable: false
+  })
+
+  // Also dispatch the EIP-6963 announceProvider event for modern dApps
+  try {
+    const info = {
+      uuid: 'oculo-wallet-relay-v1',
+      name: 'Oculo (MetaMask Relay)',
+      icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="16" fill="%23818cf8"/><text x="16" y="22" text-anchor="middle" fill="white" font-size="18">O</text></svg>',
+      rdns: 'com.oculo.wallet-relay'
+    }
+    window.dispatchEvent(new CustomEvent('eip6963:announceProvider', {
+      detail: Object.freeze({ info, provider })
+    }))
+    // Listen for requestProvider events from dApps
+    window.addEventListener('eip6963:requestProvider', () => {
+      window.dispatchEvent(new CustomEvent('eip6963:announceProvider', {
+        detail: Object.freeze({ info, provider })
+      }))
+    })
+  } catch { /* EIP-6963 optional */ }
+
+  // Connect to relay immediately so isConnected() returns true
+  // when dApps check before calling request()
+  // Check relay status on load via HTTP
+  fetch('http://127.0.0.1:19517/status')
+    .then(r => r.json())
+    .then(status => {
+      if (status.chromeConnected && status.accounts?.length > 0) {
+        connected = true
+        currentAccounts = status.accounts
+        currentChainId = status.chainId || '0x1'
+        ;(provider as any).chainId = currentChainId
+        ;(provider as any).selectedAddress = currentAccounts[0] || null
+        emitEvent('connect', { chainId: currentChainId })
+        emitEvent('accountsChanged', currentAccounts)
+      }
+    })
+    .catch(() => {}) // Relay not running, that's fine
+})()
+
 // ── WebMCP Polyfill (navigator.modelContext API) ─────────────────────────
 import './webmcp-polyfill'
 
