@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+  <title id="title">Oculo — open-source AI browser</title>
+  <desc id="desc">Oculo gives Claude Code, Cursor, Windsurf, and any MCP client eyes on the live web. Right panel shows a real agent flow: a natural-language request resolving into four act tool calls that log in via the vault and star the repository, using under 100 tokens.</desc>
+
+  <defs>
+    <radialGradient id="irisGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#3fb6f6" stop-opacity="0.55"/>
+      <stop offset="55%" stop-color="#1c6fb0" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#060b16" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="chrome" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#eaf3fb"/>
+      <stop offset="50%" stop-color="#a9bccd"/>
+      <stop offset="100%" stop-color="#5f748a"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="420" rx="24" fill="#060b16"/>
+  <rect x="0.5" y="0.5" width="1199" height="419" rx="23.5" fill="none" stroke="#16273c" stroke-width="1"/>
+  <ellipse cx="912" cy="205" rx="230" ry="200" fill="url(#irisGlow)"/>
+
+  <!-- Left: title block -->
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
+    <text x="72" y="102" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14" letter-spacing="3.5" fill="#4aa3d8">OPEN-SOURCE AI BROWSER · MCP TOOLBELT</text>
+
+    <text x="70" y="204" font-size="98" font-weight="800" letter-spacing="-3" fill="#f2f7fb">Oculo</text>
+
+    <text x="72" y="258" font-size="26" font-weight="500" fill="#cfe0ee">Eyes on the live web for Claude Code, Cursor,</text>
+    <text x="72" y="292" font-size="26" font-weight="500" fill="#cfe0ee">Windsurf, and any MCP client.</text>
+
+    <!-- analogy pill -->
+    <rect x="72" y="318" width="366" height="36" rx="18" fill="#0e1a2c" stroke="#22374f"/>
+    <text x="92" y="342" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="15" fill="#9fc9e6">Cursor : VSCode  ::  Oculo : Chrome</text>
+
+    <!-- metadata -->
+    <text x="72" y="392" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14" fill="#6b8299">12 MCP tools<tspan fill="#37b6f6">   ·   </tspan>&lt;300 tokens / flow<tspan fill="#37b6f6">   ·   </tspan>Electron 34<tspan fill="#37b6f6">   ·   </tspan>MIT</text>
+  </g>
+
+  <!-- Right: live agent-flow panel -->
+  <g>
+    <rect x="700" y="56" width="436" height="308" rx="16" fill="#0a1220" stroke="#1c2c42"/>
+
+    <!-- header -->
+    <g transform="translate(722 76)">
+      <!-- eye motif -->
+      <path d="M0,0 Q17,-12 34,0 Q17,12 0,0 Z" fill="none" stroke="url(#chrome)" stroke-width="2"/>
+      <circle cx="17" cy="0" r="7.5" fill="none" stroke="#37b6f6" stroke-width="1.6"/>
+      <circle cx="17" cy="0" r="3" fill="#6fd3ff"/>
+      <line x1="17" y1="-7.5" x2="17" y2="-10.5" stroke="#37b6f6" stroke-width="1.2"/>
+      <line x1="17" y1="7.5" x2="17" y2="10.5" stroke="#37b6f6" stroke-width="1.2"/>
+      <line x1="9.5" y1="0" x2="6.5" y2="0" stroke="#37b6f6" stroke-width="1.2"/>
+      <line x1="24.5" y1="0" x2="27.5" y2="0" stroke="#37b6f6" stroke-width="1.2"/>
+    </g>
+    <text x="770" y="82" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13" fill="#8fb8d6">oculo · agent flow</text>
+    <rect x="1074" y="68" width="46" height="20" rx="10" fill="#0f2337" stroke="#20456a"/>
+    <text x="1097" y="82" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#48b6ef">MCP</text>
+    <line x1="700" y1="100" x2="1136" y2="100" stroke="#17273c" stroke-width="1"/>
+
+    <!-- prompt -->
+    <text x="722" y="134" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-style="italic" font-size="14.5" fill="#cdd9e6">&#8220;Log into GitHub and star the oculo repo&#8221;</text>
+
+    <!-- rows -->
+    <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13.5">
+      <!-- row 1 -->
+      <rect x="722" y="158" width="44" height="22" rx="6" fill="#0f2740" stroke="#1d4a6e"/>
+      <text x="744" y="173" text-anchor="middle" fill="#5cc2f2">act</text>
+      <text x="778" y="173" fill="#dbe6f0">navigate</text>
+      <text x="858" y="173" fill="#6f8aa2">github.com/login</text>
+      <!-- row 2 -->
+      <rect x="722" y="192" width="44" height="22" rx="6" fill="#0f2740" stroke="#1d4a6e"/>
+      <text x="744" y="207" text-anchor="middle" fill="#5cc2f2">act</text>
+      <text x="778" y="207" fill="#dbe6f0">login</text>
+      <text x="836" y="207" fill="#6f8aa2">github.com</text>
+      <text x="946" y="207" fill="#4fd2a6">&#10003; vault</text>
+      <!-- row 3 -->
+      <rect x="722" y="226" width="44" height="22" rx="6" fill="#0f2740" stroke="#1d4a6e"/>
+      <text x="744" y="241" text-anchor="middle" fill="#5cc2f2">act</text>
+      <text x="778" y="241" fill="#dbe6f0">navigate</text>
+      <text x="858" y="241" fill="#6f8aa2">…/xidik12/oculo</text>
+      <!-- row 4 -->
+      <rect x="722" y="260" width="44" height="22" rx="6" fill="#0f2740" stroke="#1d4a6e"/>
+      <text x="744" y="275" text-anchor="middle" fill="#5cc2f2">act</text>
+      <text x="778" y="275" fill="#dbe6f0">click</text>
+      <text x="836" y="275" fill="#6f8aa2">Star</text>
+      <text x="892" y="275" fill="#f4c04a">&#9733;</text>
+    </g>
+
+    <!-- footer -->
+    <line x1="700" y1="300" x2="1136" y2="300" stroke="#17273c" stroke-width="1"/>
+    <text x="722" y="332" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13" fill="#7fa9c8">4 tool calls<tspan fill="#37b6f6">   ·   </tspan><tspan fill="#6fd3ff">&lt; 100 tokens response</tspan></text>
+  </g>
+</svg>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="112" viewBox="0 0 1200 112" role="img" aria-labelledby="t d">
+  <title id="t">Quick Start — Oculo</title>
+  <desc id="d">Section header for Quick Start — Oculo.</desc>
+  <rect x="0" y="0" width="1200" height="112" rx="16" fill="#060b16"/>
+  <rect x="0.5" y="0.5" width="1199" height="111" rx="15.5" fill="none" stroke="#15263b"/>
+  <!-- aperture motif -->
+  <g transform="translate(58 56)">
+    <circle cx="0" cy="0" r="15" fill="none" stroke="#25506f" stroke-width="1.4"/>
+    <circle cx="0" cy="0" r="8.5" fill="none" stroke="#37b6f6" stroke-width="1.6"/>
+    <circle cx="0" cy="0" r="3" fill="#6fd3ff"/>
+    <line x1="0" y1="-15" x2="0" y2="-20" stroke="#25506f" stroke-width="1.4"/>
+    <line x1="0" y1="15" x2="0" y2="20" stroke="#25506f" stroke-width="1.4"/>
+    <line x1="-15" y1="0" x2="-20" y2="0" stroke="#25506f" stroke-width="1.4"/>
+    <line x1="15" y1="0" x2="20" y2="0" stroke="#25506f" stroke-width="1.4"/>
+  </g>
+  <text x="96" y="62" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="14" fill="#37b6f6">05</text>
+  <text x="132" y="70" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif" font-size="38" font-weight="700" letter-spacing="-0.5" fill="#eef4f9">Quick Start</text>
+  <line x1="500" y1="56" x2="980" y2="56" stroke="#1a2c42"/>
+  <text x="1144" y="61" text-anchor="end" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13.5" fill="#6b8299">clone · run · register</text>
+</svg>

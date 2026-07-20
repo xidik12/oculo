@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="atitle adesc">
+  <title id="atitle">Oculo architecture — from MCP client to live web page</title>
+  <desc id="adesc">A left-to-right pipeline: an MCP client (Claude Code, Cursor, Windsurf) speaks stdio to the oculo-mcp bridge, which forwards over authenticated HTTP on port 19516 to the Electron main process, which sends IPC to the React renderer, which runs executeJavaScript inside the webview that holds the live web page. Tools are always discoverable; Oculo must be running to execute them.</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L8,4.5 L0,9 Z" fill="#37b6f6"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="440" rx="20" fill="#060b16"/>
+  <rect x="0.5" y="0.5" width="1199" height="439" rx="19.5" fill="none" stroke="#16273c"/>
+
+  <!-- header -->
+  <text x="48" y="58" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="26" font-weight="700" fill="#eef4f9">Architecture</text>
+  <text x="48" y="84" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13.5" fill="#6b8299">webview lives in the renderer, so tool calls travel over a local HTTP bridge — not stdio</text>
+
+  <!-- nodes -->
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif">
+    <!-- node template: card + title + sub -->
+    <!-- 1 -->
+    <rect x="40" y="150" width="184" height="150" rx="12" fill="#0b1626" stroke="#1d3048"/>
+    <text x="132" y="205" text-anchor="middle" font-size="16" font-weight="700" fill="#eef4f9">MCP client</text>
+    <text x="132" y="230" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">Claude Code</text>
+    <text x="132" y="248" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">Cursor · Windsurf</text>
+
+    <!-- 2 -->
+    <rect x="278" y="150" width="184" height="150" rx="12" fill="#0b1626" stroke="#1d3048"/>
+    <text x="370" y="205" text-anchor="middle" font-size="16" font-weight="700" fill="#eef4f9">stdio bridge</text>
+    <text x="370" y="230" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">bin/oculo-mcp.mjs</text>
+    <text x="370" y="248" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">stdio → HTTP</text>
+
+    <!-- 3 -->
+    <rect x="516" y="150" width="184" height="150" rx="12" fill="#0b1626" stroke="#1d3048"/>
+    <text x="608" y="205" text-anchor="middle" font-size="16" font-weight="700" fill="#eef4f9">Electron main</text>
+    <text x="608" y="230" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">McpServerManager</text>
+    <text x="608" y="248" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">permission gate</text>
+
+    <!-- 4 -->
+    <rect x="754" y="150" width="184" height="150" rx="12" fill="#0b1626" stroke="#1d3048"/>
+    <text x="846" y="205" text-anchor="middle" font-size="16" font-weight="700" fill="#eef4f9">Renderer</text>
+    <text x="846" y="230" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">React 19</text>
+    <text x="846" y="248" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">Chromium process</text>
+
+    <!-- 5 : the eye / webview -->
+    <rect x="992" y="150" width="168" height="150" rx="12" fill="#081726" stroke="#22597f"/>
+    <g transform="translate(1076 196)">
+      <path d="M-26,0 Q0,-18 26,0 Q0,18 -26,0 Z" fill="none" stroke="#9fb6c9" stroke-width="2.2"/>
+      <circle cx="0" cy="0" r="11" fill="none" stroke="#37b6f6" stroke-width="1.8"/>
+      <circle cx="0" cy="0" r="4.5" fill="#6fd3ff"/>
+      <line x1="0" y1="-11" x2="0" y2="-15" stroke="#37b6f6" stroke-width="1.4"/>
+      <line x1="0" y1="11" x2="0" y2="15" stroke="#37b6f6" stroke-width="1.4"/>
+      <line x1="-11" y1="0" x2="-15" y2="0" stroke="#37b6f6" stroke-width="1.4"/>
+      <line x1="11" y1="0" x2="15" y2="0" stroke="#37b6f6" stroke-width="1.4"/>
+    </g>
+    <text x="1076" y="248" text-anchor="middle" font-size="15" font-weight="700" fill="#eef4f9">&lt;webview&gt;</text>
+    <text x="1076" y="270" text-anchor="middle" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11" fill="#7f97ac">live web page</text>
+  </g>
+
+  <!-- connectors + labels -->
+  <g font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="11.5" fill="#5aa6d6" text-anchor="middle">
+    <line x1="224" y1="225" x2="272" y2="225" stroke="#274a68" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <text x="251" y="140" >stdio</text>
+
+    <line x1="462" y1="225" x2="510" y2="225" stroke="#274a68" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <text x="489" y="128">HTTP :19516</text>
+    <text x="489" y="146" fill="#3f6f92">+ auth token</text>
+
+    <line x1="700" y1="225" x2="748" y2="225" stroke="#274a68" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <text x="727" y="140">IPC</text>
+
+    <line x1="938" y1="225" x2="986" y2="225" stroke="#274a68" stroke-width="1.6" marker-end="url(#arrow)"/>
+    <text x="963" y="128">execute</text>
+    <text x="963" y="146" fill="#3f6f92">JavaScript()</text>
+  </g>
+
+  <!-- footer note -->
+  <line x1="40" y1="352" x2="1160" y2="352" stroke="#152437"/>
+  <text x="48" y="390" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="13" fill="#7fa9c8">Tools stay discoverable even when idle<tspan fill="#37b6f6">   ·   </tspan>Oculo must be running to execute<tspan fill="#37b6f6">   ·   </tspan>port + token published to <tspan fill="#cfe0ee">~/.oculo-port</tspan></text>
+</svg>
